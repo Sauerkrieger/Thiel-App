@@ -8,10 +8,16 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { href: "/objects", label: "Objekte" },
   { href: "/planung", label: "Tourenplanung" },
+  { href: "/einstellungen", label: "Einstellungen" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
+  // Login-Seite: ohne App-Shell (Header/Footer) rendern.
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-dvh flex-col">

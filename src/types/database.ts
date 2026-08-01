@@ -57,6 +57,8 @@ export interface Database {
           id: string;
           name: string;
           role: UserRole;
+          /** Login-E-Mail (Benutzername wird auf <name>@thiel.local gemappt). */
+          email: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -64,6 +66,7 @@ export interface Database {
           id: string;
           name: string;
           role?: UserRole;
+          email?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -71,6 +74,7 @@ export interface Database {
           id?: string;
           name?: string;
           role?: UserRole;
+          email?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -245,6 +249,90 @@ export interface Database {
         };
         Relationships: [];
       };
+      passkeys: {
+        Row: {
+          id: string;
+          user_id: string;
+          /** Base64URL-Credential-ID aus dem Authenticator. */
+          credential_id: string;
+          /** Base64URL-Public-Key (für die Assertion-Verifikation). */
+          public_key: string;
+          /** Zähler des Authenticators (Replay-Schutz). */
+          counter: number;
+          /** Vom Browser gemeldete Transports (usb, nfc, internal, ...). */
+          transports: Json;
+          created_at: string;
+          last_used_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          credential_id: string;
+          public_key: string;
+          counter?: number;
+          transports?: Json;
+          created_at?: string;
+          last_used_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          credential_id?: string;
+          public_key?: string;
+          counter?: number;
+          transports?: Json;
+          created_at?: string;
+          last_used_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'passkeys_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+            referencedSchema: 'auth';
+          },
+        ];
+      };
+      webauthn_challenges: {
+        Row: {
+          id: string;
+          /** Base64URL-Challenge aus den WebAuthn-Optionen. */
+          challenge: string;
+          /** NULL bei Login (purpose = 'authentication'). */
+          user_id: string | null;
+          purpose: 'registration' | 'authentication';
+          expires_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          challenge: string;
+          user_id?: string | null;
+          purpose: 'registration' | 'authentication';
+          expires_at: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          challenge?: string;
+          user_id?: string | null;
+          purpose?: 'registration' | 'authentication';
+          expires_at?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'webauthn_challenges_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+            referencedSchema: 'auth';
+          },
+        ];
+      };
       weekly_default_routes: {
         Row: {
           id: string;
@@ -323,6 +411,8 @@ export type Profile = Tables<'profiles'>;
 export type ObjectRecord = Tables<'objects'>;
 export type ObjectItem = Tables<'object_items'>;
 export type WeeklyDefaultRoute = Tables<'weekly_default_routes'>;
+export type Passkey = Tables<'passkeys'>;
+export type WebauthnChallenge = Tables<'webauthn_challenges'>;
 
 export type ProfileInsert = Database['public']['Tables']['profiles']['Insert'];
 export type ProfileUpdate = Database['public']['Tables']['profiles']['Update'];

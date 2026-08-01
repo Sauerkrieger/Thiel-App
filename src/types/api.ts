@@ -3,6 +3,7 @@ import type {
   ObjectCategory,
   ObjectItem,
   ObjectRecord,
+  UserRole,
 } from "./database";
 
 /** Objekt inkl. zugehöriger Items (für die Objektübersicht). */
@@ -149,4 +150,37 @@ export type TourWithStops = {
   total_duration_minutes: number | null;
   created_at: string;
   tour_stops: TourStopWithObject[];
+};
+
+/* ------------------------------------------------------------------ */
+/* Auth & Benutzerverwaltung (Schritt 6)                               */
+/* ------------------------------------------------------------------ */
+
+/** Angemeldeter Nutzer (Login-Kennung + Profil). */
+export type AuthUser = {
+  id: string;
+  /** Login-E-Mail (Benutzername wird auf <name>@thiel.local gemappt). */
+  email: string | null;
+  /** Anzeigename (z. B. "Leon"). */
+  name: string;
+  role: UserRole;
+  /** Fürs UI abgeleiteter Benutzername (Local-Part der E-Mail). */
+  username: string;
+};
+
+/** Antwort von POST /api/auth/login, GET /api/auth/me. */
+export type AuthResponse = {
+  user: AuthUser;
+};
+
+/** Passkey-Datensatz für die Einstellungen. */
+export type PasskeyInfo = {
+  id: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+/** Nutzerzeile in der Benutzerverwaltung (Admin). */
+export type UserListItem = AuthUser & {
+  created_at: string;
 };
