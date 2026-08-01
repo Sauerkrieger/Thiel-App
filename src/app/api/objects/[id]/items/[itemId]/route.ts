@@ -1,0 +1,78 @@
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { apiErrorResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
+
+type Context = { params: Promise<{ id: string; itemId: string }> };
+
+export async function PUT(request: Request, { params }: Context) {
+  try {
+    const { id, itemId } = await params;
+    const body = await request.json().catch(() => ({}));
+
+    const update: Database["public"]["Tables"]["object_items"]["Update"] = {};
+    if (typeof body.item_name === "string") {
+      const itemName = body.item_name.trim();
+      if (!itemName) {
+        return NextResponse.json(
+          { error: "Item-Name darf nicht leer sein." },
+          { status: 400 },
+        );
+      }
+      update.item_name = itemName;
+    }
+    if (body.quantity !== undefined) {
+      const quantity = Number(body.quantity);
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        return NextResponse.json(
+          { error: "Menge muss eine positive ganze Zahl sein." },
+          { status: 400 },
+        );
+      }
+      update.quantity = quantity;
+    }
+    if (body.note !== undefined) {
+      const note = typeof body.note === "string" ? body.note.trim() : "";
+      update.note = note.length > 0 ? note : null;
+    }
+    if (body.photo_path !== undefined) {
+      const photoPath =
+        typeof body.photo_path === "string" ? body.photo_path.trim() : "";
+      update.photo_path = photoPath.length > 0 ? photoPath : null;
+    }
+    if (typeof body.is_always_required === "boolean") {
+      update.is_always_required = body.is_always_required;
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("object_items")
+      .update(update)
+      .eq("id", itemId)
+      .eq("object_id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return NextResponse.json({ item: data });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}
+
+export async function DELETE(_request: Request, { params }: Context) {
+  try {
+    const { id, itemId } = await params;
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("object_items")
+      .delete()
+      .eq("id", itemId)
+      .eq("object_id", id);
+
+    if (error) throw error;
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}

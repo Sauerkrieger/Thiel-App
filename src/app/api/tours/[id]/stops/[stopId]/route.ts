@@ -1,0 +1,80 @@
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { apiErrorResponse } from "@/lib/http";
+import { parseDeliveryItems } from "@/lib/items";
+import type { DeliveryItem } from "@/types/api";
+
+export const dynamic = "force-dynamic";
+
+type Context = { params: Promise<{ id: string; stopId: string }> };
+
+const MAX_ITEMS = 500;
+const MAX_ITEM_LENGTH = 200;
+const MAX_NOTE_LENGTH = 300;
+
+/** PATCH /api/tours/[id]/stops/[stopId] -> is_delivered + next_delivery_items. */
+export async function PATCH(request: Request, { params }: Context) {
+  try {
+    const { id, stopId } = await params;
+    const body = await request.json().catch(() => ({}));
+
+    const update: {
+      is_delivered?: boolean;
+      next_delivery_items?: DeliveryItem[];
+    } = {};
+
+    if (typeof body.is_delivered === "boolean") {
+      update.is_delivered = body.is_delivered;
+    }
+    if (Array.isArray(body.next_delivery_items)) {
+      const items = parseDeliveryItems(body.next_delivery_items);
+      const tooLong = items.some(
+        (item) =>
+          item.item_name.length > MAX_ITEM_LENGTH ||
+          (item.note?.length ?? 0) > MAX_NOTE_LENGTH,
+      );
+      if (tooLong) {
+        return NextResponse.json(
+          { error: "Item-Name oder Bemerkung ist zu lang." },
+          { status: 400 },
+        );
+      }
+      if (items.length > MAX_ITEMS) {
+        return NextResponse.json(
+          { error: `Maximal ${MAX_ITEMS} vorgemerkte Items erlaubt.` },
+          { status: 400 },
+        );
+      }
+      update.next_delivery_items = items;
+    }
+
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json(
+        { error: "Keine Änderung übermittelt." },
+        { status: 400 },
+      );
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("tour_stops")
+      .update(update)
+      .eq("id", stopId)
+      .eq("tour_id", id)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === "PGRST116") {
+        return NextResponse.json(
+          { error: "Stopp nicht gefunden." },
+          { status: 404 },
+        );
+      }
+      throw error;
+    }
+    return NextResponse.json({ stop: data });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}
