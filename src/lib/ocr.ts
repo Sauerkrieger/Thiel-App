@@ -36,12 +36,12 @@ export class GeminiApiNotConfiguredError extends Error {
   }
 }
 
-/** Gemini-Modell für die Bild-OCR. */
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
+/** Gemini-Modell für die Bild-OCR (Alias = immer das aktuelle Flash-Lite im Free-Plan). */
+const GEMINI_MODEL = "gemini-flash-lite-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 /**
- * Google Gemini Vision aufrufen (Modell gemini-2.5-flash-lite) und den
+ * Google Gemini Vision aufrufen (Modell gemini-flash-lite-latest) und den
  * reinen Text der Antwort zurückgeben. Wirft GeminiApiNotConfiguredError,
  * wenn GEMINI_API_KEY fehlt.
  */
