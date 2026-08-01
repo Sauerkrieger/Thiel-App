@@ -184,3 +184,28 @@ export type PasskeyInfo = {
 export type UserListItem = AuthUser & {
   created_at: string;
 };
+
+/* ------------------------------------------------------------------ */
+/* Tourenhistorie (Schritt 7)                                          */
+/* ------------------------------------------------------------------ */
+
+/** Ein Eintrag der Tourenhistorie (abgeschlossene/alle Touren). */
+export type TourHistoryItem = {
+  id: string;
+  date: string;
+  status: "packing" | "in_transit" | "completed";
+  start_time: string | null;
+  /** Name der Person, die die Tour geplant/gefahren hat. */
+  driver_name: string | null;
+  /** Namen der belieferten Objekte. */
+  delivered_objects: string[];
+  /** Anzahl der belieferten Stopps. */
+  delivered_count: number;
+  /** Gesamtzahl der Stopps. */
+  total_stops: number;
+};
+
+/** Antwort von GET /api/tours (Historie). */
+export type TourHistoryResponse = {
+  tours: TourHistoryItem[];
+};

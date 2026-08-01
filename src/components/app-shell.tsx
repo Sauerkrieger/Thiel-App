@@ -4,14 +4,38 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Building2, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { UserRole } from "@/types/database";
 
-const NAV_ITEMS = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon?: typeof Settings;
+  /** Nur für diese Rollen sichtbar (null = für alle). */
+  roles?: UserRole[];
+};
+
+const NAV_ITEMS: NavItem[] = [
   { href: "/objects", label: "Objekte" },
-  { href: "/planung", label: "Tourenplanung" },
+  {
+    href: "/planung",
+    label: "Tourenplanung",
+    roles: ["driver", "admin"],
+  },
+  {
+    href: "/historie",
+    label: "Historie",
+    roles: ["driver", "admin"],
+  },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  userRole,
+}: {
+  children: React.ReactNode;
+  userRole: UserRole | null;
+}) {
   const pathname = usePathname();
 
   // Login-Seite: ohne App-Shell (Header/Footer) rendern.
@@ -36,7 +60,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           <nav className="ml-auto flex items-center gap-1">
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.filter(
+              (item) => !item.roles || (userRole && item.roles.includes(userRole)),
+            ).map((item) => {
               const active =
                 pathname === item.href || pathname.startsWith(`${item.href}/`);
               const Icon = item.icon;

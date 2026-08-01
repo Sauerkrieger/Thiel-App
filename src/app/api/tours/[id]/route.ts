@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
+import { requireUser, isAdmin } from "@/lib/auth";
 import type { TourStatus } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -14,10 +15,40 @@ const TOUR_STATUSES: readonly TourStatus[] = [
   "completed",
 ];
 
+/** Prüft, ob der angemeldete Nutzer die Tour sehen/bearbeiten darf (Besitzer oder Admin). */
+async function assertTourAccess(id: string, userId: string, isAdminUser: boolean) {
+  if (isAdminUser) return true;
+  const supabase = getSupabaseAdmin();
+  const { data: tour, error } = await supabase
+    .from("active_tours")
+    .select("driver_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!tour) return false;
+  return tour.driver_id === userId;
+}
+
 export async function GET(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
+
+    const allowed = await assertTourAccess(id, auth.user.id, isAdmin(auth.user));
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Tour nicht gefunden." },
+        { status: 404 },
+      );
+    }
     const { data, error } = await supabase
       .from("active_tours")
       .select(
@@ -58,6 +89,14 @@ export async function GET(_request: Request, { params }: Context) {
 
 /** PATCH /api/tours/[id] -> Status der Tour ändern (z. B. completed). */
 export async function PATCH(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
@@ -67,6 +106,14 @@ export async function PATCH(request: Request, { params }: Context) {
       return NextResponse.json(
         { error: "Ungültiger Tour-Status." },
         { status: 400 },
+      );
+    }
+
+    const allowed = await assertTourAccess(id, auth.user.id, isAdmin(auth.user));
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Tour nicht gefunden." },
+        { status: 404 },
       );
     }
 

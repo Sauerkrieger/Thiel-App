@@ -39,7 +39,7 @@ import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 
-export function ObjectsPage() {
+export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
   const [objects, setObjects] = useState<ObjectWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -127,20 +127,22 @@ export function ObjectsPage() {
             Standard-Items.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setPhotoOpen(true)}
-            disabled={loading}
-          >
-            <Camera />
-            Foto-Import
-          </Button>
-          <Button onClick={() => setFormDialog({ open: true, object: null })}>
-            <Plus />
-            Neues Objekt
-          </Button>
-        </div>
+        {isAdmin && (
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setPhotoOpen(true)}
+              disabled={loading}
+            >
+              <Camera />
+              Foto-Import
+            </Button>
+            <Button onClick={() => setFormDialog({ open: true, object: null })}>
+              <Plus />
+              Neues Objekt
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Suchleiste */}
@@ -166,7 +168,13 @@ export function ObjectsPage() {
         ) : loading ? (
           <TableSkeleton />
         ) : objects.length === 0 ? (
-          <EmptyState onCreate={() => setFormDialog({ open: true, object: null })} />
+          isAdmin ? (
+            <EmptyState onCreate={() => setFormDialog({ open: true, object: null })} />
+          ) : (
+            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+              Noch keine Objekte vorhanden.
+            </div>
+          )
         ) : filtered.length === 0 ? (
           <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
             Keine Objekte gefunden, die zu „{search}“ passen.
@@ -211,37 +219,46 @@ export function ObjectsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1.5 px-2 text-muted-foreground"
-                        onClick={() => setItemsDialog({ open: true, object: obj })}
-                      >
-                        <ListChecks className="h-3.5 w-3.5" />
-                        {itemCount(obj)}
-                      </Button>
+                      {isAdmin ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1.5 px-2 text-muted-foreground"
+                          onClick={() => setItemsDialog({ open: true, object: obj })}
+                        >
+                          <ListChecks className="h-3.5 w-3.5" />
+                          {itemCount(obj)}
+                        </Button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                          <ListChecks className="h-3.5 w-3.5" />
+                          {itemCount(obj)}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="pr-4">
-                      <div className="flex items-center justify-end gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          aria-label={`${obj.name} bearbeiten`}
-                          onClick={() => setFormDialog({ open: true, object: obj })}
-                        >
-                          <Pencil />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          aria-label={`${obj.name} löschen`}
-                          onClick={() => setDeleteTarget(obj)}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
+                      {isAdmin ? (
+                        <div className="flex items-center justify-end gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`${obj.name} bearbeiten`}
+                            onClick={() => setFormDialog({ open: true, object: obj })}
+                          >
+                            <Pencil />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            aria-label={`${obj.name} löschen`}
+                            onClick={() => setDeleteTarget(obj)}
+                          >
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -251,28 +268,32 @@ export function ObjectsPage() {
         )}
       </div>
 
-      {/* Dialoge */}
-      <ObjectFormDialog
-        open={formDialog.open}
-        object={formDialog.object}
-        onOpenChange={(open) =>
-          setFormDialog((prev) => ({ ...prev, open }))
-        }
-        onSaved={() => void load()}
-      />
-      <ItemsDialog
-        open={itemsDialog.open}
-        object={itemsDialog.object}
-        onOpenChange={(open) =>
-          setItemsDialog((prev) => ({ ...prev, open }))
-        }
-        onChanged={() => void load()}
-      />
-      <PhotoImportDialog
-        open={photoOpen}
-        onOpenChange={setPhotoOpen}
-        onImported={() => void load()}
-      />
+      {/* Dialoge (nur Admin) */}
+      {isAdmin && (
+        <>
+          <ObjectFormDialog
+            open={formDialog.open}
+            object={formDialog.object}
+            onOpenChange={(open) =>
+              setFormDialog((prev) => ({ ...prev, open }))
+            }
+            onSaved={() => void load()}
+          />
+          <ItemsDialog
+            open={itemsDialog.open}
+            object={itemsDialog.object}
+            onOpenChange={(open) =>
+              setItemsDialog((prev) => ({ ...prev, open }))
+            }
+            onChanged={() => void load()}
+          />
+          <PhotoImportDialog
+            open={photoOpen}
+            onOpenChange={setPhotoOpen}
+            onImported={() => void load()}
+          />
+        </>
+      )}
 
       {/* Lösch-Bestätigung */}
       <Dialog

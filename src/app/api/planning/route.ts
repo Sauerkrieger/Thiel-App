@@ -1,12 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
+import { requireUser, isPlanner } from "@/lib/auth";
 import type { DayOfWeek } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/planning?day_of_week=1 -> Objekte + gespeicherte Vorauswahl des Wochentags. */
+/** GET /api/planning?day_of_week=1 -> Objekte + gespeicherte Vorauswahl des Nutzers. */
 export async function GET(request: NextRequest) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isPlanner(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const dayParam = request.nextUrl.searchParams.get("day_of_week");
     const day = Number.parseInt(dayParam ?? "", 10);
@@ -19,10 +34,7 @@ export async function GET(request: NextRequest) {
     const dayOfWeek = day as DayOfWeek;
 
     const supabase = getSupabaseAdmin();
-    const [
-      { data: objects, error: objectsError },
-      { data: defaults, error: defaultsError },
-    ] = await Promise.all([
+    const [objectsResult, defaultsResult] = await Promise.all([
       supabase
         .from("objects")
         .select(
@@ -32,22 +44,24 @@ export async function GET(request: NextRequest) {
       supabase
         .from("weekly_default_routes")
         .select("object_id, selection_order, updated_at")
+        .eq("user_id", auth.user.id)
         .eq("day_of_week", dayOfWeek)
         .order("selection_order"),
     ]);
 
-    if (objectsError) throw objectsError;
-    if (defaultsError) throw defaultsError;
+    if (objectsResult.error) throw objectsResult.error;
+    if (defaultsResult.error) throw defaultsResult.error;
 
-    const updatedAtValues = (defaults ?? [])
+    const defaults = defaultsResult.data ?? [];
+    const updatedAtValues = defaults
       .map((row) => row.updated_at)
       .filter((value): value is string => typeof value === "string")
       .map((value) => new Date(value).getTime());
 
     return NextResponse.json({
       day_of_week: dayOfWeek,
-      objects: objects ?? [],
-      selected_ids: (defaults ?? []).map((row) => row.object_id),
+      objects: objectsResult.data ?? [],
+      selected_ids: defaults.map((row) => row.object_id),
       defaults_updated_at:
         updatedAtValues.length > 0
           ? new Date(Math.max(...updatedAtValues)).toISOString()
@@ -58,8 +72,22 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** PUT /api/planning -> Auswahl für den Wochentag transaktional ersetzen. */
+/** PUT /api/planning -> Auswahl des Nutzers für den Wochentag transaktional ersetzen. */
 export async function PUT(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isPlanner(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json().catch(() => ({}));
     const day = body.day_of_week;
@@ -90,6 +118,7 @@ export async function PUT(request: Request) {
 
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.rpc("save_weekly_defaults", {
+      p_user_id: auth.user.id,
       p_day_of_week: day,
       p_object_ids: uniqueIds,
     });

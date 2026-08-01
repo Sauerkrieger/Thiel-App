@@ -1,11 +1,26 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
+import { requireUser, isAdmin } from "@/lib/auth";
 import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string; itemId: string }> };
 
 export async function PUT(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Items verwalten." },
+      { status: 403 },
+    );
+  }
+
   try {
     const { id, itemId } = await params;
     const body = await request.json().catch(() => ({}));
@@ -61,6 +76,20 @@ export async function PUT(request: Request, { params }: Context) {
 }
 
 export async function DELETE(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Items verwalten." },
+      { status: 403 },
+    );
+  }
+
   try {
     const { id, itemId } = await params;
     const supabase = getSupabaseAdmin();

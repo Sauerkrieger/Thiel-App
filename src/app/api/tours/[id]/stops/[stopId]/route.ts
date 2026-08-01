@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
+import { requireUser, isAdmin } from "@/lib/auth";
 import type { DeliveryItem } from "@/types/api";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +15,33 @@ const MAX_NOTE_LENGTH = 300;
 
 /** PATCH /api/tours/[id]/stops/[stopId] -> is_delivered + next_delivery_items. */
 export async function PATCH(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id, stopId } = await params;
     const body = await request.json().catch(() => ({}));
+
+    // Nur Besitzer der Tour (oder Admin) darf Stopps bearbeiten.
+    const supabase = getSupabaseAdmin();
+    const { data: tour, error: tourError } = await supabase
+      .from("active_tours")
+      .select("driver_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (tourError) throw tourError;
+    const isOwner = tour ? tour.driver_id === auth.user.id : false;
+    if (!tour || (!isOwner && !isAdmin(auth.user))) {
+      return NextResponse.json(
+        { error: "Stopp nicht gefunden." },
+        { status: 404 },
+      );
+    }
 
     const update: {
       is_delivered?: boolean;
@@ -55,7 +80,6 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     }
 
-    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("tour_stops")
       .update(update)

@@ -8,6 +8,7 @@ import {
 } from "@/lib/http";
 import { parseItemInputs } from "@/lib/items";
 import { isInPedestrianZone } from "@/lib/overpass";
+import { requireUser, isAdmin } from "@/lib/auth";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -57,6 +58,20 @@ export async function GET(_request: Request, { params }: Context) {
 }
 
 export async function PUT(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Objekte bearbeiten." },
+      { status: 403 },
+    );
+  }
+
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
@@ -143,6 +158,20 @@ export async function PUT(request: Request, { params }: Context) {
 }
 
 export async function DELETE(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Objekte löschen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const { id } = await params;
     const supabase = getSupabaseAdmin();

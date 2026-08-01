@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { optimizeRoute } from "@/lib/routing/optimizer";
+import { requireUser, isPlanner } from "@/lib/auth";
 import type { RouteObject } from "@/lib/routing/optimizer";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,20 @@ export const dynamic = "force-dynamic";
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isPlanner(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json().catch(() => ({}));
     const objectIds = body.object_ids;

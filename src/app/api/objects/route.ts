@@ -8,6 +8,7 @@ import {
 } from "@/lib/http";
 import { parseItemInputs } from "@/lib/items";
 import { isInPedestrianZone } from "@/lib/overpass";
+import { requireUser, isAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,21 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  // Nur Admins dürfen Objekte anlegen.
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Objekte anlegen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json().catch(() => ({}));
     const name = typeof body.name === "string" ? body.name.trim() : "";

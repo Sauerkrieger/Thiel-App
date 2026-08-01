@@ -87,3 +87,8 @@ export async function requireUser(): Promise<
 export function isAdmin(user: CurrentUser): boolean {
   return user.role === "admin";
 }
+
+/** true, wenn der Nutzer Touren planen darf (Fahrer oder Admin). */
+export function isPlanner(user: CurrentUser): boolean {
+  return user.role === "driver" || user.role === "admin";
+}

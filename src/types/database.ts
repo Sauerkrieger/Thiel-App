@@ -336,6 +336,8 @@ export interface Database {
       weekly_default_routes: {
         Row: {
           id: string;
+          /** Eigentümer der Vorauswahl (jeder Nutzer hat seine eigene Tourplanung). */
+          user_id: string;
           /** 0 = Sonntag, 1 = Montag, ..., 6 = Samstag. */
           day_of_week: DayOfWeek;
           object_id: string;
@@ -346,6 +348,7 @@ export interface Database {
         };
         Insert: {
           id?: string;
+          user_id: string;
           day_of_week: DayOfWeek;
           object_id: string;
           selection_order?: number;
@@ -354,6 +357,7 @@ export interface Database {
         };
         Update: {
           id?: string;
+          user_id?: string;
           day_of_week?: DayOfWeek;
           object_id?: string;
           selection_order?: number;
@@ -383,11 +387,15 @@ export interface Database {
         Returns: UserRole | null;
       };
       /**
-       * Ersetzt die Objektauswahl eines Wochentags transaktional
+       * Ersetzt die Objektauswahl eines Wochentags transaktional pro Nutzer
        * (selection_order folgt der Reihenfolge der übergebenen IDs).
        */
       save_weekly_defaults: {
-        Args: { p_day_of_week: number; p_object_ids: string[] };
+        Args: {
+          p_user_id: string;
+          p_day_of_week: number;
+          p_object_ids: string[];
+        };
         Returns: undefined;
       };
     };

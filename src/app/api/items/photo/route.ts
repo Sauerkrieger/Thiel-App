@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { ITEM_PHOTOS_BUCKET, itemPhotoUrl } from "@/lib/storage";
+import { requireUser, isAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,20 @@ function extensionFor(mimeType: string): string {
 
 /** POST /api/items/photo -> Item-Foto in den Storage-Bucket hochladen. */
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Item-Fotos hochladen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");

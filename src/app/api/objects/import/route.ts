@@ -7,6 +7,7 @@ import {
   findDuplicate,
   normalizeAddress,
 } from "@/lib/ocr";
+import { requireUser, isAdmin } from "@/lib/auth";
 import type { ImportResult } from "@/types/api";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,20 @@ export const maxDuration = 60;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Objekte importieren." },
+      { status: 403 },
+    );
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");

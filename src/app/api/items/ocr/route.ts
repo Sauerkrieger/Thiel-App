@@ -4,6 +4,7 @@ import {
   GeminiApiNotConfiguredError,
   extractItemsFromImage,
 } from "@/lib/ocr";
+import { requireUser, isAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +14,20 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /** POST /api/items/ocr -> Foto einer Packliste in strukturierte Items umwandeln. */
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Packlisten erkennen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");

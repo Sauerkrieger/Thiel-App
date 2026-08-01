@@ -7,6 +7,7 @@ import {
   findMatchingObjectId,
   type ObjectMatchTarget,
 } from "@/lib/ocr";
+import { requireUser, isPlanner } from "@/lib/auth";
 import type { PhotoSelectResult } from "@/types/api";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,20 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /** POST /api/planning/photo -> erkannte Einträge mit Objekt-Matches. */
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isPlanner(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { status: 403 },
+    );
+  }
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");
