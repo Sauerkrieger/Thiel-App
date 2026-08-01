@@ -8,7 +8,7 @@ import {
   normalizeAddress,
 } from "@/lib/ocr";
 import { requireUser, isAdmin } from "@/lib/auth";
-import type { ImportResult } from "@/types/api";
+import type { ObjectImportPreview } from "@/types/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +16,7 @@ export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
+/** POST /api/objects/import/objects/analyze -> Vorauswahl: erkannte Objekte (ohne DB-Write). */
 export async function POST(request: Request) {
   const auth = await requireUser();
   if (!auth.user) {
@@ -69,50 +70,22 @@ export async function POST(request: Request) {
       normalizeAddress(row.address),
     );
 
-    const result: ImportResult = {
-      total: extracted.length,
-      created: [],
-      duplicates: [],
-      errors: [],
-    };
-
-    for (const item of extracted) {
+    const objects: ObjectImportPreview["objects"] = extracted.map((item) => {
       const normalized = normalizeAddress(item.address);
-
-      if (normalized.length < 5) {
-        result.errors.push(item.address || "(unlesbar)");
-        continue;
-      }
-
       const duplicate = findDuplicate(normalized, existingAddresses);
-      if (duplicate) {
-        result.duplicates.push({ address: item.address, matched: duplicate });
-        continue;
-      }
+      return {
+        name: item.name?.trim() || item.address,
+        address: item.address,
+        category: item.category ?? "objekt",
+        is_pedestrian_zone_until_11: Boolean(
+          item.is_pedestrian_zone_until_11,
+        ),
+        opens_at: item.opens_at || null,
+        is_duplicate: duplicate !== null,
+      };
+    });
 
-      const { data, error } = await supabase
-        .from("objects")
-        .insert({
-          name: item.name?.trim() || item.address,
-          address: item.address,
-          category: item.category ?? "objekt",
-          is_pedestrian_zone_until_11: Boolean(
-            item.is_pedestrian_zone_until_11,
-          ),
-          opens_at: item.opens_at || null,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        result.errors.push(item.address);
-        continue;
-      }
-      result.created.push(data);
-      existingAddresses.push(normalized);
-    }
-
-    return NextResponse.json(result);
+    return NextResponse.json({ objects } satisfies ObjectImportPreview);
   } catch (e) {
     if (e instanceof GeminiApiNotConfiguredError) {
       return NextResponse.json(

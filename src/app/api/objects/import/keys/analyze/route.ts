@@ -59,7 +59,7 @@ export async function POST(request: Request) {
 
     const extracted = await extractKeysFromImage(imageBase64, file.type);
     if (extracted.length === 0) {
-      return NextResponse.json({ matches: [], unmatched: [] });
+      return NextResponse.json({ matches: [], unmatched: [], objects: [] });
     }
 
     const supabase = getSupabaseAdmin();
@@ -73,7 +73,16 @@ export async function POST(request: Request) {
       address: o.address,
     }));
 
-    const result: KeyImportPreview = { matches: [], unmatched: [] };
+    const result: KeyImportPreview = {
+      matches: [],
+      unmatched: [],
+      objects: (objects ?? []).map((o) => ({
+        id: o.id,
+        name: o.name,
+        address: o.address,
+        key_number: o.key_number,
+      })),
+    };
 
     for (const entry of extracted) {
       const match = findBestObjectByName(entry.name, targets);

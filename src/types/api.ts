@@ -186,6 +186,35 @@ export type UserListItem = AuthUser & {
 };
 
 /* ------------------------------------------------------------------ */
+/* Foto-Import: Objekte (Schritt 8)                                    */
+/* ------------------------------------------------------------------ */
+
+/** Vom OCR erkanntes Objekt für die Vorauswahl (noch nicht angelegt). */
+export type ObjectImportPreviewEntry = {
+  name: string;
+  address: string;
+  category: ObjectCategory;
+  is_pedestrian_zone_until_11: boolean;
+  opens_at: string | null;
+  /** true, wenn die Adresse bereits in der DB existiert (Duplikat). */
+  is_duplicate: boolean;
+};
+
+/** Antwort von POST /api/objects/import/objects/analyze. */
+export type ObjectImportPreview = {
+  objects: ObjectImportPreviewEntry[];
+};
+
+/** Bestätigtes Objekt für POST /api/objects/import/objects. */
+export type ObjectImportInput = {
+  name: string;
+  address: string;
+  category: ObjectCategory;
+  is_pedestrian_zone_until_11: boolean;
+  opens_at: string | null;
+};
+
+/* ------------------------------------------------------------------ */
 /* Foto-Import: Schlüssel & Items (Schritt 8)                          */
 /* ------------------------------------------------------------------ */
 
@@ -209,10 +238,20 @@ export type KeyImportMatch = {
 /** Schlüssel-Eintrag, dessen Objekt nicht existiert. */
 export type KeyImportUnmatched = KeyImportEntry;
 
+/** Objektoption für die Zuordnung (Dropdown in der Vorauswahl). */
+export type KeyImportObject = {
+  id: string;
+  name: string;
+  address: string;
+  key_number: number | null;
+};
+
 /** Antwort von POST /api/objects/import/keys/analyze. */
 export type KeyImportPreview = {
   matches: KeyImportMatch[];
   unmatched: KeyImportUnmatched[];
+  /** Alle Objekte, damit die Zuordnung in der Vorauswahl änderbar ist. */
+  objects: KeyImportObject[];
 };
 
 /** Ergebnis nach dem Bestätigen von POST /api/objects/import/keys. */

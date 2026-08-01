@@ -18,7 +18,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -27,12 +35,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { ObjectCategory } from "@/types/database";
 import type {
   ImportResult,
   ItemGroupImportPreview,
   ItemGroupImportResult,
   KeyImportPreview,
   KeyImportResult,
+  ObjectImportPreview,
 } from "@/types/api";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -45,7 +55,7 @@ type Props = {
   onImported: () => void;
 };
 
-/** Aus der Schlüssel-Vorauswahl bestätigbare Zuordnung. */
+/** Aus der Schlüssel-Vorauswahl bestätigbare Zuordnung (Objekt wählbar). */
 type KeySelection = {
   object_id: string;
   object_name: string;
@@ -53,6 +63,17 @@ type KeySelection = {
   key_number: number;
   already_has_key: boolean;
   selected: boolean;
+};
+
+/** Bearbeitbares Objekt in der Objekt-Vorauswahl. */
+type ObjectSelection = {
+  name: string;
+  address: string;
+  category: ObjectCategory;
+  is_pedestrian_zone_until_11: boolean;
+  opens_at: string;
+  selected: boolean;
+  is_duplicate: boolean;
 };
 
 /** Bearbeitbares Item innerhalb einer Items-Gruppe. */
@@ -107,6 +128,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // Ergebnisse / Vorauswahlen je Modus
+  const [objectPreview, setObjectPreview] = useState<ObjectImportPreview | null>(null);
+  const [objectSelections, setObjectSelections] = useState<ObjectSelection[]>([]);
   const [objectResult, setObjectResult] = useState<ImportResult | null>(null);
   const [keyPreview, setKeyPreview] = useState<KeyImportPreview | null>(null);
   const [keySelections, setKeySelections] = useState<KeySelection[]>([]);
@@ -125,6 +148,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     setBusy(false);
     setApplying(false);
     setError(null);
+    setObjectPreview(null);
+    setObjectSelections([]);
     setObjectResult(null);
     setKeyPreview(null);
     setKeySelections([]);
@@ -142,6 +167,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   function pickMode(next: Mode) {
     setMode(next);
+    setObjectPreview(null);
+    setObjectSelections([]);
     setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
@@ -151,6 +178,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
   }
 
   function backToUpload() {
+    setObjectPreview(null);
+    setObjectSelections([]);
     setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
@@ -172,6 +201,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     if (preview) URL.revokeObjectURL(preview);
     setFile(next);
     setPreview(URL.createObjectURL(next));
+    setObjectPreview(null);
+    setObjectSelections([]);
     setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
@@ -180,7 +211,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     setError(null);
   }
 
-  /** Schritt 1: Bild analysieren (Modus-abhängig). */
+  /** Schritt 1: Bild analysieren (Modus-abhängig) – schreibt noch nichts. */
   async function handleAnalyze() {
     if (!file) return;
     setBusy(true);
@@ -237,18 +268,29 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           })),
         );
       } else {
-        // Objekte: wie bisher – direkt importieren.
-        const res = await fetch("/api/objects/import", {
+        // Objekte: erst Vorschau, danach bestätigen.
+        const res = await fetch("/api/objects/import/objects/analyze", {
           method: "POST",
           body: formData,
         });
         const body = await res.json();
         if (!res.ok) {
-          setError(body.error ?? "Import fehlgeschlagen.");
+          setError(body.error ?? "Analyse fehlgeschlagen.");
           return;
         }
-        setObjectResult(body as ImportResult);
-        onImported();
+        const previewData = body as ObjectImportPreview;
+        setObjectPreview(previewData);
+        setObjectSelections(
+          previewData.objects.map((o) => ({
+            name: o.name,
+            address: o.address,
+            category: o.category,
+            is_pedestrian_zone_until_11: o.is_pedestrian_zone_until_11,
+            opens_at: o.opens_at ?? "",
+            selected: !o.is_duplicate,
+            is_duplicate: o.is_duplicate,
+          })),
+        );
       }
     } catch {
       setError("Analyse fehlgeschlagen. Bitte erneut versuchen.");
@@ -283,6 +325,43 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
       onImported();
     } catch {
       setError("Übernehmen fehlgeschlagen.");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  /** Schritt 2: bestätigte Objekte anlegen. */
+  async function handleApplyObjects() {
+    const objects = objectSelections
+      .filter((o) => o.selected && o.address.trim().length > 0)
+      .map((o) => ({
+        name: o.name.trim() || o.address.trim(),
+        address: o.address.trim(),
+        category: o.category,
+        is_pedestrian_zone_until_11: o.is_pedestrian_zone_until_11,
+        opens_at: o.opens_at || null,
+      }));
+    if (objects.length === 0) {
+      toast.info("Keine Objekte zum Anlegen ausgewählt.");
+      return;
+    }
+    setApplying(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/objects/import/objects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objects }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error ?? "Anlegen fehlgeschlagen.");
+        return;
+      }
+      setObjectResult(body as ImportResult);
+      onImported();
+    } catch {
+      setError("Anlegen fehlgeschlagen.");
     } finally {
       setApplying(false);
     }
@@ -331,12 +410,12 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   const description = (() => {
     if (mode === "keys") {
-      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern den Objekten zu – du bestätigst die Zuordnung vor dem Speichern.";
+      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern den Objekten zu – du kannst die Zuordnung anpassen und bestätigst vor dem Speichern.";
     }
     if (mode === "items") {
       return "Fotografiere eine Packliste, auf der der Objektname (oft mit Adresse) und die Items stehen. Die KI ordnet die Items dem passenden Objekt zu – du bestätigst vor dem Speichern.";
     }
-    return "Fotografiere eine gedruckte Adressliste. Die KI extrahiert die Adressen und legt neue Objekte an – bereits vorhandene werden automatisch übersprungen.";
+    return "Fotografiere eine gedruckte Adressliste. Die KI erkennt die Objekte – du kannst Name, Adresse und Kategorie anpassen und bestätigst vor dem Anlegen.";
   })();
 
   return (
@@ -385,72 +464,87 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         )}
 
         {/* Schritt 1: Bild hochladen / analysieren */}
-        {mode && !keyPreview && !itemPreview && !objectResult && !keyResult && !itemResult && (
-          <div className="space-y-4">
-            <div
-              role="button"
-              tabIndex={0}
-              aria-label="Bild auswählen oder hierher ziehen"
-              onClick={() => inputRef.current?.click()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                handleFile(e.dataTransfer.files?.[0] ?? null);
-              }}
-              className={[
-                "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors",
-                dragging
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50 hover:bg-accent/40",
-              ].join(" ")}
-            >
-              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Camera className="h-5 w-5" />
-              </span>
-              <p className="text-sm font-medium">
-                Bild auswählen oder hierher ziehen
-              </p>
-              <p className="text-xs text-muted-foreground">
-                JPG, PNG oder HEIC · max. 10 MB
-              </p>
-              <input
-                ref={inputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
-              />
-            </div>
-
-            {preview && (
-              <div className="relative overflow-hidden rounded-md border">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={preview}
-                  alt="Vorschau des hochgeladenen Fotos"
-                  className="max-h-56 w-full bg-muted/30 object-contain"
+        {mode &&
+          !objectPreview &&
+          !keyPreview &&
+          !itemPreview &&
+          !objectResult &&
+          !keyResult &&
+          !itemResult && (
+            <div className="space-y-4">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Bild auswählen oder hierher ziehen"
+                onClick={() => inputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ")
+                    inputRef.current?.click();
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  handleFile(e.dataTransfer.files?.[0] ?? null);
+                }}
+                className={[
+                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors",
+                  dragging
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/50 hover:bg-accent/40",
+                ].join(" ")}
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Camera className="h-5 w-5" />
+                </span>
+                <p className="text-sm font-medium">
+                  Bild auswählen oder hierher ziehen
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  JPG, PNG oder HEIC · max. 10 MB
+                </p>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
                 />
               </div>
-            )}
 
-            {error && (
-              <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {error}
-              </p>
-            )}
-          </div>
+              {preview && (
+                <div className="relative overflow-hidden rounded-md border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={preview}
+                    alt="Vorschau des hochgeladenen Fotos"
+                    className="max-h-56 w-full bg-muted/30 object-contain"
+                  />
+                </div>
+              )}
+
+              {error && (
+                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
+          )}
+
+        {/* Schritt 2 (Objekte): Vorauswahl bearbeiten + bestätigen */}
+        {mode === "objects" && objectPreview && !objectResult && (
+          <ObjectPreviewBody
+            selections={objectSelections}
+            setSelections={setObjectSelections}
+          />
         )}
 
-        {/* Schritt 2 (Schlüssel): Vorauswahl bestätigen */}
+        {/* Schritt 2 (Schlüssel): Vorauswahl bearbeiten + bestätigen */}
         {mode === "keys" && keyPreview && !keyResult && (
           <KeyPreviewBody
             preview={keyPreview}
@@ -477,19 +571,21 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           <ItemResultBody result={itemResult} />
         )}
 
-        {error && keyPreview && !keyResult && (
-          <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error &&
+          !objectResult &&
+          !keyResult &&
+          !itemResult &&
+          (objectPreview || keyPreview || itemPreview) && (
+            <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
         <DialogFooter>
-          {/* Objekte: Ergebnis -> Fertig */}
+          {/* Ergebnis -> Fertig */}
           {mode === "objects" && objectResult && (
             <Button onClick={() => handleClose(false)}>Fertig</Button>
           )}
-
-          {/* Schlüssel/Items: Ergebnis -> Fertig */}
           {mode === "keys" && keyResult && (
             <Button onClick={() => handleClose(false)}>Fertig</Button>
           )}
@@ -498,6 +594,32 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           )}
 
           {/* Vorauswahl -> Bestätigen + zurück */}
+          {mode === "objects" && objectPreview && !objectResult && (
+            <>
+              <Button
+                variant="ghost"
+                onClick={backToUpload}
+                disabled={applying}
+                className="gap-1.5"
+              >
+                <ArrowLeft />
+                Anderes Bild
+              </Button>
+              <Button
+                onClick={() => void handleApplyObjects()}
+                disabled={applying}
+              >
+                {applying ? (
+                  <>
+                    <LoaderCircle className="animate-spin" />
+                    Wird angelegt…
+                  </>
+                ) : (
+                  "Übernehmen"
+                )}
+              </Button>
+            </>
+          )}
           {mode === "keys" && keyPreview && !keyResult && (
             <>
               <Button
@@ -553,6 +675,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
           {/* Hochladen -> Abbrechen + Analysieren */}
           {mode &&
+            !objectPreview &&
             !keyPreview &&
             !itemPreview &&
             !objectResult &&
@@ -607,7 +730,136 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Schlüssel-Vorauswahl                                                */
+/* Objekt-Vorauswahl (editierbar)                                      */
+/* ------------------------------------------------------------------ */
+
+function ObjectPreviewBody({
+  selections,
+  setSelections,
+}: {
+  selections: ObjectSelection[];
+  setSelections: React.Dispatch<React.SetStateAction<ObjectSelection[]>>;
+}) {
+  const selectedCount = selections.filter((o) => o.selected).length;
+
+  function update(index: number, patch: Partial<ObjectSelection>) {
+    setSelections((prev) =>
+      prev.map((o, i) => (i === index ? { ...o, ...patch } : o)),
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {selections.length > 0 && (
+        <div>
+          <p className="mb-2 flex items-center gap-2 text-sm font-medium">
+            <Store className="h-4 w-4 text-primary" />
+            Erkannte Objekte
+            <Badge variant="secondary">{selectedCount}</Badge>
+          </p>
+          <div className="space-y-3">
+            {selections.map((o, i) => (
+              <div key={i} className="rounded-md border bg-card p-2.5">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={o.selected}
+                    onCheckedChange={(v) => update(i, { selected: v === true })}
+                    aria-label={`${o.name}: anlegen`}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                    {o.name || "(ohne Name)"}
+                  </span>
+                  {o.is_duplicate && (
+                    <Badge variant="secondary">Bereits vorhanden</Badge>
+                  )}
+                </div>
+
+                <div className="mt-2 space-y-2">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      Name
+                    </Label>
+                    <Input
+                      className="mt-1 h-8"
+                      value={o.name}
+                      onChange={(e) => update(i, { name: e.target.value })}
+                      aria-label={`Name für Objekt ${i + 1}`}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      Adresse
+                    </Label>
+                    <Input
+                      className="mt-1 h-8"
+                      value={o.address}
+                      onChange={(e) => update(i, { address: e.target.value })}
+                      aria-label={`Adresse für Objekt ${i + 1}`}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">
+                        Kategorie
+                      </Label>
+                      <Select
+                        value={o.category}
+                        onValueChange={(v) =>
+                          update(i, { category: v as ObjectCategory })
+                        }
+                      >
+                        <SelectTrigger className="mt-1 h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="objekt">Objekt</SelectItem>
+                          <SelectItem value="treppenhaus">
+                            Treppenhaus
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">
+                        Öffnet ab
+                      </Label>
+                      <Input
+                        type="time"
+                        className="mt-1 h-8"
+                        value={o.opens_at}
+                        onChange={(e) => update(i, { opens_at: e.target.value })}
+                        aria-label={`Öffnet ab für Objekt ${i + 1}`}
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={o.is_pedestrian_zone_until_11}
+                      onCheckedChange={(v) =>
+                        update(i, { is_pedestrian_zone_until_11: v === true })
+                      }
+                      aria-label={`Fußgängerzone für Objekt ${i + 1}`}
+                    />
+                    Fußgängerzone bis 11 Uhr
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selections.length === 0 && (
+        <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+          Keine Objekte im Foto erkannt.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Schlüssel-Vorauswahl (editierbar)                                   */
 /* ------------------------------------------------------------------ */
 
 function KeyPreviewBody({
@@ -627,64 +879,96 @@ function KeyPreviewBody({
     );
   }
 
+  /** Zuordnung zu einem anderen Objekt ändern. */
+  function pickObject(index: number, objectId: string) {
+    const obj = preview.objects.find((o) => o.id === objectId);
+    if (!obj) return;
+    update(index, {
+      object_id: obj.id,
+      object_name: obj.name,
+      address: obj.address,
+      already_has_key: obj.key_number != null,
+      selected: obj.key_number == null,
+    });
+  }
+
   return (
     <div className="space-y-4">
-      {preview.matches.length > 0 && (
+      {selections.length > 0 && (
         <div>
           <p className="mb-2 flex items-center gap-2 text-sm font-medium">
             <KeyRound className="h-4 w-4 text-primary" />
-            Gefundene Zuordnungen
+            Zuordnungen
             <Badge variant="secondary">{selectedCount}</Badge>
           </p>
           <ul className="space-y-2">
-            {preview.matches.map((m, i) => {
-              const sel = selections[i];
-              if (!sel) return null;
-              const disabled = sel.already_has_key;
-              return (
-                <li
-                  key={m.object_id}
-                  className="flex items-start gap-3 rounded-md border bg-card p-2.5"
-                >
-                  <Checkbox
-                    checked={sel.selected}
-                    disabled={disabled}
-                    onCheckedChange={(v) => update(i, { selected: v === true })}
-                    aria-label={`${m.object_name}: Schlüssel zuordnen`}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <p className="text-sm font-medium">{m.object_name}</p>
-                      {disabled && (
-                        <Badge variant="secondary">Schlüssel vorhanden</Badge>
-                      )}
+            {selections.map((k, i) => (
+              <li
+                key={i}
+                className="flex items-start gap-3 rounded-md border bg-card p-2.5"
+              >
+                <Checkbox
+                  checked={k.selected}
+                  disabled={k.already_has_key}
+                  onCheckedChange={(v) => update(i, { selected: v === true })}
+                  aria-label={`${k.object_name}: Schlüssel zuordnen`}
+                />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      Objekt
+                    </Label>
+                    <Select
+                      value={k.object_id}
+                      onValueChange={(v) => pickObject(i, v)}
+                    >
+                      <SelectTrigger className="mt-1 h-8 w-full">
+                        <SelectValue placeholder="Objekt wählen…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {preview.objects.map((obj) => (
+                          <SelectItem key={obj.id} value={obj.id}>
+                            {obj.name}
+                            {obj.key_number != null
+                              ? ` (Nr. ${obj.key_number})`
+                              : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {k.address && (
                       <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3" />
-                        {m.address}
+                        {k.address}
                       </span>
-                    </div>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        Schlüssel-Nr.
-                      </span>
-                      <Input
-                        type="number"
-                        min={1}
-                        inputMode="numeric"
-                        className="h-8 w-20"
-                        value={String(sel.key_number)}
-                        onChange={(e) =>
-                          update(i, {
-                            key_number: Number.parseInt(e.target.value, 10) || 0,
-                          })
-                        }
-                        aria-label={`Schlüssel-Nummer für ${m.object_name}`}
-                      />
-                    </div>
+                    )}
+                    {k.already_has_key && (
+                      <Badge variant="secondary">Schlüssel vorhanden</Badge>
+                    )}
                   </div>
-                </li>
-              );
-            })}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      Schlüssel-Nr.
+                    </span>
+                    <Input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      className="h-8 w-20"
+                      value={String(k.key_number)}
+                      onChange={(e) =>
+                        update(i, {
+                          key_number: Number.parseInt(e.target.value, 10) || 0,
+                        })
+                      }
+                      aria-label={`Schlüssel-Nummer für ${k.object_name}`}
+                    />
+                  </div>
+                </div>
+              </li>
+            ))}
           </ul>
         </div>
       )}
@@ -710,7 +994,7 @@ function KeyPreviewBody({
         </div>
       )}
 
-      {preview.matches.length === 0 && preview.unmatched.length === 0 && (
+      {selections.length === 0 && preview.unmatched.length === 0 && (
         <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
           Keine Schlüssel im Foto erkannt.
         </p>
