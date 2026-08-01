@@ -74,6 +74,11 @@ type ObjectSelection = {
   opens_at: string;
   selected: boolean;
   is_duplicate: boolean;
+  /** Koordinaten des ORS-Treffers (null = nicht verifiziert / geändert). */
+  latitude: number | null;
+  longitude: number | null;
+  /** Ob ORS die Adresse auflösen konnte (für das Badge). */
+  geocoding_status: "ok" | "not_found";
 };
 
 /** Bearbeitbares Item innerhalb einer Items-Gruppe. */
@@ -289,6 +294,9 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
             opens_at: o.opens_at ?? "",
             selected: !o.is_duplicate,
             is_duplicate: o.is_duplicate,
+            latitude: o.latitude,
+            longitude: o.longitude,
+            geocoding_status: o.geocoding_status,
           })),
         );
       }
@@ -340,6 +348,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         category: o.category,
         is_pedestrian_zone_until_11: o.is_pedestrian_zone_until_11,
         opens_at: o.opens_at || null,
+        latitude: o.latitude,
+        longitude: o.longitude,
       }));
     if (objects.length === 0) {
       toast.info("Keine Objekte zum Anlegen ausgewählt.");
@@ -790,12 +800,36 @@ function ObjectPreviewBody({
                     <Label className="text-xs text-muted-foreground">
                       Adresse
                     </Label>
-                    <Input
-                      className="mt-1 h-8"
-                      value={o.address}
-                      onChange={(e) => update(i, { address: e.target.value })}
-                      aria-label={`Adresse für Objekt ${i + 1}`}
-                    />
+                    <div className="mt-1 flex items-center gap-2">
+                      <Input
+                        className="h-8 flex-1"
+                        value={o.address}
+                        onChange={(e) =>
+                          update(i, {
+                            address: e.target.value,
+                            // Adresse geändert: ORS-Koordinaten gelten nicht mehr,
+                            // der Server geocodiert beim Anlegen neu.
+                            latitude: null,
+                            longitude: null,
+                            geocoding_status: "not_found",
+                          })
+                        }
+                        aria-label={`Adresse für Objekt ${i + 1}`}
+                      />
+                      {o.geocoding_status === "ok" ? (
+                        <Badge
+                          variant="outline"
+                          className="shrink-0 gap-1 border-success/40 text-success"
+                        >
+                          <CheckCircle2 className="h-3 w-3" />
+                          ORS-Treffer
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="shrink-0">
+                          Adresse nicht gefunden
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>

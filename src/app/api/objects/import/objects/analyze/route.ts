@@ -7,6 +7,10 @@ import {
   findDuplicate,
   normalizeAddress,
 } from "@/lib/ocr";
+import {
+  normalizeAddressForGeocoding,
+  orsGeocodeSearch,
+} from "@/lib/ors";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ObjectImportPreview } from "@/types/api";
 
@@ -70,20 +74,44 @@ export async function POST(request: Request) {
       normalizeAddress(row.address),
     );
 
-    const objects: ObjectImportPreview["objects"] = extracted.map((item) => {
-      const normalized = normalizeAddress(item.address);
-      const duplicate = findDuplicate(normalized, existingAddresses);
-      return {
-        name: item.name?.trim() || item.address,
-        address: item.address,
-        category: item.category ?? "objekt",
-        is_pedestrian_zone_until_11: Boolean(
-          item.is_pedestrian_zone_until_11,
-        ),
-        opens_at: item.opens_at || null,
-        is_duplicate: duplicate !== null,
-      };
-    });
+    // Adressen parallel per ORS geocoden – das normalisierte ORS-Label
+    // wird in der Vorschau angezeigt („die Adresse, die ORS vermutlich meint“).
+    const geocoded = await Promise.all(
+      extracted.map(async (item) => {
+        const hit = await orsGeocodeSearch(
+          normalizeAddressForGeocoding(item.address),
+        );
+        // Explizit typisiert: sonst weitet TS das Literal auf string auf.
+        const geocoding_status: "ok" | "not_found" = hit ? "ok" : "not_found";
+        return {
+          item,
+          address: hit?.label ?? item.address,
+          latitude: hit?.latitude ?? null,
+          longitude: hit?.longitude ?? null,
+          geocoding_status,
+        };
+      }),
+    );
+
+    const objects: ObjectImportPreview["objects"] = geocoded.map(
+      ({ item, address, latitude, longitude, geocoding_status }) => {
+        const normalized = normalizeAddress(address);
+        const duplicate = findDuplicate(normalized, existingAddresses);
+        return {
+          name: item.name?.trim() || address,
+          address,
+          category: item.category ?? "objekt",
+          is_pedestrian_zone_until_11: Boolean(
+            item.is_pedestrian_zone_until_11,
+          ),
+          opens_at: item.opens_at || null,
+          is_duplicate: duplicate !== null,
+          latitude,
+          longitude,
+          geocoding_status,
+        };
+      },
+    );
 
     return NextResponse.json({ objects } satisfies ObjectImportPreview);
   } catch (e) {

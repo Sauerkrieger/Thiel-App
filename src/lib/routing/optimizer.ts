@@ -1,11 +1,14 @@
 /**
  * Routen-Optimierung (Schritt 4)
  *
- * Ablauf: Adressen geocoden -> Fahrzeit-Matrix -> TSP mit Zeitfenstern.
+ * Ablauf: Adressen geocoden -> ORS-Optimization-API (VROOM, Zeitfenster +
+ * Servicezeiten nativ) -> Fallback: Fahrzeit-Matrix + TSP-Solver.
  *
  * Provider (priorisiert):
- *   1. OpenRouteService (ORS_API_KEY)
- *   2. Google Maps (GOOGLE_MAPS_API_KEY)
+ *   1. OpenRouteService Optimization-API (ORS_API_KEY) – löst die Rundtour
+ *      direkt (Zeitfenster "öffnet ab" / "Fußgängerzone bis 11:00" und
+ *      10 Min Servicezeit werden als Job-Zeitfenster/-Service übergeben)
+ *   2. OpenRouteService Matrix / Google Matrix + lokaler TSP-Solver
  *   3. Fallback "Demo-Modus": Haversine-Luftlinie + deterministische
  *      Hash-Koordinaten (stabil, aber nicht straßengenau)
  */
@@ -14,7 +17,11 @@ import {
   scheduleTimes,
   solveTspWithWindows,
 } from "@/lib/routing/tsp";
-import { orsAuthorizationHeader } from "@/lib/ors";
+import {
+  normalizeAddressForGeocoding,
+  orsAuthorizationHeader,
+  orsGeocodeSearch,
+} from "@/lib/ors";
 import {
   findNearestDrivablePoint,
   type DrivablePoint,
@@ -45,6 +52,12 @@ export const AVERAGE_SPEED_KMH = 30;
 /** ORS-Matrix ist auf die Kostenstufe limitiert; darüber Luftlinie. */
 const MAX_MATRIX_LOCATIONS = 20;
 
+/** ORS-Optimization-API: getestet bis 50 Jobs; darüber Matrix-Fallback. */
+const MAX_OPTIMIZATION_JOBS = 50;
+
+/** Letzter Sekundenwert eines Tages (für offene ORS-Zeitfenster). */
+const DAY_END_SECONDS = 24 * 60 * 60 - 1;
+
 export type RoutingMode = "openrouteservice" | "google" | "haversine";
 
 export type RouteObject = {
@@ -73,11 +86,11 @@ export type OptimizedStop = {
 
 export type RouteOptimizationResult = {
   mode: RoutingMode;
-  /** Vom Nutzer gewählte Startzeit = Abfahrtszeit (Beginn der Tour). */
+  /** Tatsächliche Abfahrtszeit (ORS wählt sie innerhalb des gewählten Startfensters optimal). */
   start_time: string;
   /** Dauer der Vorbereitung am Lager (5 Min/Stopp + 5 Min Schlüssel). */
   prep_duration_minutes: number;
-  /** Beginn der Vorbereitung am Lager (start_time − Vorbereitungszeit). */
+  /** Beginn der Vorbereitung am Lager (Abfahrt − Vorbereitungszeit). */
   prep_begin: string;
   /** Tatsächlicher Abfahrtszeitpunkt (= start_time). */
   departure_time: string;
@@ -89,35 +102,25 @@ export type RouteOptimizationResult = {
 
 type Coordinate = { lat: number; lng: number };
 
+/** Ergebnis der ORS-Optimization-API (aufbereitet). */
+type OrsSolution = {
+  /** Objekt-Nodes in Reihenfolge (1-basiert, ohne Lager). */
+  order: number[];
+  /** Ankunftszeiten (Minuten) je Stopp in `order`-Reihenfolge. */
+  times: number[];
+  /** Gesamtdauer in Minuten (inkl. Service- und Wartezeit, inkl. Rückfahrt). */
+  totalMinutes: number;
+  /** Tatsächliche Abfahrtszeit in Minuten (VROOM wählt sie im Fenster optimal). */
+  departureMinutes: number;
+};
+
 /* ------------------------------------------------------------------ */
 /* Geocoding (Zeit-Helfer siehe time.ts)                               */
 /* ------------------------------------------------------------------ */
 
 async function geocodeWithOrs(address: string): Promise<Coordinate | null> {
-  const apiKey = process.env.ORS_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch(
-      `https://api.openrouteservice.org/geocode/search?text=${encodeURIComponent(address)}&size=1`,
-      { headers: { Authorization: orsAuthorizationHeader(apiKey) } },
-    );
-    if (!res.ok) {
-      console.error(
-        `[ORS] Geocode-Anfrage fehlgeschlagen (Status ${res.status}) für „${address}“:`,
-        await res.text().catch(() => ""),
-      );
-      return null;
-    }
-    const json = await res.json();
-    const coord = json?.features?.[0]?.geometry?.coordinates;
-    if (Array.isArray(coord) && coord.length >= 2) {
-      return { lng: coord[0], lat: coord[1] };
-    }
-  } catch (err) {
-    console.error(`[ORS] Geocode-Anfrage fehlgeschlagen für „${address}“:`, err);
-    /* Fallback unten */
-  }
-  return null;
+  const hit = await orsGeocodeSearch(address);
+  return hit ? { lat: hit.latitude, lng: hit.longitude } : null;
 }
 
 async function geocodeWithGoogle(address: string): Promise<Coordinate | null> {
@@ -139,21 +142,6 @@ async function geocodeWithGoogle(address: string): Promise<Coordinate | null> {
   return null;
 }
 
-/**
- * Entfernt Stadtteil-Suffixe (z. B. "97072 Würzburg-Altstadt" → "97072 Würzburg"),
- * die ORS zu Fehl-Geocoding verleiten (z. B. Dresden statt Würzburg).
- * Betrifft nur den PLZ+Ort-Teil am Ende der Adresse – Straßennamen bleiben unberührt.
- * Hinweis: Echte zusammengesetzte Ortsnamen mit Bindestrich (z. B. "Bad Neuenahr-Ahrweiler")
- * werden dabei auf den ersten Teil gekürzt – im Würzburg-Kontext akzeptabel.
- */
-function normalizeAddressForGeocoding(address: string): string {
-  const match = address.match(
-    /^(.*,\s*\d{5}\s+[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß .'-]*)-[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß .'-]*$/u,
-  );
-  if (!match) return address;
-  return match[1].trimEnd();
-}
-
 /** Deterministische Pseudo-Koordinaten (Demo-Modus ohne API-Key). */
 function hashCoordinate(address: string): Coordinate {
   let h = 0;
@@ -173,7 +161,135 @@ async function geocodeAddress(address: string): Promise<Coordinate> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Distanz-Matrix                                                      */
+/* ORS-Optimization-API (Primärweg)                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Löst die Rundtour direkt über die ORS-Optimization-API (VROOM).
+ *
+ * Job-Zeitfenster = Array von [start,end]-Paaren (Sekunden), Fahrzeug-
+ * Zeitfenster = flaches Paar [start,end]. Die gewählte Startzeit ist die
+ * frühestmögliche Abfahrt; VROOM wählt die tatsächliche Abfahrt innerhalb
+ * des Fensters optimal (später losfahren, um Wartezeit zu sparen).
+ *
+ * Rückgabe null bei: kein Key, HTTP-Fehler, code != 0 oder nicht alle
+ * Jobs zugeordnet (unassigned > 0).
+ */
+async function solveWithOrsOptimization(
+  coords: Coordinate[],
+  earliest: number[],
+  deadline: number[],
+  startSec: number,
+): Promise<OrsSolution | null> {
+  const apiKey = process.env.ORS_API_KEY;
+  if (!apiKey) return null;
+
+  const jobs = coords.slice(1).map((c, index) => {
+    const node = index + 1;
+    const windowStart = Math.max(0, earliest[node]) * 60;
+    const windowEnd = Number.isFinite(deadline[node])
+      ? deadline[node] * 60
+      : DAY_END_SECONDS;
+    // Unmögliches Fenster (Öffnet ab > Deadline): Fenster weglassen, sonst
+    // lehnt VROOM die komplette Anfrage ab.
+    const timeWindows =
+      windowStart <= windowEnd
+        ? [[windowStart, windowEnd]]
+        : [[0, DAY_END_SECONDS]];
+    return {
+      id: node,
+      location: [c.lng, c.lat],
+      service: SERVICE_MINUTES * 60,
+      time_windows: timeWindows,
+    };
+  });
+
+  const warehouse = coords[0];
+  const body = {
+    jobs,
+    vehicles: [
+      {
+        id: 1,
+        profile: "driving-car",
+        start: [warehouse.lng, warehouse.lat],
+        end: [warehouse.lng, warehouse.lat],
+        time_window: [startSec, DAY_END_SECONDS],
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch("https://api.openrouteservice.org/optimization", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: orsAuthorizationHeader(apiKey),
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      console.error(
+        `[ORS] Optimization fehlgeschlagen (Status ${res.status}):`,
+        await res.text().catch(() => ""),
+      );
+      return null;
+    }
+    const json = await res.json();
+    if (json?.code !== 0) {
+      console.error("[ORS] Optimization ohne Lösung:", json?.error ?? json);
+      return null;
+    }
+    const unassigned = json?.summary?.unassigned ?? 0;
+    if (unassigned > 0) {
+      console.warn(
+        `[ORS] Optimization: ${unassigned} Job(s) nicht zugeordnet – Fallback.`,
+      );
+      return null;
+    }
+    const steps = json?.routes?.[0]?.steps as
+      | Array<{ type?: string; id?: number; arrival?: number }>
+      | undefined;
+    if (!Array.isArray(steps)) return null;
+
+    const startStep = steps.find((s) => s.type === "start");
+    if (!startStep || typeof startStep.arrival !== "number") return null;
+
+    const order: number[] = [];
+    const times: number[] = [];
+    let endArrival: number | null = null;
+    for (const step of steps) {
+      if (
+        step.type === "job" &&
+        typeof step.id === "number" &&
+        typeof step.arrival === "number"
+      ) {
+        order.push(step.id);
+        times.push(step.arrival / 60);
+      } else if (step.type === "end" && typeof step.arrival === "number") {
+        endArrival = step.arrival;
+      }
+    }
+    if (order.length !== coords.length - 1) {
+      console.warn("[ORS] Optimization: Reihenfolge unvollständig – Fallback.");
+      return null;
+    }
+
+    const departureMinutes = startStep.arrival / 60;
+    const endMinutes = endArrival !== null ? endArrival / 60 : departureMinutes;
+    return {
+      order,
+      times,
+      totalMinutes: Math.max(0, endMinutes - departureMinutes),
+      departureMinutes,
+    };
+  } catch (err) {
+    console.error("[ORS] Optimization-Anfrage fehlgeschlagen:", err);
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Distanz-Matrix (Fallback)                                           */
 /* ------------------------------------------------------------------ */
 
 function haversineKm(a: Coordinate, b: Coordinate): number {
@@ -278,10 +394,6 @@ async function matrixWithGoogle(
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Matrix-Auflösung                                                    */
-/* ------------------------------------------------------------------ */
-
 /**
  * Versucht ORS-Matrix, dann Google-Matrix; sonst Haversine-Fallback
  * inkl. passender Warnung (einmalig pro Aufruf).
@@ -322,12 +434,10 @@ export async function optimizeRoute(
   // Vorbereitung am Lager: 5 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
   const prepMinutes = prepMinutesForCount(objects.length);
   // Standard-Startzeit: aktuelle Uhrzeit + Vorbereitungszeit (auf 5 Min gerundet).
-  // Die gewählte Startzeit ist die Abfahrtszeit; die Vorbereitung findet davor statt.
+  // Die gewählte Startzeit ist die frühestmögliche Abfahrt.
   const resolvedStartTime = startTime ?? defaultStartTime(prepMinutes);
   const start = toMinutes(resolvedStartTime);
-  // Beginn der Vorbereitung; auf 00:00 geklemmt, falls die Startzeit vor
-  // Mitternacht zu früh gewählt wird (kein Vortag-Umlauf in der Anzeige).
-  const prepBegin = Math.max(0, start - prepMinutes);
+  const startSec = start * 60;
 
   const warehouseCoord = await geocodeAddress(WAREHOUSE_ADDRESS);
   const objectCoords = await Promise.all(
@@ -346,91 +456,147 @@ export async function optimizeRoute(
     ),
   ];
 
-  let { matrix, mode } = await resolveMatrix(coords, warnings);
-
-  // ---- Phase 1: direkte Zufahrt (Fußgängerzone: vor 11:00) ----------
-  let solution = solveTspWithWindows(
-    matrix,
-    earliest,
-    deadlineDirect,
-    start,
-    SERVICE_MINUTES,
-  );
-
-  // Objekt-Index -> Fußweg in Metern (nur bei approach_by_foot)
-  const walkingDistances = new Map<number, number>();
-  let finalMatrix = matrix;
-  let finalDeadline = deadlineDirect;
-
-  // ---- Phase 2: Umweg-Routing bei nicht erfüllbaren Zeitfenstern -----
   const pedestrianIndexes = objects
     .map((obj, index) => (obj.is_pedestrian_zone_until_11 ? index : -1))
     .filter((index) => index >= 0);
 
-  if (!solution.feasible && pedestrianIndexes.length > 0) {
-    const drivable = await Promise.all(
-      pedestrianIndexes.map(async (objIndex) => {
-        const point = await findNearestDrivablePoint(objectCoords[objIndex]);
-        return { objIndex, point };
-      }),
+  // Objekt-Index -> Fußweg in Metern (nur bei approach_by_foot)
+  const walkingDistances = new Map<number, number>();
+
+  /* ---- Phase 1: ORS-Optimization-API (Primärweg) ---------------------- */
+  let orsSolution: OrsSolution | null = null;
+  const hasOrsKey = Boolean(process.env.ORS_API_KEY);
+  if (hasOrsKey && coords.length <= MAX_OPTIMIZATION_JOBS) {
+    orsSolution = await solveWithOrsOptimization(
+      coords,
+      earliest,
+      deadlineDirect,
+      startSec,
     );
 
-    const usable = drivable.filter(
-      (entry): entry is { objIndex: number; point: DrivablePoint } =>
-        entry.point !== null,
-    );
-
-    if (usable.length > 0) {
-      // Koordinaten der Fußgängerzonen-Objekte durch befahrbare Punkte ersetzen
-      const detourCoords = coords.map((coord, index) => {
-        const hit = usable.find((u) => u.objIndex + 1 === index);
-        return hit ? hit.point : coord;
-      });
-      const detour = await resolveMatrix(detourCoords, warnings);
-
-      // Für Umweg-Objekte entfällt die „vor 11:00“-Restriktion
-      const deadlineDetour = deadlineDirect.map((d, index) =>
-        usable.some((u) => u.objIndex + 1 === index)
-          ? Number.POSITIVE_INFINITY
-          : d,
+    // Umweg-Routing bei nicht erfüllbaren Zeitfenstern (Fußgängerzone)
+    if (!orsSolution && pedestrianIndexes.length > 0) {
+      const drivable = await Promise.all(
+        pedestrianIndexes.map(async (objIndex) => {
+          const point = await findNearestDrivablePoint(objectCoords[objIndex]);
+          return { objIndex, point };
+        }),
       );
-      const solutionDetour = solveTspWithWindows(
-        detour.matrix,
-        earliest,
-        deadlineDetour,
-        start,
-        SERVICE_MINUTES,
+      const usable = drivable.filter(
+        (entry): entry is { objIndex: number; point: DrivablePoint } =>
+          entry.point !== null,
       );
-
-      // Übernehmen, wenn der Umweg lösbar ist
-      if (solutionDetour.feasible) {
-        finalMatrix = detour.matrix;
-        finalDeadline = deadlineDetour;
-        solution = solutionDetour;
-        mode = detour.mode;
-        usable.forEach((u) =>
-          walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
+      if (usable.length > 0) {
+        const detourCoords = coords.map((coord, index) => {
+          const hit = usable.find((u) => u.objIndex + 1 === index);
+          return hit ? hit.point : coord;
+        });
+        const deadlineDetour = deadlineDirect.map((d, index) =>
+          usable.some((u) => u.objIndex + 1 === index)
+            ? Number.POSITIVE_INFINITY
+            : d,
         );
-        warnings.push(
-          "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß, Zeitfenster „vor 11:00“ entfällt für diese Stopps).",
+        const detourSolution = await solveWithOrsOptimization(
+          detourCoords,
+          earliest,
+          deadlineDetour,
+          startSec,
         );
+        if (detourSolution) {
+          orsSolution = detourSolution;
+          usable.forEach((u) =>
+            walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
+          );
+          warnings.push(
+            "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß, Zeitfenster „vor 11:00“ entfällt für diese Stopps).",
+          );
+        }
       }
     }
+
+    if (!orsSolution) {
+      warnings.push(
+        "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
+      );
+    }
+  } else if (hasOrsKey) {
+    warnings.push(
+      `Mehr als ${MAX_OPTIMIZATION_JOBS} Ziele – ORS-Optimierung übersprungen, nutze Matrix + lokalen Solver.`,
+    );
   }
 
-  const order = solution.order;
+  let order: number[];
+  let times: number[];
+  let total: number;
+  let departureMinutes: number;
+  let mode: RoutingMode;
 
-  // Ankunftszeiten für die Anzeige (bei Infeasibility ohne Fenster-Check)
-  let times = scheduleTimes(
-    order,
-    finalMatrix,
-    earliest,
-    finalDeadline,
-    start,
-    SERVICE_MINUTES,
-    true,
-  );
-  if (!times) {
+  if (orsSolution) {
+    mode = "openrouteservice";
+    order = orsSolution.order;
+    times = orsSolution.times;
+    total = orsSolution.totalMinutes;
+    departureMinutes = orsSolution.departureMinutes;
+  } else {
+    /* ---- Phase 2: Matrix + TSP (Fallback) ------------------------------ */
+    let { matrix, mode: matrixMode } = await resolveMatrix(coords, warnings);
+    mode = matrixMode;
+    let solution = solveTspWithWindows(
+      matrix,
+      earliest,
+      deadlineDirect,
+      start,
+      SERVICE_MINUTES,
+    );
+    let finalMatrix = matrix;
+    let finalDeadline = deadlineDirect;
+
+    // Umweg-Routing bei nicht erfüllbaren Zeitfenstern (Fußgängerzone)
+    if (!solution.feasible && pedestrianIndexes.length > 0) {
+      const drivable = await Promise.all(
+        pedestrianIndexes.map(async (objIndex) => {
+          const point = await findNearestDrivablePoint(objectCoords[objIndex]);
+          return { objIndex, point };
+        }),
+      );
+      const usable = drivable.filter(
+        (entry): entry is { objIndex: number; point: DrivablePoint } =>
+          entry.point !== null,
+      );
+      if (usable.length > 0) {
+        const detourCoords = coords.map((coord, index) => {
+          const hit = usable.find((u) => u.objIndex + 1 === index);
+          return hit ? hit.point : coord;
+        });
+        const detour = await resolveMatrix(detourCoords, warnings);
+        const deadlineDetour = deadlineDirect.map((d, index) =>
+          usable.some((u) => u.objIndex + 1 === index)
+            ? Number.POSITIVE_INFINITY
+            : d,
+        );
+        const solutionDetour = solveTspWithWindows(
+          detour.matrix,
+          earliest,
+          deadlineDetour,
+          start,
+          SERVICE_MINUTES,
+        );
+        if (solutionDetour.feasible) {
+          finalMatrix = detour.matrix;
+          finalDeadline = deadlineDetour;
+          solution = solutionDetour;
+          mode = detour.mode;
+          usable.forEach((u) =>
+            walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
+          );
+          warnings.push(
+            "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß, Zeitfenster „vor 11:00“ entfällt für diese Stopps).",
+          );
+        }
+      }
+    }
+
+    order = solution.order;
     times = scheduleTimes(
       order,
       finalMatrix,
@@ -438,14 +604,24 @@ export async function optimizeRoute(
       finalDeadline,
       start,
       SERVICE_MINUTES,
+      true,
+    ) ?? scheduleTimes(
+      order,
+      finalMatrix,
+      earliest,
+      finalDeadline,
+      start,
+      SERVICE_MINUTES,
       false,
-    );
-  }
+    ) ?? [];
+    total = Number.isFinite(solution.totalMinutes) ? solution.totalMinutes : 0;
+    departureMinutes = start;
 
-  if (!solution.feasible) {
-    warnings.push(
-      "Die Zeit-Restriktionen können mit der gewählten Startzeit nicht für alle Objekte erfüllt werden (z. B. Fußgängerzone vor 11:00 Uhr). Bitte Startzeit anpassen oder Objekte entfernen.",
-    );
+    if (!solution.feasible) {
+      warnings.push(
+        "Die Zeit-Restriktionen können mit der gewählten Startzeit nicht für alle Objekte erfüllt werden (z. B. Fußgängerzone vor 11:00 Uhr). Bitte Startzeit anpassen oder Objekte entfernen.",
+      );
+    }
   }
 
   // Doppelte Warnungen (z. B. aus Phase 1 + Phase 2) entfernen
@@ -453,7 +629,7 @@ export async function optimizeRoute(
 
   const stops: OptimizedStop[] = order.map((node, index) => {
     const obj = objects[node - 1];
-    const arrival = times![index];
+    const arrival = times[index];
     const walking = walkingDistances.get(node - 1);
     return {
       object_id: obj.id,
@@ -469,15 +645,14 @@ export async function optimizeRoute(
     };
   });
 
-  const total = Number.isFinite(solution.totalMinutes) ? solution.totalMinutes : 0;
-  const warehouseArrival = formatMinutes(start + total);
+  const warehouseArrival = formatMinutes(departureMinutes + total);
 
   return {
     mode,
-    start_time: resolvedStartTime,
+    start_time: formatMinutes(departureMinutes),
     prep_duration_minutes: prepMinutes,
-    prep_begin: formatMinutes(prepBegin),
-    departure_time: formatMinutes(start),
+    prep_begin: formatMinutes(Math.max(0, departureMinutes - prepMinutes)),
+    departure_time: formatMinutes(departureMinutes),
     stops,
     total_duration_minutes: Math.round(total),
     warehouse_arrival: warehouseArrival,

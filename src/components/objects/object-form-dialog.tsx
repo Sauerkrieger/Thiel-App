@@ -106,6 +106,17 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
     setLongitude(suggestion.longitude);
   }
 
+  /**
+   * Manuell getippte Adresse (ohne Vorschlag) wurde beim Blur per ORS
+   * verifiziert: normalisiertes ORS-Label + Koordinaten übernehmen.
+   */
+  function handleAddressVerified(suggestion: AddressSuggestion | null) {
+    if (!suggestion) return;
+    setAddress(suggestion.label);
+    setLatitude(suggestion.latitude);
+    setLongitude(suggestion.longitude);
+  }
+
   function updateItem(index: number, patch: Partial<ItemDraft>) {
     setItems((prev) =>
       prev.map((item, i) => (i === index ? { ...item, ...patch } : item)),
@@ -302,13 +313,15 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               value={address}
               onChange={handleAddressChange}
               onSelect={handleAddressSelect}
+              onVerified={handleAddressVerified}
               verified={latitude !== null && longitude !== null}
               placeholder="z. B. Hauptstraße 12, 12345 Musterstadt"
             />
             <p className="text-xs text-muted-foreground">
-              Vorschläge erscheinen ab 3 Zeichen. Wähle einen Treffer aus, um
-              die Adresse zu verifizieren – eine Fußgängerzone wird dann
-              automatisch erkannt.
+              Vorschläge erscheinen ab 3 Zeichen. Wähle einen Treffer aus oder
+              verlasse das Feld mit einer getippten Adresse – ORS findet dann
+              automatisch den passenden Treffer (Label + Koordinaten werden
+              übernommen). Eine Fußgängerzone wird automatisch erkannt.
             </p>
           </div>
 

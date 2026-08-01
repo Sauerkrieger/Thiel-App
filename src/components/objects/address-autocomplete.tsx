@@ -23,6 +23,11 @@ type Props = {
   onChange: (value: string) => void;
   /** Wird aufgerufen, sobald eine Adresse aus den Vorschlägen gewählt wurde. */
   onSelect: (suggestion: AddressSuggestion) => void;
+  /**
+   * Wird aufgerufen, wenn eine manuell getippte Adresse (ohne Vorschlag-Auswahl)
+   * beim Verlassen des Feldes per ORS verifiziert wurde. `null` = kein Treffer.
+   */
+  onVerified?: (suggestion: AddressSuggestion | null) => void;
   /** true, wenn die aktuelle Adresse als verifiziert angezeigt werden soll. */
   verified?: boolean;
   placeholder?: string;
@@ -35,6 +40,7 @@ export function AddressAutocomplete({
   value,
   onChange,
   onSelect,
+  onVerified,
   verified = false,
   placeholder,
   autoFocus,
@@ -54,6 +60,8 @@ export function AddressAutocomplete({
   const focusedRef = useRef(false);
   /** true, während der Nutzer manuell tippt (nicht bei programmatischen Änderungen). */
   const typingRef = useRef(false);
+  /** Laufnummer, um veraltete Verify-Antworten (nach erneutem Fokus/Tippen) zu verwerfen. */
+  const verifySeqRef = useRef(0);
 
   const trimmed = value.trim();
 
@@ -136,6 +144,9 @@ export function AddressAutocomplete({
 
   const handleSelect = useCallback(
     (suggestion: AddressSuggestion) => {
+      // Jede Nutzeraktion invalidiert eine laufende Blur-Verify-Anfrage,
+      // damit eine veraltete Antwort keine neuere Auswahl überschreibt.
+      verifySeqRef.current++;
       // Verhindert, dass die durch die Wertänderung ausgelöste
       // Effekt-Neuausführung erneut sucht und die Liste öffnet.
       typingRef.current = false;
@@ -146,6 +157,35 @@ export function AddressAutocomplete({
       onSelect(suggestion);
     },
     [onSelect],
+  );
+
+  /**
+   * Beim Verlassen des Feldes: manuell getippte Adresse (kein Vorschlag
+   * gewählt) automatisch per ORS verifizieren und das Ergebnis melden.
+   */
+  const verifyTypedAddress = useCallback(
+    async (raw: string) => {
+      if (!onVerified || raw.trim().length < MIN_QUERY_LENGTH) return;
+      const seq = ++verifySeqRef.current;
+      try {
+        const res = await fetch("/api/geocoding/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: raw }),
+        });
+        if (seq !== verifySeqRef.current) return;
+        const body = await res.json().catch(() => null);
+        if (seq !== verifySeqRef.current) return;
+        if (res.ok && body && body.verified && body.suggestion) {
+          onVerified(body.suggestion as AddressSuggestion);
+        } else {
+          onVerified(null);
+        }
+      } catch {
+        if (seq === verifySeqRef.current) onVerified(null);
+      }
+    },
+    [onVerified],
   );
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -193,6 +233,8 @@ export function AddressAutocomplete({
           id={inputId}
           value={value}
           onChange={(e) => {
+            // Weiteres Tippen invalidiert eine laufende Blur-Verify-Anfrage.
+            verifySeqRef.current++;
             typingRef.current = true;
             onChange(e.target.value);
           }}
@@ -207,6 +249,13 @@ export function AddressAutocomplete({
             focusedRef.current = false;
             setOpen(false);
             setActiveIndex(-1);
+            // Nur verifizieren, wenn der Nutzer wirklich manuell getippt hat
+            // (eine Vorschlag-Auswahl setzt typingRef vorher auf false).
+            if (typingRef.current) {
+              const typed = value.trim();
+              typingRef.current = false;
+              void verifyTypedAddress(typed);
+            }
           }}
           placeholder={placeholder}
           autoFocus={autoFocus}

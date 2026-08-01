@@ -198,6 +198,11 @@ export type ObjectImportPreviewEntry = {
   opens_at: string | null;
   /** true, wenn die Adresse bereits in der DB existiert (Duplikat). */
   is_duplicate: boolean;
+  /** Koordinaten des ORS-Treffers (wenn die Adresse verifiziert wurde). */
+  latitude: number | null;
+  longitude: number | null;
+  /** Ob ORS die Adresse auflösen konnte. */
+  geocoding_status: "ok" | "not_found";
 };
 
 /** Antwort von POST /api/objects/import/objects/analyze. */
@@ -212,6 +217,9 @@ export type ObjectImportInput = {
   category: ObjectCategory;
   is_pedestrian_zone_until_11: boolean;
   opens_at: string | null;
+  /** Koordinaten (falls vorhanden; sonst geocodiert der Server nach). */
+  latitude: number | null;
+  longitude: number | null;
 };
 
 /* ------------------------------------------------------------------ */

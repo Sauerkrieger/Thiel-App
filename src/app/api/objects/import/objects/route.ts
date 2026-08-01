@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { apiErrorResponse, isObjectCategory } from "@/lib/http";
+import {
+  apiErrorResponse,
+  isObjectCategory,
+  validLatitude,
+  validLongitude,
+} from "@/lib/http";
 import { findDuplicate, normalizeAddress } from "@/lib/ocr";
+import {
+  normalizeAddressForGeocoding,
+  orsGeocodeSearch,
+} from "@/lib/ors";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ImportResult, ObjectImportInput } from "@/types/api";
 
@@ -57,6 +66,8 @@ export async function POST(request: Request) {
         is_pedestrian_zone_until_11: Boolean(r.is_pedestrian_zone_until_11),
         opens_at:
           typeof r.opens_at === "string" && r.opens_at ? r.opens_at : null,
+        latitude: validLatitude(r.latitude),
+        longitude: validLongitude(r.longitude),
       });
     }
 
@@ -98,6 +109,20 @@ export async function POST(request: Request) {
         continue;
       }
 
+      // Koordinaten aus der Vorschau übernehmen; falls sie fehlen (kein ORS-
+      // Treffer oder Adresse manuell geändert), nach-geocoden.
+      let latitude = input.latitude;
+      let longitude = input.longitude;
+      if (latitude === null || longitude === null) {
+        const hit = await orsGeocodeSearch(
+          normalizeAddressForGeocoding(input.address),
+        );
+        if (hit) {
+          latitude = hit.latitude;
+          longitude = hit.longitude;
+        }
+      }
+
       const { data, error } = await supabase
         .from("objects")
         .insert({
@@ -106,6 +131,8 @@ export async function POST(request: Request) {
           category: input.category,
           is_pedestrian_zone_until_11: input.is_pedestrian_zone_until_11,
           opens_at: input.opens_at,
+          latitude,
+          longitude,
         })
         .select()
         .single();
