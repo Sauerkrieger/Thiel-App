@@ -116,7 +116,6 @@ export function LoginForm({ next }: { next?: string }) {
                 <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="username"
-                  placeholder="z. B. Leon"
                   autoComplete="username"
                   className="pl-9"
                   value={username}
@@ -133,7 +132,6 @@ export function LoginForm({ next }: { next?: string }) {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="••••••••"
                   autoComplete="current-password"
                   className="pl-9"
                   value={password}
