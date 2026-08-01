@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2 } from "lucide-react";
+import { Building2, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/objects", label: "Objekte" },
   { href: "/planung", label: "Tourenplanung" },
-  { href: "/einstellungen", label: "Einstellungen" },
+  { href: "/einstellungen", label: "Einstellungen", icon: Settings },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -39,18 +39,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {NAV_ITEMS.map((item) => {
               const active =
                 pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const Icon = item.icon;
               return (
                 <Link
                   key={item.href}
                   href={item.href}
+                  aria-label={item.icon ? item.label : undefined}
+                  title={item.icon ? item.label : undefined}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    item.icon && "px-2",
                     active
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   )}
                 >
-                  {item.label}
+                  {Icon ? <Icon className="h-4 w-4" /> : item.label}
                 </Link>
               );
             })}
