@@ -186,6 +186,83 @@ export type UserListItem = AuthUser & {
 };
 
 /* ------------------------------------------------------------------ */
+/* Foto-Import: Schlüssel & Items (Schritt 8)                          */
+/* ------------------------------------------------------------------ */
+
+/** Vom OCR erkannte Schlüssel-Zuordnung (noch nicht bestätigt). */
+export type KeyImportEntry = {
+  /** Name wie auf dem Zettel (kann abgekürzt sein). */
+  name: string | null;
+  key_number: number;
+};
+
+/** Schlüssel-Zuordnung zu einem bestehenden Objekt (Vorauswahl). */
+export type KeyImportMatch = {
+  object_id: string;
+  object_name: string;
+  address: string;
+  key_number: number;
+  /** true, wenn das Objekt bereits eine Schlüsselnummer hat. */
+  already_has_key: boolean;
+};
+
+/** Schlüssel-Eintrag, dessen Objekt nicht existiert. */
+export type KeyImportUnmatched = KeyImportEntry;
+
+/** Antwort von POST /api/objects/import/keys/analyze. */
+export type KeyImportPreview = {
+  matches: KeyImportMatch[];
+  unmatched: KeyImportUnmatched[];
+};
+
+/** Ergebnis nach dem Bestätigen von POST /api/objects/import/keys. */
+export type KeyImportResult = {
+  assigned: number;
+  already_had_key: number;
+  not_found: number;
+};
+
+/** Vom OCR erkannte Items-Gruppe (Objekt-Hinweis + Items). */
+export type ItemGroupImportEntry = {
+  name: string | null;
+  address: string | null;
+  items: {
+    item_name: string;
+    quantity: number;
+    note: string | null;
+  }[];
+};
+
+/** Items-Gruppe zugeordnet zu einem bestehenden Objekt (Vorauswahl). */
+export type ItemGroupImportMatch = {
+  object_id: string;
+  object_name: string;
+  address: string | null;
+  matched_by: "adresse" | "name";
+  items: {
+    item_name: string;
+    quantity: number;
+    note: string | null;
+  }[];
+};
+
+/** Items-Gruppe, deren Objekt nicht existiert. */
+export type ItemGroupImportUnmatched = ItemGroupImportEntry;
+
+/** Antwort von POST /api/objects/import/items/analyze. */
+export type ItemGroupImportPreview = {
+  matches: ItemGroupImportMatch[];
+  unmatched: ItemGroupImportUnmatched[];
+};
+
+/** Ergebnis nach dem Bestätigen von POST /api/objects/import/items. */
+export type ItemGroupImportResult = {
+  assigned: number;
+  items_added: number;
+  not_found: number;
+};
+
+/* ------------------------------------------------------------------ */
 /* Tourenhistorie (Schritt 7)                                          */
 /* ------------------------------------------------------------------ */
 
