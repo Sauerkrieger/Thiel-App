@@ -79,7 +79,6 @@ type ObjectSelection = {
   name: string;
   address: string;
   category: ObjectCategory;
-  is_pedestrian_zone_until_11: boolean;
   opens_at: string;
   selected: boolean;
   is_duplicate: boolean;
@@ -312,7 +311,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
             name: o.name,
             address: o.address,
             category: o.category,
-            is_pedestrian_zone_until_11: o.is_pedestrian_zone_until_11,
             opens_at: o.opens_at ?? "",
             selected: !o.is_duplicate,
             is_duplicate: o.is_duplicate,
@@ -395,7 +393,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         name: o.name.trim() || o.address.trim(),
         address: o.address.trim(),
         category: o.category,
-        is_pedestrian_zone_until_11: o.is_pedestrian_zone_until_11,
         opens_at: o.opens_at || null,
         latitude: o.latitude,
         longitude: o.longitude,
@@ -474,7 +471,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     if (mode === "items") {
       return "Fotografiere eine Packliste, auf der der Objektname (oft mit Adresse) und die Items stehen. Die KI ordnet die Items dem passenden Objekt zu – du bestätigst vor dem Speichern.";
     }
-    return "Fotografiere eine gedruckte Adressliste. Die KI erkennt die Objekte – du kannst Name, Adresse und Kategorie anpassen und bestätigst vor dem Anlegen.";
+    return "Fotografiere eine gedruckte Adressliste. Die KI erkennt die Objekte – du kannst Name, Adresse und Kategorie anpassen und bestätigst vor dem Anlegen. Eine Fußgängerzone wird automatisch anhand der Adresse erkannt.";
   })();
 
   return (
@@ -915,16 +912,10 @@ function ObjectPreviewBody({
                       />
                     </div>
                   </div>
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={o.is_pedestrian_zone_until_11}
-                      onCheckedChange={(v) =>
-                        update(i, { is_pedestrian_zone_until_11: v === true })
-                      }
-                      aria-label={`Fußgängerzone für Objekt ${i + 1}`}
-                    />
-                    Fußgängerzone bis 11 Uhr
-                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Fußgängerzonen werden automatisch anhand der Adresse
+                    erkannt.
+                  </p>
                 </div>
               </div>
             ))}

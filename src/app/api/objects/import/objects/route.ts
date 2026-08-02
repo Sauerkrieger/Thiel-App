@@ -11,6 +11,7 @@ import {
   normalizeAddressForGeocoding,
   orsGeocodeSearch,
 } from "@/lib/ors";
+import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ImportResult, ObjectImportInput } from "@/types/api";
 
@@ -123,13 +124,19 @@ export async function POST(request: Request) {
         }
       }
 
+      // Fußgängerzone: automatisch per OSM/Overpass erkennen. Ein Hinweis aus
+      // der Foto-Erkennung (OCR) wird zusätzlich berücksichtigt.
+      const isPedestrianZone =
+        Boolean(input.is_pedestrian_zone_until_11) ||
+        (await safeIsInPedestrianZone(latitude, longitude));
+
       const { data, error } = await supabase
         .from("objects")
         .insert({
           name: input.name,
           address: input.address,
           category: input.category,
-          is_pedestrian_zone_until_11: input.is_pedestrian_zone_until_11,
+          is_pedestrian_zone_until_11: isPedestrianZone,
           opens_at: input.opens_at,
           latitude,
           longitude,

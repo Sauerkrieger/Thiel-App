@@ -7,23 +7,10 @@ import {
   validLongitude,
 } from "@/lib/http";
 import { parseItemInputs } from "@/lib/items";
-import { isInPedestrianZone } from "@/lib/overpass";
+import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { requireUser, isAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-
-/**
- * Erkennt per OSM/Overpass, ob die Koordinaten in einer Fußgängerzone liegen.
- * Ohne Koordinaten oder bei Erkennungsfehler: false.
- */
-async function detectPedestrianZone(lat: number | null, lng: number | null): Promise<boolean> {
-  if (lat === null || lng === null) return false;
-  try {
-    return await isInPedestrianZone({ lat, lng });
-  } catch {
-    return false;
-  }
-}
 
 /** Parst die optionale Schlüssel-Nummer (positive Ganzzahl oder null). */
 function parseKeyNumber(value: unknown): number | null {
@@ -89,7 +76,7 @@ export async function POST(request: Request) {
     }
 
     // Fußgängerzone automatisch anhand der Koordinaten erkennen
-    const isPedestrianZone = await detectPedestrianZone(latitude, longitude);
+    const isPedestrianZone = await safeIsInPedestrianZone(latitude, longitude);
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase

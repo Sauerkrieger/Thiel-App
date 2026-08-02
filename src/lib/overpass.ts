@@ -8,8 +8,20 @@
  *     befahrbaren Straße außerhalb der Fußgängerzone.
  */
 
-const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+/** Primärer Endpoint + Fallback-Spiegel (bei Überlastung/Rate-Limit). */
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
 const OVERPASS_TIMEOUT_MS = 20_000;
+
+/**
+ * Overpass-api.de blockt Requests ohne aussagekräftigen User-Agent mit
+ * HTTP 406 („Not Acceptable“). Ohne eigenen Header sendet Node/undici den
+ * Default-Wert, der abgelehnt wird – daher explizit setzen.
+ */
+const OVERPASS_USER_AGENT =
+  "Thiel-App/1.0 (Routenplanung; +https://github.com/Sauerkrieger/Thiel-App)";
 
 export type Coordinate = { lat: number; lng: number };
 
@@ -35,22 +47,39 @@ const DRIVABLE_HIGHWAYS = [
 ];
 
 async function queryOverpass(query: string): Promise<{ elements?: unknown[] }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
-  try {
-    const res = await fetch(OVERPASS_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `data=${encodeURIComponent(query)}`,
-      signal: controller.signal,
-    });
-    if (!res.ok) return { elements: [] };
-    return (await res.json()) as { elements?: unknown[] };
-  } catch {
-    return { elements: [] };
-  } finally {
-    clearTimeout(timer);
+  // Überlastung/Rate-Limit (429/5xx) und Timeouts: je Endpoint 2 Versuche,
+  // danach auf den Fallback-Spiegel wechseln.
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": OVERPASS_USER_AGENT,
+          },
+          body: `data=${encodeURIComponent(query)}`,
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          return (await res.json()) as { elements?: unknown[] };
+        }
+        if (res.status === 429 || res.status >= 500) {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          continue;
+        }
+        // 4xx (z. B. Syntaxfehler) – kein Retry sinnvoll
+        return { elements: [] };
+      } catch {
+        // Timeout/Netzwerkfehler – nächster Versuch
+      } finally {
+        clearTimeout(timer);
+      }
+    }
   }
+  return { elements: [] };
 }
 
 function isNumber(value: unknown): value is number {
@@ -158,16 +187,41 @@ out geom;`;
   for (const way of ways) {
     const coords = wayCoordinates(way);
     if (coords.length < 2) continue;
-    // Geschlossene Fläche → Punkt-in-Polygon
     const closed =
       coords.length > 2 &&
       coords[0].lat === coords[coords.length - 1].lat &&
       coords[0].lng === coords[coords.length - 1].lng;
-    if (closed && pointInPolygon(coordinate, coords)) return true;
-    // Offene Fußgängerzone/-straße → nahe genug
-    if (distanceToWay(coordinate, coords) < 40) return true;
+    if (closed) {
+      // Geschlossene Fläche → nur Punkt-in-Polygon (Nähe zählt nicht,
+      // sonst würde ein Punkt direkt außerhalb fälschlich erkannt)
+      if (pointInPolygon(coordinate, coords)) return true;
+    } else if (distanceToWay(coordinate, coords) < 40) {
+      // Offene Fußgängerzone/-straße → nahe genug
+      return true;
+    }
   }
   return false;
+}
+
+/**
+ * Sicherer Fußgängerzonen-Check für den Server: liefert false bei fehlenden
+ * Koordinaten oder wenn Overpass nicht erreichbar ist (kein Throw nach außen).
+ */
+export async function safeIsInPedestrianZone(
+  lat: number | null,
+  lng: number | null,
+): Promise<boolean> {
+  if (lat === null || lng === null) return false;
+  try {
+    return await isInPedestrianZone({ lat, lng });
+  } catch {
+    // Kein Crash, aber sichtbar machen: Das Objekt wird dann ohne
+    // Fußgängerzonen-Kennzeichnung gespeichert.
+    console.warn(
+      "[Overpass] Fußgängerzonen-Check fehlgeschlagen – Objekt wird ohne Kennzeichnung gespeichert.",
+    );
+    return false;
+  }
 }
 
 /**

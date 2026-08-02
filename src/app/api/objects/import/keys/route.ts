@@ -9,6 +9,7 @@ import {
   normalizeAddressForGeocoding,
   orsGeocodeSearch,
 } from "@/lib/ors";
+import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { KeyImportResult } from "@/types/api";
 
@@ -174,13 +175,19 @@ export async function POST(request: Request) {
         longitude = hit.longitude;
       }
 
+      // Fußgängerzone automatisch anhand der Koordinaten erkennen
+      const isPedestrianZone = await safeIsInPedestrianZone(
+        latitude,
+        longitude,
+      );
+
       const { data: created, error } = await supabase
         .from("objects")
         .insert({
           name: n.name,
           address: n.address,
           category: "objekt",
-          is_pedestrian_zone_until_11: false,
+          is_pedestrian_zone_until_11: isPedestrianZone,
           opens_at: null,
           latitude,
           longitude,
