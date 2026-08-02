@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Image, ListChecks, PackageCheck } from "lucide-react";
+import { Image, ListChecks, PackageCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -26,6 +25,61 @@ type Props = {
   objectId: string | null;
   onOpenChange: (open: boolean) => void;
 };
+
+/**
+ * Eine Zeile in der Packliste. Items sind bewusst nicht änderbar (kein
+ * Checkbox/Häkchen). Hat das Item ein Foto, ist die gesamte Zeile antippbar
+ * und öffnet die Foto-Vorschau.
+ */
+function PackItemRow({
+  label,
+  note,
+  badge,
+  photoPath,
+  onOpenPhoto,
+}: {
+  label: string;
+  note?: string | null;
+  badge?: string;
+  photoPath: string | null;
+  onOpenPhoto: (photoPath: string) => void;
+}) {
+  const hasPhoto = Boolean(photoPath);
+  const content = (
+    <>
+      <span className="flex-1">
+        <span className="block text-sm">{label}</span>
+        {note && (
+          <span className="block text-xs text-muted-foreground">{note}</span>
+        )}
+      </span>
+      {hasPhoto && (
+        <Image className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+      )}
+      {badge && <Badge variant="secondary">{badge}</Badge>}
+    </>
+  );
+
+  return (
+    <li>
+      {hasPhoto ? (
+        <button
+          type="button"
+          onClick={() => onOpenPhoto(photoPath!)}
+          aria-label={`Foto von ${label} anzeigen`}
+          title={`Foto von ${label} anzeigen`}
+          className="flex w-full items-center gap-3 rounded-md border bg-card px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-accent/40 active:bg-accent/60"
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="flex items-center gap-3 rounded-md border bg-card px-3 py-2">
+          {content}
+        </div>
+      )}
+    </li>
+  );
+}
 
 export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) {
   const [items, setItems] = useState<ObjectItem[]>([]);
@@ -100,28 +154,12 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
                 </p>
                 <ul className="space-y-1.5">
                   {standardItems.map((item) => (
-                    <li
+                    <PackItemRow
                       key={item.id}
-                      className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-2"
-                    >
-                      <Checkbox checked disabled aria-label={`${formatItemLabel(item)} (Standard)`} />
-                      <span className="flex-1 text-sm text-muted-foreground">
-                        {formatItemLabel(item)}
-                      </span>
-                      {item.photo_path && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground"
-                          aria-label={`Foto von ${formatItemLabel(item)} anzeigen`}
-                          onClick={() => setPhotoPreview(item.photo_path)}
-                        >
-                          <Image className="h-4 w-4" />
-                        </Button>
-                      )}
-                      <Check className="h-4 w-4 text-success" />
-                    </li>
+                      label={formatItemLabel(item)}
+                      photoPath={item.photo_path}
+                      onOpenPhoto={setPhotoPreview}
+                    />
                   ))}
                 </ul>
               </div>
@@ -133,40 +171,16 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
                   Vorgemerkt – muss mitgenommen werden
                 </p>
                 <ul className="space-y-1.5">
-                  {markedItems.map((item) => {
-                    const note = noteFor(item.item_name);
-                    return (
-                      <li
-                        key={item.id}
-                        className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-2"
-                      >
-                        <Checkbox checked disabled aria-label={`${formatItemLabel(item)} (vorgemerkt)`} />
-                        <span className="flex-1">
-                          <span className="block text-sm">
-                            {formatItemLabel(item)}
-                          </span>
-                          {note && (
-                            <span className="block text-xs text-muted-foreground">
-                              {note}
-                            </span>
-                          )}
-                        </span>
-                        {item.photo_path && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground"
-                            aria-label={`Foto von ${formatItemLabel(item)} anzeigen`}
-                            onClick={() => setPhotoPreview(item.photo_path)}
-                          >
-                            <Image className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Badge variant="secondary">vorgemerkt</Badge>
-                      </li>
-                    );
-                  })}
+                  {markedItems.map((item) => (
+                    <PackItemRow
+                      key={item.id}
+                      label={formatItemLabel(item)}
+                      note={noteFor(item.item_name)}
+                      badge="vorgemerkt"
+                      photoPath={item.photo_path}
+                      onOpenPhoto={setPhotoPreview}
+                    />
+                  ))}
                 </ul>
               </div>
             )}
