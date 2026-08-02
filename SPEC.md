@@ -1,66 +1,209 @@
-# 
+# Thiel Dienstleistungen – System-Spezifikation
 
-System-Spezifikation & Entwicklungs-Prompt (SPEC.md)
+Liefer- & Tourenplanungs-App für Thiel Dienstleistungen (mobile-optimierte Web-App).
+Stand: August 2026 – beschreibt den **aktuellen Ist-Zustand** des Codes.
 
-Projekt: Thiel Dienstleistungen – Liefer- & Tourenplanungs-App
+---
 
-**Anleitung für Freebuff / KI-Agenten:** Diese Spezifikation beschreibt das Gesamtsystem so, dass es modular, voll-skalierbar (Multi-User-ready) und ohne manuelles Schreiben von Code entwickelt werden kann.
+## 1. Überblick
 
-## **1\. System-Architektur & Skalierbarkeit**
+Die App unterstützt den kompletten Arbeitsablauf einer Reinigungs-/Liefer-Rundtour:
 
-Die Anwendung wird als rollenbasierte Multi-User-Webapplikation (PWA) aufgesetzt. Auch wenn zu Beginn nur ein Fahrer-Zugang genutzt wird, ist die Datenbankstruktur von Tag 1 an mandanten- und rollenfähig aufgebaut.
+1. **Objekte verwalten** (Ziele, Treppenhäuser) inkl. Items, Schlüsselnummern und Fotos
+2. **Touren planen** – Wochentags-Defaults, Foto-Auswahl, optimierte Rundtour vom/zum Lager
+3. **Packen** – konsolidierte Packlisten je Objekt, Route auf der Karte
+4. **Ausliefern** – Stopps in optimierter Reihenfolge, Items vorab gecheckt, Belieferung abhaken
+5. **Historie & Einstellungen** – vergangene Touren, Profil, Passwort, Passkeys
 
-| Ebene | Technologie | Funktion / Zweck   |
-| :---- | :---- | :---- |
-| **Frontend** | Next.js (App Router), Tailwind CSS, Shadcn/UI | Mobile-optimierte Benutzeroberfläche (PWA) für schnelle Bedienung unterwegs. |
-| **Backend / DB** | Supabase (PostgreSQL \+ Auth \+ Storage) | Zentrales Datenmodell, Rollenrechte (RLS), Foto-Uploads für Listen-Import. |
-| **Routen-Engine** | Google Maps API / OpenRouteService API | Berechnung optimaler Rundtouren unter Berücksichtigung von Zeitfenstern & Restriktionen. |
-| **Vision AI** | OpenAI GPT-4o-mini / Gemini Vision API | OCR & automatisches Matching von fotografierten Adress- und Tourenlisten. |
+Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
+**Thiel Dienstleistungen** (Standard: *Sartoriusstraße 14, 97072 Würzburg*, per Env
+`WAREHOUSE_ADDRESS` änderbar).
 
-## **2\. Datenmodell (Schema-Übersicht)**
+## 2. Tech-Stack & Architektur
 
-Das Datenmodell ist so strukturiert, dass Objekte, Zeitrestriktionen, Wochenvorlagen und Packscheine nahtlos ineinandergreifen:
+| Ebene | Technologie | Zweck |
+| :--- | :--- | :--- |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 3, shadcn/ui (Radix), lucide-react, sonner | Mobile-optimierte UI, Server Components + Client-Komponenten |
+| **Backend / DB** | Supabase (PostgreSQL + Auth + Storage), `@supabase/ssr` | Datenmodell, Sessions, RLS, Storage-Bucket für Item-Fotos |
+| **Auth** | Supabase Auth (Passwort) + WebAuthn-Passkeys (`@simplewebauthn`) | Login per Benutzername/Passwort **und** Fingerabdruck/Face ID |
+| **Routen-Optimierung** | ORS Optimization API (VROOM) mit Custom-Matrix | Optimale Rundtour unter Zeitfenstern & Restriktionen |
+| **Live-Verkehr** | TomTom Routing Matrix API | Aktuelle Fahrzeiten (inkl. Stau) als VROOM-Custom-Matrix |
+| **Geocoding** | OpenRouteService Geocode Search | Adress-Autocomplete & Koordinaten-Verifizierung |
+| **Fußgängerzonen** | Overpass API (OpenStreetMap) | Automatische Erkennung + nächster befahrbarer Haltepunkt |
+| **Karten** | Leaflet (imperativ, ohne react-leaflet), OSM-Tiles, ORS-Directions | Routen-Geometrie in Pack- & Tour-Modus |
+| **OCR / Vision** | Gemini Vision API | Erkennung von abfotografierten Listen (Objekte, Schlüssel, Items) |
+| **Routen-Fallback** | ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver | Optimierung läuft auch ohne Primär-API |
 
-* **Users & Roles:** ID, Name, Role (driver, admin, facility\_manager).  
-* **Objects:** ID, Name, Address, Category (objekt, treppenhaus), TimeWindowStart (z.B. 11:00 Uhr), TimeWindowEnd, PedestrianZone (Boolean, z.B. nur bis 11:00 befahrbar).  
-* **ObjectItems:** ID, ObjectId, ItemName, IsAlwaysRequired (Boolean, z.B. Standard-Reiniger ausgegraut).  
-* **WeeklyDefaultRoutes:** DayOfWeek (0-6), ObjectId, SelectionOrder.  
-* **ActiveTours:** TourId, DriverId, Date, Status (packing, in\_transit, completed).  
-* **TourStops:** TourId, ObjectId, StopOrder, IsDelivered (Boolean), NextDeliveryItems (JSON-Liste der wählbaren Items für die nächste Tour).
+## 3. Datenmodell (Supabase/PostgreSQL)
 
-## **3\. Kernfunktionen & Workflow-Phasen**
+**Enums:** `user_role` (`driver` | `admin` | `facility_manager`), `object_category`
+(`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
 
-### **Phase 1: Objektverwaltung & KI-Fotoimport**
+### `profiles` – Benutzerprofile (1:1 zu `auth.users`)
+- `id` (PK → auth.users, cascade), `name`, `role` (user_role, default `driver`), `email`, `created_at`, `updated_at`
+- Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an
+- **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
 
-* **Manuelle Verwaltung:** Anlegen, Bearbeiten und Löschen von Objekten inkl. Name, Adresse, Kategorie (Objekt vs. Treppenhaus) und Restriktionen (z.B. Öffnungszeit erst ab 11:00 Uhr, Fußgängerzone nur bis 11:00 Uhr).  
-* **Foto-Import (Listen-Erkennung):** Abfotografieren einer gedruckten Liste. Die KI analysiert den Text, vergleicht ihn mit der bestehenden Datenbank und fügt nur unbeschriebene/neue Objekte hinzu.
+### `objects` – Ziele/Treppenhäuser
+- `id`, `name`, `address`, `category`
+- `is_pedestrian_zone_until_11` – Fußgängerzone: **MUSS vor 11:00 angefahren werden** (wird per Overpass automatisch erkannt, keine manuelle Checkbox)
+- `opens_at` (time, nullable) – Öffnungszeit: **DARF erst ab dieser Uhrzeit angefahren werden**
+- `latitude`, `longitude` (ORS-verifizierte Koordinaten, nullable)
+- `key_number` (integer, nullable)
 
-### **Phase 2: Routenplanung & Wochentags-Defaults**
+### `object_items` – Items eines Objekts
+- `id`, `object_id` (FK cascade), `item_name`
+- `is_always_required` – fest ausgewählt & ausgegraut im Pack-/Tour-Modus
+- `quantity` (default 1), `note` (nullable), `photo_path` (nullable, Storage)
+- Kein Unique-Constraint auf `(object_id, item_name)` – gleiche Bezeichnung mit unterschiedlicher Menge/Bemerkung ist erlaubt
 
-* **Wochentags-Vorlage:** Bei Aufruf der Tourenplanung an einem Montag lädt die App automatisch die Objektauswahl des vergangenen Montags als Vorauswahl.  
-* **Foto-Auswahl:** Alternativ kann eine ausgedruckte Routenliste abfotografiert werden, um Häkchen automatisch zu setzen.  
-* **Optimierte Rundtour-Berechnung:**  
-  * Start- & Endpunkt: *Thiel Dienstleistungen (Lager)*.  
-  * Berechnung der absolut kürzesten Fahrzeit für die gesamte Rundtour.  
-  * Hard Restriktion 1: Fußgängerzonen-Objekte müssen vor 11:00 Uhr angefahren werden.  
-  * Hard Restriktion 2: Objekte mit Öffnungszeit ab 11:00 Uhr dürfen erst ab 11:00 Uhr im Routenablauf eingeplant werden.
+### `weekly_default_routes` – Wochentags-Vorauswahl (pro Benutzer)
+- `id`, `user_id` (FK auth.users, **jeder Nutzer hat eigene Defaults**), `day_of_week` (0–6, 0 = Sonntag), `object_id`, `selection_order`
+- Unique `(user_id, day_of_week, object_id)`; Ersetzung transaktional über RPC `save_weekly_defaults(user_id, day_of_week, object_ids)`
 
-### **Phase 3: Pack-Modus (Lager)**
+### `active_tours` + `tour_stops` – Touren
+- `active_tours`: `id`, `driver_id`, `date`, `status` (packing → in_transit → completed), `start_time`, `total_duration_minutes`
+- `tour_stops`: `id`, `tour_id` (FK cascade), `object_id`, `stop_order` (unique je Tour), `arrival_time`, `is_delivered`, `next_delivery_items` (jsonb – vorgemerkte Extra-Items für die **nächste** Belieferung)
 
-* Nach Bestätigung der optimierten Route schaltet die App in den **Pack-Modus**.  
-* Beim Anklicken eines Objekts wird die konsolidierte Packliste angezeigt (Standard-Items \+ manuell vorgemerkte Extra-Items aus der vorherigen Belieferung).  
-* Button: **"Ausfahren beginnen"** startet den Tour-Modus.
+### Passkeys & Challenges
+- `passkeys`: `id`, `user_id` (FK cascade), `credential_id` (unique), `public_key` (base64url), `counter`, `transports` (jsonb), `last_used_at` – **Passkeys sind strikt benutzerspezifisch**
+- `webauthn_challenges`: `id`, `challenge`, `user_id` (null bei Login), `purpose` (`registration` | `authentication`), `expires_at` – wird nach Verifikation gelöscht
 
-### **Phase 4: Tour-Modus & Item-Vormerkung**
+### Storage
+- Bucket `item-photos` (public read, Schreiben nur für authentifizierte Nutzer) – Item-Fotos (`items/<uuid>.jpg|png|webp|heic`)
 
-* Übersichtliche Liste der Stopps in optimierter Reihenfolge.  
-* Anklicken eines Stopps öffnet die Item-Liste des Objekts:  
-  * Standard-Items sind fest ausgewählt und ausgegraut (nicht abwählbar).  
-  * Variable Items können für die *nächste Belieferung* an- oder abgewählt werden.  
-* Button: **"Beliefern fertig"** hakte den Stopp ab und führt zurück zum Hauptbildschirm.
+## 4. Auth, Rollen & Sicherheit
 
-## **4\. Master-Prompt für Freebuff / KI-Code-Editor**
+**Login-Methoden:**
+- **Benutzername + Passwort** (`POST /api/auth/login`) – Benutzername wird auf `{name}@thiel.local` gemappt
+- **Passkeys (WebAuthn)** – Fingerabdruck/Face ID. Registrierung nur eingeloggt (`register-options`), Login über discoverable Credentials (`login-options`/`login-verify`). Ein Passkey ist **fest an genau einen Benutzer** gebunden (Credential-ID → `user_id` → Session nur für diesen Nutzer). Session-Erzeugung beim Passkey-Login über Magic-Link-Token.
 
-Kopiere den folgenden Prompt vollständig in deinen KI-Code-Editor (z.B. Cursor, Windsurf, Bolt.new oder Freebuff), um die gesamte App in einem Schritt generieren zu lassen:
+**Rollen:**
+| Rolle | Rechte |
+| :--- | :--- |
+| `admin` | Alles: Objekte, Foto-Import, OCR, Benutzerverwaltung, Planung, Touren, Item-Fotos |
+| `facility_manager` | Objektverwaltung & Foto-Import (keine Planung, keine Benutzerverwaltung) |
+| `driver` | Tourenplanung, Pack-Modus, Tour-Modus, Historie (eigene Touren) |
 
-Du bist ein Senior Fullstack Engineer. Baue eine skalierbare, mobile-optimierte Web-App (Next.js App Router, Tailwind CSS, Shadcn/UI, Supabase) für die Firma "Thiel Dienstleistungen". PROJEKT-SPEZIFIKATION: 1\. BENUTZER & SKALIERBARKEIT: \- Setze Supabase Auth ein mit Rollensystem (Rollen: 'driver', 'admin'). \- Die Datenbankstruktur muss mandantenfähig sein, damit später weitere Fahrer und Admins hinzugefügt werden können. 2\. OBJEKTVERWALTUNG & FOTO-OCR: \- Tabellen: \`objects\` (id, name, address, category: 'objekt' | 'treppenhaus', is\_pedestrian\_zone\_until\_11: boolean, opens\_at: time), \`object\_items\` (id, object\_id, item\_name, is\_always\_required: boolean). \- Biete eine Ansicht zur Verwaltung der Objekte. \- API-Route für Foto-Upload: Nutze OpenAI GPT-4o-mini / Gemini Vision, um abfotografierte Adresslisten zu analysieren, Adressen zu extrahieren und neue Objekte automatisch in die DB einzutragen. 3\. ROUTENPLANUNG & RESTRIKTIONS-OPTIMIERUNG: \- Der Start- und Endpunkt ist immer das Lager "Thiel Dienstleistungen". \- Wochentags-Defaults: Speichere für jeden Wochentag (Montag-Sonntag) die ausgewählte Objekt-Liste. Wenn heute Montag ist, wähle automatisch alle Objekte vor, die letzten Montag ausgewählt waren. \- Biete auch hier Foto-Auswahl per Kamera. \- Sortier-Algorithmus (Rundtour): Integriere eine Routenoptimierung (z.B. via Google Maps Distance Matrix / OpenRouteService), die die Gesamtfahrzeit minimiert und folgende Zeit-Restriktionen strikt einhält: a) Objekte mit \`is\_pedestrian\_zone\_until\_11 \= true\` MÜSSEN vor 11:00 Uhr angefahren werden. b) Objekte mit \`opens\_at \= 11:00\` DÜRFEN ERST ab 11:00 Uhr angefahren werden. 4\. PACK-MODUS: \- Nach Sortierung gelangt der Nutzer in die Packansicht. \- Klick auf ein Objekt zeigt die zusammengestellte Packliste (Standard-Items \+ Zusatz-Items für diese Tour). \- Button "Ausfahren beginnen" startet den Auslieferungs-Modus. 5\. TOUR-MODUS & ITEM-PRESELECTION: \- Zeigt die sortierten Stopps an. \- Detailansicht eines Stopps: Zeigt die Items des Objekts. Standard-Items (\`is\_always\_required \= true\`) sind angehakt und ausgegraut. Andere Items können für die NÄCHSTE Belieferung an-/abgewählt werden. \- Button "Beliefern fertig" markiert den Stopp als erledigt und führt zur Hauptübersicht zurück. Schreibe sauberen, modularen TypeScript-Code und erstelle alle erforderlichen Komponenten, API-Routen und Supabase-Migrationen.
+**Keine öffentliche Registrierung** – Benutzer werden ausschließlich von Admins über
+die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „Leon".
+
+**Dreifache Absicherung:**
+1. **Middleware** (`src/middleware.ts`): schützt alle Routen außer `/login` + Passkey-Login-APIs. Seiten → Redirect auf `/login?next=…`; API-Routen → `401 UNAUTHENTICATED`
+2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`), zusätzlich Tour-Owner-Check
+3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer, alle anderen Daten nur für authentifizierte Nutzer
+
+## 5. Kernfunktionen & Workflows
+
+### 5.1 Objektverwaltung (`/objects`)
+- CRUD für Objekte (Name, Adresse, Kategorie, Öffnungszeit, Schlüsselnummer)
+- **Adress-Autocomplete** per ORS (`/api/geocoding/autocomplete`) + **Verifizierung** beim Speichern (`/api/geocoding/verify`), Stadtteil-Suffixe werden fürs Geocoding normalisiert
+- **Fußgängerzone wird beim Speichern automatisch per Overpass erkannt** (keine Checkbox)
+- Items je Objekt: Name, Menge, Bemerkung, **Foto-Upload** (`/api/items/photo`, 10 MB, Admin)
+
+### 5.2 Foto-Import (KI, Admin)
+Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
+- **Objekte** (`objects/analyze` + `objects`): abfotografierte Adresslisten → Vorschau mit Duplikat-Erkennung (normalisierte Adresse + Fuzzy-Match), ORS-Geocoding-Status je Eintrag, Fußgängerzonen-Check (OCR-Hinweis **oder** Overpass)
+- **Schlüssel** (`keys/analyze` + `keys`): erkannte Schlüsselnummern → Zuordnung zu bestehenden Objekten (Dropdown zeigt vorhandene Schlüsselnummern) oder **„Neues Objekt anlegen…"** (Name/Adresse eingeben, wird geocodiert + Fußgängerzone geprüft, Duplikat-Schutz über bestehende Adressen)
+- **Items** (`items/analyze` + `items`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert
+
+### 5.3 Tourenplanung (`/planung`)
+- **Wochentags-Defaults:** Vorauswahl des gleichen Wochentags (pro Benutzer) wird geladen; Änderungen werden per `save_weekly_defaults` gespeichert
+- **Foto-Auswahl** (`/api/planning/photo`): abfotografierte Routenliste → Häkchen automatisch setzen (Match per Adresse/Name, Unmatched werden aufgelistet)
+- **Startzeit** wählen → optimierte Route berechnen lassen
+
+### 5.4 Routen-Optimierung (`/api/planning/optimize`)
+Eingebettet in `src/lib/routing/optimizer.ts`:
+
+1. **Primär: ORS Optimization API (VROOM)** – Jobs mit Zeitfenstern, Fahrzeug vom Lager
+   - **Live-Verkehr:** Ist `TOMTOM_API_KEY` gesetzt, wird vorab die **TomTom Routing Matrix** (Custom Matrix) für alle Koordinaten abgefragt und als `matrix`-Feld direkt an VROOM übergeben (Reihenfolge der Koordinaten exakt passend zur Job-/Depot-ID-Zuordnung). Ergebnis: `traffic_matrix_provider: "tomtom"`
+   - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`
+2. **Fallback:** ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
+3. **Zeitfenster (Hard-Restriktionen):**
+   - Fußgängerzone bis 11:00 → **Deadline 11:00** (Ankunft MUSS davor)
+   - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
+4. **Fußgängerzonen-Umweg:** Ist die Deadline nicht erreichbar, wird per Overpass der **nächstgelegene befahrbare Haltepunkt** gesucht (`findNearestDrivablePoint`); der Stopp wird dort angefahren, der Rest wird **zu Fuß** gelaufen (Badge „x m zu Fuß", `approach_by_foot`)
+5. **Vorbereitungszeit** am Lager: 5 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
+6. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
+
+Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
+
+### 5.5 Pack-Modus (`/planung` nach Optimierung)
+- Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
+- Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht)
+- **Karte unten** (Leaflet): Rundtour Lager → alle Stopps → Lager inkl. Rückweg, nummerierte Marker, Fußweg-Anteile
+- **„Ausfahren beginnen"** → Tour anlegen (`/api/tours`) und in den Tour-Modus wechseln
+
+### 5.6 Tour-Modus (`/tour/[id]`)
+- Stopps in optimierter Reihenfolge mit Fortschrittsbalken, **Karte unten** (belieferte Stopps grün mit Häkchen)
+- Klick auf Stopp → Item-Liste: Standard-Items fest gecheckt/ausgegraut, variable Items für die **nächste Belieferung** an-/abwählbar (wird als `next_delivery_items` gespeichert)
+- **„Beliefern fertig"** → Stopp abhaken; alle Stopps fertig → Tour `completed`
+
+### 5.7 Historie (`/historie`)
+- Vergangene Touren mit Datum, Fahrer, Anzahl belieferter Stopps und belieferten Objekten (`GET /api/tours`)
+
+### 5.8 Einstellungen (`/einstellungen`)
+- Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
+
+## 6. Karten (Leaflet)
+- `src/components/map/route-map.tsx` – imperatives Leaflet (nur im `useEffect`, SSR-sicher), OSM-Kacheln (kostenlos)
+- Straßenverlauf per **ORS-Directions** (`POST /api/planning/route-geometry`, Bearer-Auth, Polyline-Decoder in `src/lib/polyline.ts`); Fallback: gestrichelte Luftlinien
+- Eingesetzt im Pack-Modus und in der Tour-Ansicht; Autofit auf alle Punkte
+
+## 7. API-Übersicht (alle geschützt, Rolle in Klammern)
+
+**Auth:** `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/me-profile` · `POST /api/auth/me-password`
+**Passkeys:** `POST /api/auth/passkeys/login-options` (öffentlich) · `login-verify` (öffentlich) · `register-options` · `register-verify` · `DELETE /api/auth/passkeys/[id]`
+**Benutzer (Admin):** `GET/POST /api/auth/users` · `PATCH/DELETE /api/auth/users/[id]`
+**Geocoding:** `POST /api/geocoding/autocomplete` · `POST /api/geocoding/verify`
+**Objekte (Admin/Facility):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
+**Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
+**Items:** `POST /api/items/ocr` · `POST /api/items/photo` (Admin)
+**Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
+**Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
+
+## 8. Umgebungsvariablen (`.env.local`)
+
+| Variable | Pflicht | Zweck |
+| :--- | :--- | :--- |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase-Client & Middleware |
+| `ORS_API_KEY` | ✅ | Geocoding, Directions, VROOM-Optimierung (Premium-Key = JWT → `Bearer`, sonst `apikey`) |
+| `TOMTOM_API_KEY` | – | Live-Verkehrs-Matrix (Custom Matrix für VROOM); ohne → Standard-Fahrzeiten |
+| `TOMTOM_MAX_CELLS` | – | Limit der Matrix-Zellen (Default 2500) |
+| `GOOGLE_MAPS_API_KEY` | – | Optionaler Matrix-Fallback |
+| `GEMINI_API_KEY` | – | OCR (Foto-Import) |
+| `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | – | Passkey-Relaying-Party (Default: Host / „Thiel Dienstleistungen") |
+| `WAREHOUSE_ADDRESS` | – | Lager-Adresse (Default: Sartoriusstraße 14, 97072 Würzburg) |
+
+## 9. Projektstruktur (Auszug)
+
+```
+src/
+  middleware.ts                     # Session-Refresh + Seiten-/API-Schutz
+  app/
+    page.tsx                        # Redirect → /objects
+    login/ · objects/ · planung/ · tour/[id]/ · historie/ · einstellungen/
+    api/                            # auth, users, passkeys, geocoding, items,
+                                    # objects (inkl. import/*), planning, tours
+  components/
+    app-shell.tsx                   # Header-Navigation (rollenabhängig)
+    map/route-map.tsx               # Leaflet-Route
+    objects/                        # Objektverwaltung + Foto-Import-Dialoge
+    planning/                       # Planung, Pack-Modus, Foto-Auswahl
+    tour/                           # Tour-Modus, Liefer-Dialog
+    settings/ · history/ · auth/ · ui/
+  lib/
+    auth.ts                         # requireUser, Rollen, Username↔Email
+    ors.ts · overpass.ts · ocr.ts · traffic-matrix.ts · warehouse.ts · polyline.ts
+    routing/optimizer.ts            # VROOM + Matrix + TSP + Zeitfenster
+    routing/tsp.ts · time.ts
+    supabase/                       # server/admin/middleware-Client
+    webauthn.ts                     # Passkey-Verifikation
+supabase/migrations/                # 11 Migrationen (Schema von Grund auf)
+```
+
+## 10. Entwicklung
+
+- `npm run dev` – Dev-Server · `npm run build` – Produktions-Build · `npm run typecheck` – `tsc --noEmit` · `npm start` – Produktions-Server
+- Migrationen werden in `supabase/migrations/` versioniert (laufen auf dem Supabase-Projekt)
+- Deployment über Git-Push nach `main` (Vercel/GitHub Actions), Migrationen vor dem ersten Request einspielen
