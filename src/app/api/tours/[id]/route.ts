@@ -174,3 +174,33 @@ export async function PATCH(request: Request, { params }: Context) {
     return apiErrorResponse(e);
   }
 }
+
+/** DELETE /api/tours/[id] -> Tour (inkl. Stopps per Cascade) löschen – nur Admins. */
+export async function DELETE(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Touren löschen." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const { id } = await params;
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("active_tours")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}

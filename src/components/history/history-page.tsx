@@ -7,12 +7,22 @@ import {
   CheckCircle2,
   Clock,
   History,
+  Trash2,
   Truck,
   User as UserIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -35,6 +45,8 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
   const [filterUserId, setFilterUserId] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TourHistoryItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,6 +84,28 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       .then((body) => setUsers(body.users ?? []))
       .catch(() => setUsers([]));
   }, [isAdmin]);
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/tours/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(body.error ?? "Tour konnte nicht gelöscht werden.");
+        return;
+      }
+      toast.success("Tour gelöscht.");
+      setDeleteTarget(null);
+      await load();
+    } catch {
+      toast.error("Tour konnte nicht gelöscht werden.");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const filteredLabel = useMemo(() => {
     if (!isAdmin) return null;
@@ -183,6 +217,17 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                     <Button variant="outline" size="sm" asChild>
                       <Link href={`/tour/${tour.id}`}>Details</Link>
                     </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Tour vom ${new Date(tour.date + "T00:00:00").toLocaleDateString("de-DE")} löschen`}
+                        onClick={() => setDeleteTarget(tour)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -210,6 +255,59 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
           </div>
         )}
       </div>
+
+      {/* Lösch-Bestätigung (nur Admin) */}
+      {isAdmin && (
+        <Dialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => !open && setDeleteTarget(null)}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Tour unwiderruflich löschen?</DialogTitle>
+              <DialogDescription>
+                {deleteTarget && (
+                  <>
+                    Die Tour vom{" "}
+                    <strong>
+                      {new Date(
+                        deleteTarget.date + "T00:00:00",
+                      ).toLocaleDateString("de-DE", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </strong>{" "}
+                    {deleteTarget.start_time && <>um {deleteTarget.start_time.slice(0, 5)} Uhr </>}
+                    ({STATUS_LABELS[deleteTarget.status]},{" "}
+                    {deleteTarget.delivered_count}/{deleteTarget.total_stops} Stopps
+                    beliefert) wird dauerhaft aus der Historie entfernt. Stopps
+                    und Vormerkungen dieser Tour werden ebenfalls gelöscht.
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Abbrechen
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                className="gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                {deleting ? "Wird gelöscht…" : "Löschen"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
