@@ -248,7 +248,10 @@ export function RouteMap({ warehouse, stops, className }: Props) {
   return (
     <div
       className={cn(
-        "relative h-72 overflow-hidden rounded-xl border bg-muted/20 shadow-sm sm:h-80",
+        // z-0 erzeugt einen Stacking-Context: Die internen Leaflet-z-index-Werte
+        // (Zoom-Controls 1000, Popup-Pane 700, …) bleiben so innerhalb der Karte
+        // und können Dialoge/Overlays mit höherem z-index (z-50) nicht mehr überdecken.
+        "relative z-0 h-72 overflow-hidden rounded-xl border bg-muted/20 shadow-sm sm:h-80",
         className,
       )}
     >
