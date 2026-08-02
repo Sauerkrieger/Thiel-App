@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { Check, Image, ListChecks, PackageCheck, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,7 +22,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatItemLabel } from "@/lib/items";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo, TourStopWithObject } from "@/types/api";
@@ -29,6 +42,26 @@ type Props = {
   /** Wird nach erfolgreichem „Beliefern fertig“ aufgerufen. */
   onDelivered: () => void;
 };
+
+/**
+ * Tabellen-Rahmen für die Item-Listen (Item (Bemerkung) | Anzahl) –
+ * gleiche Darstellung wie im Pack-Modus.
+ */
+function ItemsTable({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-muted/40">
+            <TableHead className="px-3">Item (Bemerkung)</TableHead>
+            <TableHead className="px-3 text-right">Anzahl</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>{children}</TableBody>
+      </Table>
+    </div>
+  );
+}
 
 export function DeliveryDialog({
   open,
@@ -178,32 +211,50 @@ export function DeliveryDialog({
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Standard-Items (immer mitnehmen)
                 </p>
-                <ul className="space-y-1.5">
+                <ItemsTable>
                   {standardItems.map((item) => (
-                    <li
+                    <TableRow
                       key={item.id}
-                      className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-2"
+                      className="bg-muted/40 hover:bg-muted/40"
                     >
-                      <Checkbox checked disabled aria-label={`${formatItemLabel(item)} (Standard)`} />
-                      <span className="flex-1 text-sm text-muted-foreground">
-                        {formatItemLabel(item)}
-                      </span>
-                      {item.photo_path && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground"
-                          aria-label={`Foto von ${formatItemLabel(item)} anzeigen`}
-                          onClick={() => setPhotoPreview(item.photo_path)}
-                        >
-                          <Image className="h-4 w-4" />
-                        </Button>
-                      )}
-                      <Check className="h-4 w-4 text-success" />
-                    </li>
+                      <TableCell className="px-3 py-2">
+                        <span className="flex items-center gap-2">
+                          <Checkbox
+                            checked
+                            disabled
+                            aria-label={`${item.item_name} (Standard)`}
+                          />
+                          <span className="truncate text-sm font-medium text-muted-foreground">
+                            {item.item_name}
+                          </span>
+                          {item.photo_path && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground"
+                              aria-label={`Foto von ${item.item_name} anzeigen`}
+                              onClick={() => setPhotoPreview(item.photo_path)}
+                            >
+                              <Image className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </span>
+                        {item.note && (
+                          <span className="block text-xs text-muted-foreground">
+                            {item.note}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">
+                        <span className="inline-flex items-center gap-1.5">
+                          {item.quantity ?? 1}x
+                          <Check className="h-4 w-4 text-success" />
+                        </span>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </ul>
+                </ItemsTable>
               </div>
             )}
 
@@ -212,62 +263,80 @@ export function DeliveryDialog({
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Für die nächste Belieferung vormerken
                 </p>
-                <ul className="space-y-1.5">
+                <ItemsTable>
                   {variableItems.map((item) => {
                     const extra = extras.find(
                       (e) => e.item_name === item.item_name,
                     );
                     const checked = Boolean(extra);
                     return (
-                      <li key={item.id} className="space-y-1.5">
-                        <label
-                          className={[
-                            "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 transition-colors",
+                      <Fragment key={item.id}>
+                        <TableRow
+                          className={
                             checked
-                              ? "border-primary/50 bg-primary/5"
-                              : "hover:bg-accent/40",
-                          ].join(" ")}
+                              ? "bg-primary/5 hover:bg-primary/5"
+                              : "hover:bg-accent/40"
+                          }
                         >
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(v) =>
-                              toggle(item.item_name, v === true)
-                            }
-                            aria-label={`${formatItemLabel(item)} für nächste Belieferung vormerken`}
-                          />
-                          <span className="flex-1 text-sm">{formatItemLabel(item)}</span>
-                          {item.photo_path && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground"
-                              aria-label={`Foto von ${formatItemLabel(item)} anzeigen`}
-                              onClick={() => setPhotoPreview(item.photo_path)}
-                            >
-                              <Image className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {checked && (
-                            <Badge variant="success">vorgemerkt</Badge>
-                          )}
-                        </label>
+                          <TableCell className="px-3 py-2">
+                            <span className="flex items-center gap-2">
+                              {/* Label: Klick auf Checkbox ODER Item-Namen schaltet um */}
+                              <label className="flex cursor-pointer items-center gap-2">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) =>
+                                    toggle(item.item_name, v === true)
+                                  }
+                                  aria-label={`${item.item_name} für nächste Belieferung vormerken`}
+                                />
+                                <span className="truncate text-sm font-medium">
+                                  {item.item_name}
+                                </span>
+                              </label>
+                              {item.photo_path && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground"
+                                  aria-label={`Foto von ${item.item_name} anzeigen`}
+                                  onClick={() => setPhotoPreview(item.photo_path)}
+                                >
+                                  <Image className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {checked && (
+                                <Badge variant="success">vorgemerkt</Badge>
+                              )}
+                            </span>
+                            {item.note && (
+                              <span className="block text-xs text-muted-foreground">
+                                {item.note}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">
+                            {item.quantity ?? 1}x
+                          </TableCell>
+                        </TableRow>
                         {checked && (
-                          <div className="pl-7">
-                            <Input
-                              value={extra?.note ?? ""}
-                              onChange={(e) =>
-                                setExtraNote(item.item_name, e.target.value)
-                              }
-                              placeholder="Optionale Bemerkung (nur für die nächste Tour)…"
-                              className="h-8 text-sm"
-                            />
-                          </div>
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={2} className="px-3 pb-3 pt-0">
+                              <Input
+                                value={extra?.note ?? ""}
+                                onChange={(e) =>
+                                  setExtraNote(item.item_name, e.target.value)
+                                }
+                                placeholder="Optionale Bemerkung (nur für die nächste Tour)…"
+                                className="h-8 text-sm"
+                              />
+                            </TableCell>
+                          </TableRow>
                         )}
-                      </li>
+                      </Fragment>
                     );
                   })}
-                </ul>
+                </ItemsTable>
               </div>
             )}
 
