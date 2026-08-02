@@ -76,6 +76,11 @@ export function PackView({ route, onOpenStop }: Props) {
         <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
           <Route className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {mode.hint}
+          {route.traffic_matrix_provider === "tomtom" && (
+            <span className="font-medium text-primary">
+              · Live-Verkehr (TomTom)
+            </span>
+          )}
         </p>
 
         {/* Schlüssel-Packliste */}

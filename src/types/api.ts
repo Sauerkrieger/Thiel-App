@@ -110,6 +110,8 @@ export type RouteOptimizationResult = {
   total_duration_minutes: number;
   warehouse_arrival: string;
   warnings: string[];
+  /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
+  traffic_matrix_provider: "tomtom" | null;
 };
 
 /** Für die nächste Belieferung vorgemerktes Item (Name + optionale Bemerkung). */

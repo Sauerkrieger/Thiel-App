@@ -1,13 +1,18 @@
 /**
  * Routen-Optimierung (Schritt 4)
  *
- * Ablauf: Adressen geocoden -> ORS-Optimization-API (VROOM, Zeitfenster +
- * Servicezeiten nativ) -> Fallback: Fahrzeit-Matrix + TSP-Solver.
+ * Ablauf: Adressen geocoden -> Live-Verkehrsmatrix (TomTom, optional) ->
+ * ORS-Optimization-API (VROOM, Zeitfenster + Servicezeiten nativ) ->
+ * Fallback: Fahrzeit-Matrix + TSP-Solver.
  *
  * Provider (priorisiert):
  *   1. OpenRouteService Optimization-API (ORS_API_KEY) – löst die Rundtour
- *      direkt (Zeitfenster "öffnet ab" / "Fußgängerzone bis 11:00" und
- *      10 Min Servicezeit werden als Job-Zeitfenster/-Service übergeben)
+ *      direkt. Ist ein TOMTOM_API_KEY gesetzt, werden die Fahrzeiten vorab
+ *      als Live-Verkehrsmatrix (inkl. Staulage) abgefragt und als
+ *      Custom-Matrix direkt in das VROOM-JSON eingespeist (matrices +
+ *      location_index/start_index/end_index statt ORS-Routing-Backend).
+ *      Schlägt die Matrix-Variante fehl, wird automatisch ohne Matrix
+ *      wiederholt.
  *   2. OpenRouteService Matrix / Google Matrix + lokaler TSP-Solver
  *   3. Fallback "Demo-Modus": Haversine-Luftlinie + deterministische
  *      Hash-Koordinaten (stabil, aber nicht straßengenau)
@@ -17,6 +22,10 @@ import {
   scheduleTimes,
   solveTspWithWindows,
 } from "@/lib/routing/tsp";
+import {
+  fetchTomTomTrafficMatrix,
+  type TrafficMatrix,
+} from "@/lib/traffic-matrix";
 import {
   normalizeAddressForGeocoding,
   orsAuthorizationHeader,
@@ -109,6 +118,8 @@ export type RouteOptimizationResult = {
   total_duration_minutes: number;
   warehouse_arrival: string;
   warnings: string[];
+  /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
+  traffic_matrix_provider: "tomtom" | null;
 };
 
 type Coordinate = { lat: number; lng: number };
@@ -176,12 +187,49 @@ async function geocodeAddress(address: string): Promise<Coordinate> {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Erweitert die N×N-Matrix (Indizes: 0 = Lager, 1..n = Objekte) um zwei
+ * zusätzliche Zeilen/Spalten für das VROOM-Fahrzeug (start = n, end = n+1,
+ * beide = Lager), damit die Matrix exakt zur ID-/Index-Zuordnung der Jobs
+ * und des Fahrzeugs passt. Gibt null zurück, wenn das Format nicht stimmt.
+ */
+function expandMatrixForVehicle(
+  src: number[][],
+  jobCount: number,
+): number[][] | null {
+  if (src.length !== jobCount + 1) return null;
+  const size = jobCount + 2;
+  const out: number[][] = [];
+  for (let i = 0; i < size; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < size; j++) {
+      // Job-Index i<n -> src-Zeile i+1; Fahrzeug-Index n/n+1 -> src-Zeile 0 (Lager)
+      const srcRow = i < jobCount ? i + 1 : 0;
+      const srcCol = j < jobCount ? j + 1 : 0;
+      const value = src[srcRow]?.[srcCol];
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return null;
+      }
+      row.push(Math.round(value));
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+/**
  * Löst die Rundtour direkt über die ORS-Optimization-API (VROOM).
  *
  * Job-Zeitfenster = Array von [start,end]-Paaren (Sekunden), Fahrzeug-
  * Zeitfenster = flaches Paar [start,end]. Die gewählte Startzeit ist die
  * frühestmögliche Abfahrt; VROOM wählt die tatsächliche Abfahrt innerhalb
  * des Fensters optimal (später losfahren, um Wartezeit zu sparen).
+ *
+ * Wird `trafficMatrix` übergeben, ersetzt dessen Fahrzeitmatrix (inkl.
+ * Live-Verkehr) die vom ORS-Backend berechneten Fahrzeiten: Die Jobs
+ * bekommen location_index (0..n-1), das Fahrzeug start_index = n und
+ * end_index = n+1 (beide = Lager), und die Matrix wird unter `matrices`
+ * eingespeist. Ungültige Matrizen führen zu null (Aufrufer wiederholt
+ * dann ohne Matrix).
  *
  * Rückgabe null bei: kein Key, HTTP-Fehler, code != 0 oder nicht alle
  * Jobs zugeordnet (unassigned > 0).
@@ -191,9 +239,22 @@ async function solveWithOrsOptimization(
   earliest: number[],
   deadline: number[],
   startSec: number,
+  trafficMatrix?: TrafficMatrix | null,
 ): Promise<OrsSolution | null> {
   const apiKey = process.env.ORS_API_KEY;
   if (!apiKey) return null;
+
+  const jobCount = coords.length - 1;
+  const useMatrix = Boolean(trafficMatrix);
+  const matrixDurations = trafficMatrix
+    ? expandMatrixForVehicle(trafficMatrix.durations, jobCount)
+    : null;
+  if (useMatrix && !matrixDurations) {
+    console.warn(
+      "[ORS] TomTom-Fahrzeitmatrix ungültig (Format passt nicht zu den Jobs) – versuche ohne Live-Verkehr.",
+    );
+    return null;
+  }
 
   const jobs = coords.slice(1).map((c, index) => {
     const node = index + 1;
@@ -210,6 +271,8 @@ async function solveWithOrsOptimization(
     return {
       id: node,
       location: [c.lng, c.lat],
+      // Bei Custom-Matrix: expliziter Index in der Fahrzeitmatrix (0..n-1)
+      ...(useMatrix ? { location_index: index } : {}),
       service: SERVICE_MINUTES * 60,
       time_windows: timeWindows,
     };
@@ -224,9 +287,15 @@ async function solveWithOrsOptimization(
         profile: "driving-car",
         start: [warehouse.lng, warehouse.lat],
         end: [warehouse.lng, warehouse.lat],
+        // Bei Custom-Matrix: Fahrzeug-Start/Ende als letzte Matrix-Indizes
+        ...(useMatrix ? { start_index: jobCount, end_index: jobCount + 1 } : {}),
         time_window: [startSec, DAY_END_SECONDS],
       },
     ],
+    // Custom-Matrix (Live-Verkehr) statt ORS-Routing-Backend
+    ...(useMatrix && matrixDurations
+      ? { matrices: { "driving-car": { durations: matrixDurations } } }
+      : {}),
   };
 
   try {
@@ -434,6 +503,63 @@ async function resolveMatrix(
 }
 
 /* ------------------------------------------------------------------ */
+/* ORS-Optimization mit optionalem Live-Verkehr                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fragt die TomTom-Live-Verkehrsmatrix asynchron ab und versucht die
+ * ORS-Optimization-API einmal MIT der Matrix. Schlägt das fehl, wird
+ * automatisch OHNE Matrix wiederholt (Robustheit, falls die gehostete
+ * VROOM-Instanz die Custom-Matrix nicht annimmt).
+ *
+ * `trafficUsed` = true, wenn die erfolgreiche Lösung die Live-Verkehrs-
+ * matrix verwendet hat.
+ */
+async function tryOrsWithTraffic(
+  coords: Coordinate[],
+  earliest: number[],
+  deadline: number[],
+  startSec: number,
+  useTraffic: boolean,
+): Promise<{
+  solution: OrsSolution | null;
+  trafficUsed: boolean;
+  provider: "tomtom" | null;
+}> {
+  const traffic = useTraffic
+    ? await fetchTomTomTrafficMatrix(coords)
+    : null;
+
+  const withMatrix = await solveWithOrsOptimization(
+    coords,
+    earliest,
+    deadline,
+    startSec,
+    traffic,
+  );
+  if (withMatrix) {
+    return {
+      solution: withMatrix,
+      trafficUsed: Boolean(traffic),
+      provider: traffic?.provider ?? null,
+    };
+  }
+
+  if (traffic) {
+    const plain = await solveWithOrsOptimization(
+      coords,
+      earliest,
+      deadline,
+      startSec,
+      null,
+    );
+    return { solution: plain, trafficUsed: false, provider: null };
+  }
+
+  return { solution: null, trafficUsed: false, provider: null };
+}
+
+/* ------------------------------------------------------------------ */
 /* Hauptfunktion                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -476,14 +602,28 @@ export async function optimizeRoute(
 
   /* ---- Phase 1: ORS-Optimization-API (Primärweg) ---------------------- */
   let orsSolution: OrsSolution | null = null;
+  // Live-Verkehrsanbieter, dessen Matrix tatsächlich verwendet wurde
+  let trafficMatrixProvider: "tomtom" | null = null;
   const hasOrsKey = Boolean(process.env.ORS_API_KEY);
+  const hasTomTomKey = Boolean(process.env.TOMTOM_API_KEY);
   if (hasOrsKey && coords.length <= MAX_OPTIMIZATION_JOBS) {
-    orsSolution = await solveWithOrsOptimization(
+    const first = await tryOrsWithTraffic(
       coords,
       earliest,
       deadlineDirect,
       startSec,
+      hasTomTomKey,
     );
+    if (first.solution) {
+      orsSolution = first.solution;
+      if (first.trafficUsed) {
+        trafficMatrixProvider = first.provider;
+      } else if (hasTomTomKey) {
+        warnings.push(
+          "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
+        );
+      }
+    }
 
     // Umweg-Routing bei nicht erfüllbaren Zeitfenstern (Fußgängerzone)
     if (!orsSolution && pedestrianIndexes.length > 0) {
@@ -507,14 +647,23 @@ export async function optimizeRoute(
             ? Number.POSITIVE_INFINITY
             : d,
         );
-        const detourSolution = await solveWithOrsOptimization(
+        // Frische Matrix für die geänderten Koordinaten abfragen
+        const detour = await tryOrsWithTraffic(
           detourCoords,
           earliest,
           deadlineDetour,
           startSec,
+          hasTomTomKey,
         );
-        if (detourSolution) {
-          orsSolution = detourSolution;
+        if (detour.solution) {
+          orsSolution = detour.solution;
+          if (detour.trafficUsed) {
+            trafficMatrixProvider = detour.provider;
+          } else if (hasTomTomKey) {
+            warnings.push(
+              "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
+            );
+          }
           usable.forEach((u) =>
             walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
           );
@@ -668,5 +817,6 @@ export async function optimizeRoute(
     total_duration_minutes: Math.round(total),
     warehouse_arrival: warehouseArrival,
     warnings: uniqueWarnings,
+    traffic_matrix_provider: trafficMatrixProvider,
   };
 }
