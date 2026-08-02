@@ -3,13 +3,14 @@
 import { useMemo } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
   Clock,
   Flag,
   Footprints,
   KeyRound,
   MapPin,
-  Route,
   Truck,
+  XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RouteMap } from "@/components/map/route-map";
@@ -21,34 +22,10 @@ type Props = {
   onOpenStop: (stop: OptimizedStop) => void;
 };
 
-const MODE_LABELS: Record<
-  RouteOptimizationResult["mode"],
-  { label: string; hint: string; variant: "secondary" | "outline" | "success" }
-> = {
-  "ors-optimization": {
-    label: "ORS Optimierung (VROOM)",
-    hint: "Rundtour direkt über die ORS Optimization-API (VROOM) gelöst – echte Straßen-Fahrzeiten.",
-    variant: "success",
-  },
-  "ors-matrix": {
-    label: "ORS Matrix + Solver",
-    hint: "ORS-Fahrzeit-Matrix + lokaler TSP-Solver (Fallback, da die Optimization-API nicht lief).",
-    variant: "success",
-  },
-  "google-matrix": {
-    label: "Google Matrix + Solver",
-    hint: "Google-Fahrzeit-Matrix + lokaler TSP-Solver (Fallback, da die Optimization-API nicht lief).",
-    variant: "success",
-  },
-  haversine: {
-    label: "Demo (Luftlinie)",
-    hint: "Keine Routing-API verwendet – Luftlinien-Distanzen ohne Straßennetz.",
-    variant: "secondary",
-  },
-};
-
 export function PackView({ route, onOpenStop }: Props) {
-  const mode = MODE_LABELS[route.mode];
+  // Einfacher Status: grün, wenn die ORS-Optimierung (VROOM) direkt gelöst
+  // hat; rot, wenn ein Fallback oder der Demo-Modus verwendet wurde.
+  const optimized = route.mode === "ors-optimization";
 
   // Karten-Stopps (stabile Referenz, damit die Karte nicht neu lädt)
   const mapStops = useMemo(
@@ -75,15 +52,19 @@ export function PackView({ route, onOpenStop }: Props) {
 
   return (
     <div className="space-y-5">
-      {/* Karte mit eingezeichneter Route */}
-      <RouteMap warehouse={route.warehouse} stops={mapStops} />
-
       {/* Zusammenfassung */}
       <div className="rounded-lg border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={mode.variant} className="gap-1" title={mode.hint}>
-            <Route className="h-3 w-3" />
-            {mode.label}
+          <Badge
+            variant={optimized ? "success" : "destructive"}
+            className="gap-1"
+          >
+            {optimized ? (
+              <CheckCircle2 className="h-3 w-3" />
+            ) : (
+              <XCircle className="h-3 w-3" />
+            )}
+            {optimized ? "Optimierung erfolgreich" : "Optimierung fehlgeschlagen"}
           </Badge>
           <Badge variant="secondary">{route.stops.length} Stopps</Badge>
           <span className="ml-auto flex items-center gap-1 text-sm text-muted-foreground">
@@ -93,17 +74,6 @@ export function PackView({ route, onOpenStop }: Props) {
             · ca. {formatDuration(route.total_duration_minutes)}
           </span>
         </div>
-
-        {/* Sichtbarer Hinweis, mit welchem Verfahren die Route berechnet wurde */}
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
-          <Route className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {mode.hint}
-          {route.traffic_matrix_provider === "tomtom" && (
-            <span className="font-medium text-primary">
-              · Live-Verkehr (TomTom)
-            </span>
-          )}
-        </p>
 
         {/* Schlüssel-Packliste */}
         {sortedKeys.length > 0 && (
@@ -211,6 +181,9 @@ export function PackView({ route, onOpenStop }: Props) {
           </span>
         </li>
       </ol>
+
+      {/* Karte mit eingezeichneter Route (unten) */}
+      <RouteMap warehouse={route.warehouse} stops={mapStops} />
 
       <p className="text-center text-xs text-muted-foreground">
         Tippe auf einen Stopp, um die Packliste zu prüfen. Extra-Items für die

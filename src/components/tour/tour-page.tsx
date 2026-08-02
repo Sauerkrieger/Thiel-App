@@ -179,11 +179,7 @@ export function TourPage({ tourId }: Props) {
           <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
             Tour nicht gefunden.
           </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Karte mit eingezeichneter Route */}
-            <RouteMap warehouse={tour.warehouse} stops={mapStops} />
-
+        ) : (          <div className="space-y-4">
             {/* Fortschritt */}
             <div className="rounded-lg border bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
@@ -268,6 +264,9 @@ export function TourPage({ tourId }: Props) {
                 );
               })}
             </ol>
+
+            {/* Karte mit eingezeichneter Route (unten) */}
+            <RouteMap warehouse={tour.warehouse} stops={mapStops} />
 
             <p className="text-center text-xs text-muted-foreground">
               Tippe auf einen Stopp, um die Lieferung zu bestätigen und Items
