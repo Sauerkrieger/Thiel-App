@@ -41,15 +41,19 @@ import {
   prepMinutesForCount,
   toMinutes,
 } from "@/lib/routing/time";
+import {
+  WAREHOUSE_NAME,
+  WAREHOUSE_ADDRESS,
+} from "@/lib/warehouse";
+
+// Re-Export für bestehende Importe
+// (WAREHOUSE_NAME/WAREHOUSE_ADDRESS liegen jetzt zentral in src/lib/warehouse.ts)
+export { WAREHOUSE_NAME, WAREHOUSE_ADDRESS };
 
 /* ------------------------------------------------------------------ */
 /* Konstanten & Typen                                                  */
 /* ------------------------------------------------------------------ */
 
-export const WAREHOUSE_NAME = "Thiel Dienstleistungen";
-export const WAREHOUSE_ADDRESS =
-  process.env.WAREHOUSE_ADDRESS ??
-  "Sartoriusstraße 14, 97072 Würzburg";
 
 /** Fußgängerzonen-Objekte MÜSSEN vor 11:00 Uhr angefahren werden. */
 export const PEDESTRIAN_LIMIT_MINUTES = 11 * 60;
@@ -102,6 +106,9 @@ export type OptimizedStop = {
   approach_by_foot: boolean;
   /** Fußweg vom befahrbaren Punkt zum Objekt in Metern (nur bei approach_by_foot). */
   walking_distance_m: number | null;
+  /** Koordinaten des Stopps, wie sie für die Route verwendet wurden (null im Demo-Modus). */
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type RouteOptimizationResult = {
@@ -120,9 +127,19 @@ export type RouteOptimizationResult = {
   warnings: string[];
   /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
   traffic_matrix_provider: "tomtom" | null;
+  /** Lager (Start/Ziel der Rundtour) mit verifizierten Koordinaten (null im Demo-Modus). */
+  warehouse: {
+    name: string;
+    address: string;
+    latitude: number | null;
+    longitude: number | null;
+  } | null;
 };
 
 type Coordinate = { lat: number; lng: number };
+
+/** Ergebnis des Geocodings inkl. Kennzeichen, ob ein Hash-Fallback genutzt wurde. */
+type GeocodeResult = { coord: Coordinate; fallback: boolean };
 
 /** Ergebnis der ORS-Optimization-API (aufbereitet). */
 type OrsSolution = {
@@ -175,11 +192,13 @@ function hashCoordinate(address: string): Coordinate {
   return { lat, lng };
 }
 
-async function geocodeAddress(address: string): Promise<Coordinate> {
+async function geocodeAddress(address: string): Promise<GeocodeResult> {
   const normalized = normalizeAddressForGeocoding(address);
-  return (await geocodeWithOrs(normalized)) ??
-    (await geocodeWithGoogle(normalized)) ??
-    hashCoordinate(address);
+  const ors = await geocodeWithOrs(normalized);
+  if (ors) return { coord: ors, fallback: false };
+  const google = await geocodeWithGoogle(normalized);
+  if (google) return { coord: google, fallback: false };
+  return { coord: hashCoordinate(address), fallback: true };
 }
 
 /* ------------------------------------------------------------------ */
@@ -576,11 +595,16 @@ export async function optimizeRoute(
   const start = toMinutes(resolvedStartTime);
   const startSec = start * 60;
 
-  const warehouseCoord = await geocodeAddress(WAREHOUSE_ADDRESS);
-  const objectCoords = await Promise.all(
+  const warehouseGeo = await geocodeAddress(WAREHOUSE_ADDRESS);
+  const warehouseCoord = warehouseGeo.coord;
+  const objectGeos = await Promise.all(
     objects.map((o) => geocodeAddress(o.address)),
   );
+  const objectCoords = objectGeos.map((g) => g.coord);
   const coords: Coordinate[] = [warehouseCoord, ...objectCoords];
+  // Koordinaten, die tatsächlich für die Routing-Lösung verwendet wurden
+  // (werden beim Fußgängerzonen-Umweg auf die befahrbaren Punkte ersetzt).
+  let routingCoords: Coordinate[] = coords;
 
   // Zeitfenster (Node 0 = Lager)
   const earliest = [0, ...objects.map((o) => (o.opens_at ? toMinutes(o.opens_at) : 0))];
@@ -657,6 +681,7 @@ export async function optimizeRoute(
         );
         if (detour.solution) {
           orsSolution = detour.solution;
+          routingCoords = detourCoords;
           if (detour.trafficUsed) {
             trafficMatrixProvider = detour.provider;
           } else if (hasTomTomKey) {
@@ -746,6 +771,7 @@ export async function optimizeRoute(
           finalDeadline = deadlineDetour;
           solution = solutionDetour;
           mode = detour.mode;
+          routingCoords = detourCoords;
           usable.forEach((u) =>
             walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
           );
@@ -791,6 +817,13 @@ export async function optimizeRoute(
     const obj = objects[node - 1];
     const arrival = times[index];
     const walking = walkingDistances.get(node - 1);
+    // Koordinaten, die für die Route tatsächlich verwendet wurden
+    // (befahrbarer Punkt bei approach_by_foot, sonst Objekt-Adresse).
+    const coord = routingCoords[node];
+    // Demo-Modus: Hash-Koordinaten sind erfunden -> auf der Karte ausblenden.
+    const fallbackCoord = walking !== undefined
+      ? false
+      : (objectGeos[node - 1]?.fallback ?? true);
     return {
       object_id: obj.id,
       name: obj.name,
@@ -802,6 +835,8 @@ export async function optimizeRoute(
       opens_at: obj.opens_at,
       approach_by_foot: walking !== undefined,
       walking_distance_m: walking ?? null,
+      latitude: fallbackCoord || !coord ? null : coord.lat,
+      longitude: fallbackCoord || !coord ? null : coord.lng,
     };
   });
 
@@ -818,5 +853,13 @@ export async function optimizeRoute(
     warehouse_arrival: warehouseArrival,
     warnings: uniqueWarnings,
     traffic_matrix_provider: trafficMatrixProvider,
+    warehouse: warehouseGeo.fallback
+      ? null
+      : {
+          name: WAREHOUSE_NAME,
+          address: WAREHOUSE_ADDRESS,
+          latitude: warehouseCoord.lat,
+          longitude: warehouseCoord.lng,
+        },
   };
 }

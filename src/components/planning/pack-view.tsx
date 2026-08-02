@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   AlertTriangle,
   Clock,
@@ -11,6 +12,7 @@ import {
   Truck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { RouteMap } from "@/components/map/route-map";
 import { formatDuration } from "@/lib/routing/time";
 import type { OptimizedStop, RouteOptimizationResult } from "@/types/api";
 
@@ -48,6 +50,23 @@ const MODE_LABELS: Record<
 export function PackView({ route, onOpenStop }: Props) {
   const mode = MODE_LABELS[route.mode];
 
+  // Karten-Stopps (stabile Referenz, damit die Karte nicht neu lädt)
+  const mapStops = useMemo(
+    () =>
+      route.stops.map((stop) => ({
+        id: stop.object_id,
+        name: stop.name,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        note: stop.approach_by_foot
+          ? stop.walking_distance_m != null
+            ? `${Math.round(stop.walking_distance_m)} m zu Fuß`
+            : "zu Fuß"
+          : undefined,
+      })),
+    [route],
+  );
+
   // Schlüssel-Packliste: alle Schlüsselnummern der Tour, aufsteigend sortiert
   const keyNumbers = route.stops
     .map((stop) => stop.key_number)
@@ -56,6 +75,9 @@ export function PackView({ route, onOpenStop }: Props) {
 
   return (
     <div className="space-y-5">
+      {/* Karte mit eingezeichneter Route */}
+      <RouteMap warehouse={route.warehouse} stops={mapStops} />
+
       {/* Zusammenfassung */}
       <div className="rounded-lg border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">

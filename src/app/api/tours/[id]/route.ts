@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { orsGeocodeSearch } from "@/lib/ors";
+import { WAREHOUSE_NAME, WAREHOUSE_ADDRESS } from "@/lib/warehouse";
 import type { TourStatus } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +16,39 @@ const TOUR_STATUSES: readonly TourStatus[] = [
   "in_transit",
   "completed",
 ];
+
+/** Lager-Koordinaten für die Kartenanzeige (einmal pro Prozess geocodiert). */
+type WarehouseCoords = {
+  name: string;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+let cachedWarehouse: WarehouseCoords | null = null;
+let warehousePromise: Promise<WarehouseCoords | null> | null = null;
+
+async function resolveWarehouse(): Promise<WarehouseCoords | null> {
+  if (cachedWarehouse) return cachedWarehouse;
+  if (!warehousePromise) {
+    warehousePromise = (async () => {
+      const hit = await orsGeocodeSearch(WAREHOUSE_ADDRESS);
+      if (!hit) return null;
+      const resolved = {
+        name: WAREHOUSE_NAME,
+        address: WAREHOUSE_ADDRESS,
+        latitude: hit.latitude,
+        longitude: hit.longitude,
+      };
+      cachedWarehouse = resolved;
+      return resolved;
+    })().finally(() => {
+      // Fehlgeschlagene Auflösung nicht dauerhaft cachen (nächster Aufruf versucht es erneut)
+      warehousePromise = null;
+    });
+  }
+  return warehousePromise;
+}
 
 /** Prüft, ob der angemeldete Nutzer die Tour sehen/bearbeiten darf (Besitzer oder Admin). */
 async function assertTourAccess(id: string, userId: string, isAdminUser: boolean) {
@@ -52,7 +87,7 @@ export async function GET(_request: Request, { params }: Context) {
     const { data, error } = await supabase
       .from("active_tours")
       .select(
-        "*, tour_stops(*, object:objects(id, name, address, category))",
+        "*, tour_stops(*, object:objects(id, name, address, category, latitude, longitude))",
       )
       .eq("id", id)
       .order("stop_order", { referencedTable: "tour_stops" })
@@ -81,7 +116,7 @@ export async function GET(_request: Request, { params }: Context) {
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
       })),
     };
-    return NextResponse.json({ tour });
+    return NextResponse.json({ tour: { ...tour, warehouse: await resolveWarehouse() } });
   } catch (e) {
     return apiErrorResponse(e);
   }

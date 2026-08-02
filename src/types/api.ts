@@ -93,6 +93,9 @@ export type OptimizedStop = {
   approach_by_foot: boolean;
   /** Fußweg vom befahrbaren Punkt zum Objekt in Metern (nur bei approach_by_foot). */
   walking_distance_m: number | null;
+  /** Koordinaten des Stopps, wie sie für die Route verwendet wurden (null im Demo-Modus). */
+  latitude: number | null;
+  longitude: number | null;
 };
 
 /** Antwort von POST /api/planning/optimize. */
@@ -112,6 +115,13 @@ export type RouteOptimizationResult = {
   warnings: string[];
   /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
   traffic_matrix_provider: "tomtom" | null;
+  /** Lager (Start/Ziel der Rundtour) mit verifizierten Koordinaten (null im Demo-Modus). */
+  warehouse: {
+    name: string;
+    address: string;
+    latitude: number | null;
+    longitude: number | null;
+  } | null;
 };
 
 /** Für die nächste Belieferung vorgemerktes Item (Name + optionale Bemerkung). */
@@ -139,6 +149,8 @@ export type TourStopWithObject = {
     name: string;
     address: string;
     category: ObjectCategory;
+    latitude: number | null;
+    longitude: number | null;
   };
 };
 
@@ -152,6 +164,13 @@ export type TourWithStops = {
   total_duration_minutes: number | null;
   created_at: string;
   tour_stops: TourStopWithObject[];
+  /** Lager (Start/Ziel) mit verifizierten Koordinaten für die Kartenanzeige (null, wenn nicht auflösbar). */
+  warehouse: {
+    name: string;
+    address: string;
+    latitude: number | null;
+    longitude: number | null;
+  } | null;
 };
 
 /* ------------------------------------------------------------------ */

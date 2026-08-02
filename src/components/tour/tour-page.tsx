@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SetupHint } from "@/components/setup-hint";
+import { RouteMap } from "@/components/map/route-map";
 import { DeliveryDialog } from "./delivery-dialog";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
@@ -64,6 +65,18 @@ export function TourPage({ tourId }: Props) {
   }, [load]);
 
   const stops = tour?.tour_stops ?? [];
+  // Karten-Stopps (stabile Referenz, damit die Karte nicht neu lädt)
+  const mapStops = useMemo(
+    () =>
+      stops.map((stop) => ({
+        id: stop.id,
+        name: stop.object?.name ?? "Unbekanntes Objekt",
+        latitude: stop.object?.latitude ?? null,
+        longitude: stop.object?.longitude ?? null,
+        delivered: stop.is_delivered,
+      })),
+    [stops],
+  );
   const total = stops.length;
   const deliveredCount = stops.filter((stop) => stop.is_delivered).length;
   const allDelivered = total > 0 && deliveredCount === total;
@@ -168,6 +181,9 @@ export function TourPage({ tourId }: Props) {
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Karte mit eingezeichneter Route */}
+            <RouteMap warehouse={tour.warehouse} stops={mapStops} />
+
             {/* Fortschritt */}
             <div className="rounded-lg border bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
