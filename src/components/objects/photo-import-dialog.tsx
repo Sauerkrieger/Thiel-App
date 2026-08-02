@@ -63,7 +63,16 @@ type KeySelection = {
   key_number: number;
   already_has_key: boolean;
   selected: boolean;
+  /** true: für diesen Schlüssel wird ein neues Objekt angelegt. */
+  is_new_object?: boolean;
+  /** Name des neuen Objekts (nur bei is_new_object). */
+  new_name?: string;
+  /** Adresse des neuen Objekts (nur bei is_new_object). */
+  new_address?: string;
 };
+
+/** Sonderwert im Objekt-Dropdown: „Neues Objekt anlegen“. */
+const NEW_OBJECT_VALUE = "__new_object__";
 
 /** Bearbeitbares Objekt in der Objekt-Vorauswahl. */
 type ObjectSelection = {
@@ -237,8 +246,10 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         }
         const previewData = body as KeyImportPreview;
         setKeyPreview(previewData);
-        setKeySelections(
-          previewData.matches.map((m) => ({
+        // Erkannte Zuordnungen + „Objekt nicht gefunden“-Einträge, die man
+        // einem bestehenden Objekt zuordnen oder als neues Objekt anlegen kann.
+        setKeySelections([
+          ...previewData.matches.map((m) => ({
             object_id: m.object_id,
             object_name: m.object_name,
             address: m.address,
@@ -246,7 +257,18 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
             already_has_key: m.already_has_key,
             selected: !m.already_has_key,
           })),
-        );
+          ...previewData.unmatched.map((u) => ({
+            object_id: "",
+            object_name: u.name ?? "(ohne Name)",
+            address: "",
+            key_number: u.key_number,
+            already_has_key: false,
+            selected: true,
+            is_new_object: true,
+            new_name: u.name ?? "",
+            new_address: "",
+          })),
+        ]);
       } else if (mode === "items") {
         const res = await fetch("/api/objects/import/items/analyze", {
           method: "POST",
@@ -309,20 +331,47 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   /** Schritt 2: bestätigte Schlüssel-Zuordnungen übernehmen. */
   async function handleApplyKeys() {
-    const assignments = keySelections
-      .filter((k) => k.selected && !k.already_has_key && k.key_number > 0)
+    const ready = keySelections.filter(
+      (k) => k.selected && !k.already_has_key && k.key_number > 0,
+    );
+    const assignments = ready
+      .filter((k) => !k.is_new_object && k.object_id)
       .map((k) => ({ object_id: k.object_id, key_number: k.key_number }));
-    if (assignments.length === 0) {
-      toast.info("Keine gültigen Schlüssel zum Übernehmen ausgewählt.");
+    // Neue Objekte brauchen Name UND Adresse (Pflichtfeld in der DB).
+    const newObjects = ready
+      .filter((k) => k.is_new_object)
+      .map((k) => ({
+        name: (k.new_name ?? "").trim(),
+        address: (k.new_address ?? "").trim(),
+        key_number: k.key_number,
+      }))
+      .filter((o) => o.name.length > 0 && o.address.length > 0);
+    const skippedNew =
+      ready.filter((k) => k.is_new_object).length - newObjects.length;
+
+    if (assignments.length === 0 && newObjects.length === 0) {
+      if (skippedNew > 0) {
+        toast.warning(
+          `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – Name und Adresse fehlen.`,
+        );
+      } else {
+        toast.info("Keine gültigen Schlüssel zum Übernehmen ausgewählt.");
+      }
       return;
     }
+    if (skippedNew > 0) {
+      toast.warning(
+        `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – Name und Adresse fehlen.`,
+      );
+    }
+
     setApplying(true);
     setError(null);
     try {
       const res = await fetch("/api/objects/import/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignments }),
+        body: JSON.stringify({ assignments, new_objects: newObjects }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -420,7 +469,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   const description = (() => {
     if (mode === "keys") {
-      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern den Objekten zu – du kannst die Zuordnung anpassen und bestätigst vor dem Speichern.";
+      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern den Objekten zu – du kannst die Zuordnung anpassen, Schlüssel ohne passendes Objekt einem anderen Objekt zuordnen oder als neues Objekt anlegen. Du bestätigst vor dem Speichern.";
     }
     if (mode === "items") {
       return "Fotografiere eine Packliste, auf der der Objektname (oft mit Adresse) und die Items stehen. Die KI ordnet die Items dem passenden Objekt zu – du bestätigst vor dem Speichern.";
@@ -923,7 +972,30 @@ function KeyPreviewBody({
       address: obj.address,
       already_has_key: obj.key_number != null,
       selected: obj.key_number == null,
+      is_new_object: false,
     });
+  }
+
+  /** Für diesen Schlüssel ein neues Objekt anlegen (Name vorbelegt). */
+  function pickNewObject(index: number) {
+    setSelections((prev) =>
+      prev.map((k, i) =>
+        i === index
+          ? {
+              ...k,
+              object_id: "",
+              // Name fürs Eingabefeld vorbelegen (auch wenn aus bestehender
+              // Zuordnung gewechselt wird).
+              new_name: k.new_name?.trim() || k.object_name,
+              object_name: k.new_name?.trim() || k.object_name,
+              address: "",
+              already_has_key: false,
+              selected: true,
+              is_new_object: true,
+            }
+          : k,
+      ),
+    );
   }
 
   return (
@@ -939,7 +1011,10 @@ function KeyPreviewBody({
             {selections.map((k, i) => (
               <li
                 key={i}
-                className="flex items-start gap-3 rounded-md border bg-card p-2.5"
+                className={[
+                  "flex items-start gap-3 rounded-md border bg-card p-2.5",
+                  k.is_new_object ? "border-dashed" : "",
+                ].join(" ")}
               >
                 <Checkbox
                   checked={k.selected}
@@ -948,40 +1023,92 @@ function KeyPreviewBody({
                   aria-label={`${k.object_name}: Schlüssel zuordnen`}
                 />
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground">
                       Objekt
                     </Label>
-                    <Select
-                      value={k.object_id}
-                      onValueChange={(v) => pickObject(i, v)}
-                    >
-                      <SelectTrigger className="mt-1 h-8 w-full">
-                        <SelectValue placeholder="Objekt wählen…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {preview.objects.map((obj) => (
-                          <SelectItem key={obj.id} value={obj.id}>
-                            {obj.name}
-                            {obj.key_number != null
-                              ? ` (Nr. ${obj.key_number})`
-                              : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    {k.address && (
-                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                        <MapPin className="h-3 w-3" />
-                        {k.address}
-                      </span>
-                    )}
-                    {k.already_has_key && (
-                      <Badge variant="secondary">Schlüssel vorhanden</Badge>
+                    {k.is_new_object && (
+                      <Badge variant="secondary">Neu anlegen</Badge>
                     )}
                   </div>
+                  <Select
+                    value={k.is_new_object ? NEW_OBJECT_VALUE : k.object_id}
+                    onValueChange={(v) =>
+                      v === NEW_OBJECT_VALUE
+                        ? pickNewObject(i)
+                        : pickObject(i, v)
+                    }
+                  >
+                    <SelectTrigger className="mt-1 h-8 w-full">
+                      <SelectValue placeholder="Objekt wählen…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        value={NEW_OBJECT_VALUE}
+                        className="gap-2 font-medium"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Neues Objekt anlegen…
+                      </SelectItem>
+                      {preview.objects.map((obj) => (
+                        <SelectItem key={obj.id} value={obj.id}>
+                          {obj.name}
+                          {obj.key_number != null
+                            ? ` (Nr. ${obj.key_number})`
+                            : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {k.is_new_object ? (
+                    <div className="space-y-1.5">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">
+                          Name (neues Objekt)
+                        </Label>
+                        <Input
+                          className="mt-1 h-8"
+                          value={k.new_name ?? ""}
+                          onChange={(e) =>
+                            update(i, {
+                              new_name: e.target.value,
+                              object_name: e.target.value,
+                            })
+                          }
+                          placeholder="Name des Objekts"
+                          aria-label={`Name des neuen Objekts für Schlüssel Nr. ${k.key_number}`}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">
+                          Adresse (neues Objekt)
+                        </Label>
+                        <Input
+                          className="mt-1 h-8"
+                          value={k.new_address ?? ""}
+                          onChange={(e) =>
+                            update(i, { new_address: e.target.value })
+                          }
+                          placeholder="Straße, PLZ Ort"
+                          aria-label={`Adresse des neuen Objekts für Schlüssel Nr. ${k.key_number}`}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {k.address && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="h-3 w-3" />
+                          {k.address}
+                        </span>
+                      )}
+                      {k.already_has_key && (
+                        <Badge variant="secondary">Schlüssel vorhanden</Badge>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
                       Schlüssel-Nr.
@@ -1007,28 +1134,7 @@ function KeyPreviewBody({
         </div>
       )}
 
-      {preview.unmatched.length > 0 && (
-        <div>
-          <p className="mb-2 text-sm font-medium text-muted-foreground">
-            Objekt nicht gefunden ({preview.unmatched.length}) – wird nicht
-            übernommen
-          </p>
-          <ul className="space-y-1">
-            {preview.unmatched.map((u, i) => (
-              <li
-                key={i}
-                className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground"
-              >
-                <Badge variant="outline">?</Badge>
-                <span className="truncate">{u.name ?? "(ohne Name)"}</span>
-                <span className="ml-auto tabular-nums">Nr. {u.key_number}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {selections.length === 0 && preview.unmatched.length === 0 && (
+      {selections.length === 0 && (
         <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
           Keine Schlüssel im Foto erkannt.
         </p>
@@ -1324,10 +1430,15 @@ function ObjectResultBody({ result }: { result: ImportResult }) {
 function KeyResultBody({ result }: { result: KeyImportResult }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
         <ResultStat
           value={result.assigned}
           label="Schlüssel zugeordnet"
+          tone="success"
+        />
+        <ResultStat
+          value={result.new_objects_created}
+          label="Objekte angelegt"
           tone="success"
         />
         <ResultStat
@@ -1337,13 +1448,14 @@ function KeyResultBody({ result }: { result: KeyImportResult }) {
         />
         <ResultStat
           value={result.not_found}
-          label="Objekt nicht gefunden"
+          label="nicht zugeordnet"
           tone="destructive"
         />
       </div>
       <p className="text-xs text-muted-foreground">
         Objekte, die bereits eine Schlüsselnummer hatten, wurden nicht
-        überschrieben. Nicht gefundene Objekte wurden übersprungen.
+        überschrieben. Manuell angelegte Objekte erhalten die Schlüsselnummer
+        direkt beim Anlegen.
       </p>
     </div>
   );

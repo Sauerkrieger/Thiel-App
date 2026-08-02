@@ -288,6 +288,8 @@ export type KeyImportResult = {
   assigned: number;
   already_had_key: number;
   not_found: number;
+  /** Anzahl neu angelegter Objekte (aus „Objekt nicht gefunden“-Einträgen). */
+  new_objects_created: number;
 };
 
 /** Vom OCR erkannte Items-Gruppe (Objekt-Hinweis + Items). */
