@@ -27,7 +27,12 @@ import { SetupHint } from "@/components/setup-hint";
 import { PhotoSelectDialog } from "./photo-select-dialog";
 import { PackView } from "./pack-view";
 import { PackDialog } from "./pack-dialog";
-import { defaultStartTime, prepMinutesForCount } from "@/lib/routing/time";
+import {
+  defaultStartTime,
+  formatMinutes,
+  prepMinutesForCount,
+  toMinutes,
+} from "@/lib/routing/time";
 import type { DayOfWeek } from "@/types/database";
 import type {
   ApiError,
@@ -211,15 +216,23 @@ export function PlanningPage() {
     if (!route) return;
     setStartingTour(true);
     try {
+      // Tatsächliche Startzeit: die aktuelle Uhrzeit beim Drücken des Buttons
+      // (nicht die geschätzte Abfahrtszeit aus der Routenberechnung).
+      const now = new Date();
+      const actualStart = formatMinutes(now.getHours() * 60 + now.getMinutes());
+      // Alle Ankunftszeiten um die Differenz zur geschätzten Abfahrtszeit
+      // verschieben, damit das Auslieferungsfenster dem echten Start entspricht.
+      const delta = toMinutes(actualStart) - toMinutes(route.departure_time);
+
       const res = await fetch("/api/tours", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start_time: route.departure_time,
+          start_time: actualStart,
           status: "in_transit",
           stops: route.stops.map((stop) => ({
             object_id: stop.object_id,
-            arrival_time: stop.arrival,
+            arrival_time: formatMinutes(toMinutes(stop.arrival) + delta),
           })),
         }),
       });
