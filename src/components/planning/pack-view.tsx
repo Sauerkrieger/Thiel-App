@@ -21,11 +21,28 @@ type Props = {
 
 const MODE_LABELS: Record<
   RouteOptimizationResult["mode"],
-  { label: string; variant: "secondary" | "outline" | "success" }
+  { label: string; hint: string; variant: "secondary" | "outline" | "success" }
 > = {
-  openrouteservice: { label: "OpenRouteService", variant: "success" },
-  google: { label: "Google Maps", variant: "success" },
-  haversine: { label: "Demo (Luftlinie)", variant: "secondary" },
+  "ors-optimization": {
+    label: "ORS Optimierung (VROOM)",
+    hint: "Rundtour direkt über die ORS Optimization-API (VROOM) gelöst – echte Straßen-Fahrzeiten.",
+    variant: "success",
+  },
+  "ors-matrix": {
+    label: "ORS Matrix + Solver",
+    hint: "ORS-Fahrzeit-Matrix + lokaler TSP-Solver (Fallback, da die Optimization-API nicht lief).",
+    variant: "success",
+  },
+  "google-matrix": {
+    label: "Google Matrix + Solver",
+    hint: "Google-Fahrzeit-Matrix + lokaler TSP-Solver (Fallback, da die Optimization-API nicht lief).",
+    variant: "success",
+  },
+  haversine: {
+    label: "Demo (Luftlinie)",
+    hint: "Keine Routing-API verwendet – Luftlinien-Distanzen ohne Straßennetz.",
+    variant: "secondary",
+  },
 };
 
 export function PackView({ route, onOpenStop }: Props) {
@@ -42,7 +59,7 @@ export function PackView({ route, onOpenStop }: Props) {
       {/* Zusammenfassung */}
       <div className="rounded-lg border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={mode.variant} className="gap-1">
+          <Badge variant={mode.variant} className="gap-1" title={mode.hint}>
             <Route className="h-3 w-3" />
             {mode.label}
           </Badge>
@@ -54,6 +71,12 @@ export function PackView({ route, onOpenStop }: Props) {
             · ca. {formatDuration(route.total_duration_minutes)}
           </span>
         </div>
+
+        {/* Sichtbarer Hinweis, mit welchem Verfahren die Route berechnet wurde */}
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Route className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {mode.hint}
+        </p>
 
         {/* Schlüssel-Packliste */}
         {sortedKeys.length > 0 && (

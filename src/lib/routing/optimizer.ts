@@ -58,7 +58,18 @@ const MAX_OPTIMIZATION_JOBS = 50;
 /** Letzter Sekundenwert eines Tages (für offene ORS-Zeitfenster). */
 const DAY_END_SECONDS = 24 * 60 * 60 - 1;
 
-export type RoutingMode = "openrouteservice" | "google" | "haversine";
+/**
+ * Welcher Algorithmus/API die Reihenfolge tatsächlich gelöst hat:
+ *   - ors-optimization: ORS Optimization-API (VROOM) direkt
+ *   - ors-matrix:       Fahrzeit-Matrix (ORS) + lokaler TSP-Solver
+ *   - google-matrix:    Fahrzeit-Matrix (Google) + lokaler TSP-Solver
+ *   - haversine:        Demo-Modus (Luftlinie, ohne Routing-API)
+ */
+export type RoutingMode =
+  | "ors-optimization"
+  | "ors-matrix"
+  | "google-matrix"
+  | "haversine";
 
 export type RouteObject = {
   id: string;
@@ -403,10 +414,10 @@ async function resolveMatrix(
   warnings: string[],
 ): Promise<{ matrix: number[][]; mode: RoutingMode }> {
   const ors = await matrixWithOrs(coords);
-  if (ors) return { matrix: ors, mode: "openrouteservice" };
+  if (ors) return { matrix: ors, mode: "ors-matrix" };
 
   const google = await matrixWithGoogle(coords);
-  if (google) return { matrix: google, mode: "google" };
+  if (google) return { matrix: google, mode: "google-matrix" };
 
   const hasOrsKey = Boolean(process.env.ORS_API_KEY);
   const hasGoogleKey = Boolean(process.env.GOOGLE_MAPS_API_KEY);
@@ -532,7 +543,7 @@ export async function optimizeRoute(
   let mode: RoutingMode;
 
   if (orsSolution) {
-    mode = "openrouteservice";
+    mode = "ors-optimization";
     order = orsSolution.order;
     times = orsSolution.times;
     total = orsSolution.totalMinutes;

@@ -97,7 +97,7 @@ export type OptimizedStop = {
 
 /** Antwort von POST /api/planning/optimize. */
 export type RouteOptimizationResult = {
-  mode: "openrouteservice" | "google" | "haversine";
+  mode: "ors-optimization" | "ors-matrix" | "google-matrix" | "haversine";
   /** Vom Nutzer gewählte Startzeit = Abfahrtszeit (Beginn der Tour). */
   start_time: string;
   /** Dauer der Vorbereitung am Lager (5 Min/Stopp + 5 Min Schlüssel). */
