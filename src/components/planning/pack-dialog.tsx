@@ -14,7 +14,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatItemLabel } from "@/lib/items";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo } from "@/types/api";
@@ -27,57 +34,100 @@ type Props = {
 };
 
 /**
- * Eine Zeile in der Packliste. Items sind bewusst nicht änderbar (kein
- * Checkbox/Häkchen). Hat das Item ein Foto, ist die gesamte Zeile antippbar
- * und öffnet die Foto-Vorschau.
+ * Eine Zeile in der Packliste (Tabellenform: Item (Bemerkung) | Anzahl).
+ * Items sind bewusst nicht änderbar (kein Checkbox/Häkchen). Hat das Item
+ * ein Foto, ist die gesamte Zeile antippbar und öffnet die Foto-Vorschau.
+ * Die Anzahl wird immer angezeigt – auch „1x“ bei nur einem Stück.
  */
 function PackItemRow({
-  label,
-  note,
+  item,
+  extraNote,
   badge,
-  photoPath,
   onOpenPhoto,
 }: {
-  label: string;
-  note?: string | null;
+  item: ObjectItem;
+  /** Zusätzliche Bemerkung (z. B. Vormerkung aus der letzten Belieferung). */
+  extraNote?: string | null;
   badge?: string;
-  photoPath: string | null;
   onOpenPhoto: (photoPath: string) => void;
 }) {
-  const hasPhoto = Boolean(photoPath);
-  const content = (
-    <>
-      <span className="flex-1">
-        <span className="block text-sm">{label}</span>
-        {note && (
-          <span className="block text-xs text-muted-foreground">{note}</span>
-        )}
-      </span>
-      {hasPhoto && (
-        <Image className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-      )}
-      {badge && <Badge variant="secondary">{badge}</Badge>}
-    </>
-  );
+  const quantity = item.quantity ?? 1;
+  const hasPhoto = Boolean(item.photo_path);
+  // Item- und Vormerk-Bemerkung als Zeilen; identische Einträge nur einmal.
+  const notes = [
+    ...new Set(
+      [item.note?.trim(), extraNote?.trim()].filter(
+        (n): n is string => Boolean(n),
+      ),
+    ),
+  ];
 
   return (
-    <li>
-      {hasPhoto ? (
-        <button
-          type="button"
-          onClick={() => onOpenPhoto(photoPath!)}
-          aria-label={`Foto von ${label} anzeigen`}
-          title={`Foto von ${label} anzeigen`}
-          className="flex w-full items-center gap-3 rounded-md border bg-card px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-accent/40 active:bg-accent/60"
-        >
-          {content}
-        </button>
-      ) : (
-        <div className="flex items-center gap-3 rounded-md border bg-card px-3 py-2">
-          {content}
-        </div>
-      )}
-    </li>
+    <TableRow
+      onClick={hasPhoto ? () => onOpenPhoto(item.photo_path!) : undefined}
+      aria-label={hasPhoto ? `Foto von ${item.item_name} anzeigen` : undefined}
+      title={hasPhoto ? `Foto von ${item.item_name} anzeigen` : undefined}
+      className={hasPhoto ? "cursor-pointer" : undefined}
+    >
+      <TableCell className="px-3 py-2">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-medium">{item.item_name}</span>
+          {hasPhoto && (
+            <Image className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+          )}
+          {badge && <Badge variant="secondary">{badge}</Badge>}
+        </span>
+        {notes.map((note, i) => (
+          <span key={i} className="block text-xs text-muted-foreground">
+            {note}
+          </span>
+        ))}
+      </TableCell>
+      <TableCell className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">
+        {quantity}x
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/**
+ * Tabellen-Block (Item (Bemerkung) | Anzahl) für eine Gruppe von Items.
+ * `extraNoteFor` liefert die zusätzliche Bemerkung je Item-Name (z. B.
+ * Vormerkung aus der letzten Belieferung).
+ */
+function PackItemsTable({
+  items,
+  extraNoteFor,
+  badge,
+  onOpenPhoto,
+}: {
+  items: ObjectItem[];
+  extraNoteFor?: (name: string) => string | null;
+  badge?: string;
+  onOpenPhoto: (photoPath: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-muted/40">
+            <TableHead className="px-3">Item (Bemerkung)</TableHead>
+            <TableHead className="px-3 text-right">Anzahl</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.map((item) => (
+            <PackItemRow
+              key={item.id}
+              item={item}
+              extraNote={extraNoteFor ? extraNoteFor(item.item_name) : undefined}
+              badge={badge}
+              onOpenPhoto={onOpenPhoto}
+            />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -152,16 +202,10 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Standard-Items (immer mitnehmen)
                 </p>
-                <ul className="space-y-1.5">
-                  {standardItems.map((item) => (
-                    <PackItemRow
-                      key={item.id}
-                      label={formatItemLabel(item)}
-                      photoPath={item.photo_path}
-                      onOpenPhoto={setPhotoPreview}
-                    />
-                  ))}
-                </ul>
+                <PackItemsTable
+                  items={standardItems}
+                  onOpenPhoto={setPhotoPreview}
+                />
               </div>
             )}
 
@@ -170,18 +214,12 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Vorgemerkt – muss mitgenommen werden
                 </p>
-                <ul className="space-y-1.5">
-                  {markedItems.map((item) => (
-                    <PackItemRow
-                      key={item.id}
-                      label={formatItemLabel(item)}
-                      note={noteFor(item.item_name)}
-                      badge="vorgemerkt"
-                      photoPath={item.photo_path}
-                      onOpenPhoto={setPhotoPreview}
-                    />
-                  ))}
-                </ul>
+                <PackItemsTable
+                  items={markedItems}
+                  extraNoteFor={noteFor}
+                  badge="vorgemerkt"
+                  onOpenPhoto={setPhotoPreview}
+                />
               </div>
             )}
 
