@@ -105,6 +105,12 @@ export interface Database {
           key_number: number | null;
           /** Öffnungszeit: DARF erst ab dieser Uhrzeit angefahren werden (z.B. 11:00). */
           opens_at: string | null;
+          /** Kunde (Firma/Ansprechpartner) – nur für Admins sichtbar. */
+          customer: string | null;
+          /** Kundennummer – nur für Admins sichtbar. */
+          customer_number: string | null;
+          /** Reinigungsturnus (z. B. wöchentlich) – nur für Admins sichtbar. */
+          cleaning_interval: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -118,6 +124,9 @@ export interface Database {
           is_pedestrian_zone_until_11?: boolean;
           key_number?: number | null;
           opens_at?: string | null;
+          customer?: string | null;
+          customer_number?: string | null;
+          cleaning_interval?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -131,6 +140,9 @@ export interface Database {
           is_pedestrian_zone_until_11?: boolean;
           key_number?: number | null;
           opens_at?: string | null;
+          customer?: string | null;
+          customer_number?: string | null;
+          cleaning_interval?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -181,6 +193,32 @@ export interface Database {
             referencedSchema: 'public';
           },
         ];
+      };
+      inventory_items: {
+        Row: {
+          id: string;
+          /** Bezeichnung des Items, z. B. "Micromops". */
+          name: string;
+          /** Anmerkung zum Item (z. B. "grün, blau, gelb, rot") oder null. */
+          note: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
       active_tours: {
         Row: {
@@ -418,6 +456,7 @@ export type Tables<T extends keyof Database['public']['Tables']> =
 export type Profile = Tables<'profiles'>;
 export type ObjectRecord = Tables<'objects'>;
 export type ObjectItem = Tables<'object_items'>;
+export type InventoryItem = Tables<'inventory_items'>;
 export type WeeklyDefaultRoute = Tables<'weekly_default_routes'>;
 export type Passkey = Tables<'passkeys'>;
 export type WebauthnChallenge = Tables<'webauthn_challenges'>;
@@ -430,6 +469,10 @@ export type ObjectItemInsert =
   Database['public']['Tables']['object_items']['Insert'];
 export type ObjectItemUpdate =
   Database['public']['Tables']['object_items']['Update'];
+export type InventoryItemInsert =
+  Database['public']['Tables']['inventory_items']['Insert'];
+export type InventoryItemUpdate =
+  Database['public']['Tables']['inventory_items']['Update'];
 export type WeeklyDefaultRouteInsert =
   Database['public']['Tables']['weekly_default_routes']['Insert'];
 export type WeeklyDefaultRouteUpdate =

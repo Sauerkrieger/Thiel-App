@@ -20,14 +20,24 @@ function parseKeyNumber(value: unknown): number | null {
 }
 
 export async function GET(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
+    // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins.
+    const select = isAdmin(auth.user)
+      ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)"
+      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)";
     const { data, error } = await supabase
       .from("objects")
-      .select(
-        "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)",
-      )
+      .select(select)
       .eq("id", id)
       .single();
 
@@ -89,6 +99,11 @@ export async function PUT(request: Request, { params }: Context) {
     // Fußgängerzone automatisch anhand der Koordinaten erkennen
     const isPedestrianZone = await safeIsInPedestrianZone(latitude, longitude);
 
+    const text = (value: unknown, max: number) =>
+      typeof value === "string" && value.trim()
+        ? value.trim().slice(0, max)
+        : null;
+
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("objects")
@@ -104,6 +119,9 @@ export async function PUT(request: Request, { params }: Context) {
           typeof body.opens_at === "string" && body.opens_at
             ? body.opens_at
             : null,
+        customer: text(body.customer, 200),
+        customer_number: text(body.customer_number, 100),
+        cleaning_interval: text(body.cleaning_interval, 100),
       })
       .eq("id", id)
       .select()

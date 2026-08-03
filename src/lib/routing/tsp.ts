@@ -25,6 +25,8 @@ export const MAX_EXACT_STOPS = 15;
 /**
  * Liefert die Ankunftszeiten für eine Reihenfolge (inkl. Servicezeit je Stopp).
  * `null`, wenn eine Deadline verletzt wird (nur wenn `enforce` true).
+ *
+ * `serviceMinutes` ist pro Node (Index 0 = Depot, Servicezeit 0).
  */
 export function scheduleTimes(
   order: number[],
@@ -32,14 +34,14 @@ export function scheduleTimes(
   earliest: number[],
   deadline: number[],
   startMinutes: number,
-  serviceMinutes: number,
+  serviceMinutes: number[],
   enforce = true,
 ): number[] | null {
   const times: number[] = [];
   let t = startMinutes;
   let prev = 0;
   for (const node of order) {
-    t = t + (prev === 0 ? 0 : serviceMinutes) + dist[prev][node];
+    t = t + serviceMinutes[prev] + dist[prev][node];
     if (t < earliest[node]) t = earliest[node];
     if (enforce && t >= deadline[node]) return null;
     times.push(t);
@@ -52,10 +54,10 @@ function tourTotal(
   order: number[],
   times: number[],
   dist: number[][],
-  serviceMinutes: number,
+  serviceMinutes: number[],
 ): number {
   const last = order[order.length - 1];
-  return times[times.length - 1] + serviceMinutes + dist[last][0];
+  return times[times.length - 1] + serviceMinutes[last] + dist[last][0];
 }
 
 /** Held-Karp (exakt) mit Zeitfenstern. */
@@ -64,7 +66,7 @@ function solveExact(
   earliest: number[],
   deadline: number[],
   startMinutes: number,
-  serviceMinutes: number,
+  serviceMinutes: number[],
 ): { order: number[]; totalMinutes: number } | null {
   const stops = dist.length - 1;
   const INF = Number.POSITIVE_INFINITY;
@@ -91,7 +93,7 @@ function solveExact(
       if (cur === INF) continue;
       for (let next = 0; next < stops; next++) {
         if (mask & (1 << next)) continue;
-        let t = cur + serviceMinutes + dist[last + 1][next + 1];
+        let t = cur + serviceMinutes[last + 1] + dist[last + 1][next + 1];
         if (t < earliest[next + 1]) t = earliest[next + 1];
         if (t >= deadline[next + 1]) continue;
         const nmask = mask | (1 << next);
@@ -106,7 +108,7 @@ function solveExact(
   let bestReturn = INF;
   let bestLast = -1;
   for (let last = 0; last < stops; last++) {
-    const returnTime = dp[full][last] + serviceMinutes + dist[last + 1][0];
+    const returnTime = dp[full][last] + serviceMinutes[last + 1] + dist[last + 1][0];
     if (returnTime < bestReturn) {
       bestReturn = returnTime;
       bestLast = last;
@@ -135,7 +137,7 @@ function solveHeuristic(
   earliest: number[],
   deadline: number[],
   startMinutes: number,
-  serviceMinutes: number,
+  serviceMinutes: number[],
 ): { order: number[]; totalMinutes: number } | null {
   const stops = dist.length - 1;
   const allNodes = Array.from({ length: stops }, (_, i) => i + 1);
@@ -150,7 +152,7 @@ function solveHeuristic(
     let bestArrival = Number.POSITIVE_INFINITY;
     for (const node of allNodes) {
       if (visited.has(node)) continue;
-      let t = time + (current === 0 ? 0 : serviceMinutes) + dist[current][node];
+      let t = time + serviceMinutes[current] + dist[current][node];
       if (t < earliest[node]) t = earliest[node];
       if (t >= deadline[node]) continue;
       if (t < bestArrival) {
@@ -238,7 +240,7 @@ export function solveTspWithWindows(
   earliest: number[],
   deadline: number[],
   startMinutes: number,
-  serviceMinutes: number,
+  serviceMinutes: number[],
 ): TspSolution {
   const stops = dist.length - 1;
   if (stops === 0) {

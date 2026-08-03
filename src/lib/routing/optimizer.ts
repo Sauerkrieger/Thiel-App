@@ -39,12 +39,14 @@ import {
   defaultStartTime,
   formatMinutes,
   prepMinutesForCount,
+  serviceMinutesForCategory,
   toMinutes,
 } from "@/lib/routing/time";
 import {
   WAREHOUSE_NAME,
   WAREHOUSE_ADDRESS,
 } from "@/lib/warehouse";
+import type { ObjectCategory } from "@/types/database";
 
 // Re-Export für bestehende Importe
 // (WAREHOUSE_NAME/WAREHOUSE_ADDRESS liegen jetzt zentral in src/lib/warehouse.ts)
@@ -58,8 +60,6 @@ export { WAREHOUSE_NAME, WAREHOUSE_ADDRESS };
 /** Fußgängerzonen-Objekte MÜSSEN vor 11:00 Uhr angefahren werden. */
 export const PEDESTRIAN_LIMIT_MINUTES = 11 * 60;
 
-/** Verweildauer/Entladezeit an jedem Zielobjekt (vor Weiterfahrt). */
-export const SERVICE_MINUTES = 10;
 export const AVERAGE_SPEED_KMH = 30;
 
 /** ORS-Matrix ist auf die Kostenstufe limitiert; darüber Luftlinie. */
@@ -88,6 +88,7 @@ export type RouteObject = {
   id: string;
   name: string;
   address: string;
+  category: ObjectCategory;
   is_pedestrian_zone_until_11: boolean;
   key_number: number | null;
   opens_at: string | null;
@@ -115,7 +116,7 @@ export type RouteOptimizationResult = {
   mode: RoutingMode;
   /** Tatsächliche Abfahrtszeit (ORS wählt sie innerhalb des gewählten Startfensters optimal). */
   start_time: string;
-  /** Dauer der Vorbereitung am Lager (5 Min/Stopp + 5 Min Schlüssel). */
+  /** Dauer der Vorbereitung am Lager (3 Min/Stopp + 5 Min Schlüssel). */
   prep_duration_minutes: number;
   /** Beginn der Vorbereitung am Lager (Abfahrt − Vorbereitungszeit). */
   prep_begin: string;
@@ -258,6 +259,7 @@ async function solveWithOrsOptimization(
   earliest: number[],
   deadline: number[],
   startSec: number,
+  serviceMinutes: number[],
   trafficMatrix?: TrafficMatrix | null,
 ): Promise<OrsSolution | null> {
   const apiKey = process.env.ORS_API_KEY;
@@ -292,7 +294,8 @@ async function solveWithOrsOptimization(
       location: [c.lng, c.lat],
       // Bei Custom-Matrix: expliziter Index in der Fahrzeitmatrix (0..n-1)
       ...(useMatrix ? { location_index: index } : {}),
-      service: SERVICE_MINUTES * 60,
+      // Haltzeit je Kategorie (Treppenhaus 3 Min, Objekt 5 Min)
+      service: serviceMinutes[node] * 60,
       time_windows: timeWindows,
     };
   });
@@ -539,6 +542,7 @@ async function tryOrsWithTraffic(
   earliest: number[],
   deadline: number[],
   startSec: number,
+  serviceMinutes: number[],
   useTraffic: boolean,
 ): Promise<{
   solution: OrsSolution | null;
@@ -554,6 +558,7 @@ async function tryOrsWithTraffic(
     earliest,
     deadline,
     startSec,
+    serviceMinutes,
     traffic,
   );
   if (withMatrix) {
@@ -570,6 +575,7 @@ async function tryOrsWithTraffic(
       earliest,
       deadline,
       startSec,
+      serviceMinutes,
       null,
     );
     return { solution: plain, trafficUsed: false, provider: null };
@@ -587,8 +593,13 @@ export async function optimizeRoute(
   startTime?: string,
 ): Promise<RouteOptimizationResult> {
   const warnings: string[] = [];
-  // Vorbereitung am Lager: 5 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
+  // Vorbereitung am Lager: 3 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
   const prepMinutes = prepMinutesForCount(objects.length);
+  // Haltzeit je Ziel: Treppenhaus 3 Min, Objekt 5 Min (Node 0 = Lager, 0 Min)
+  const serviceMinutes = [
+    0,
+    ...objects.map((o) => serviceMinutesForCategory(o.category)),
+  ];
   // Standard-Startzeit: aktuelle Uhrzeit + Vorbereitungszeit (auf 5 Min gerundet).
   // Die gewählte Startzeit ist die frühestmögliche Abfahrt.
   const resolvedStartTime = startTime ?? defaultStartTime(prepMinutes);
@@ -636,6 +647,7 @@ export async function optimizeRoute(
       earliest,
       deadlineDirect,
       startSec,
+      serviceMinutes,
       hasTomTomKey,
     );
     if (first.solution) {
@@ -677,6 +689,7 @@ export async function optimizeRoute(
           earliest,
           deadlineDetour,
           startSec,
+          serviceMinutes,
           hasTomTomKey,
         );
         if (detour.solution) {
@@ -731,7 +744,7 @@ export async function optimizeRoute(
       earliest,
       deadlineDirect,
       start,
-      SERVICE_MINUTES,
+      serviceMinutes,
     );
     let finalMatrix = matrix;
     let finalDeadline = deadlineDirect;
@@ -764,7 +777,7 @@ export async function optimizeRoute(
           earliest,
           deadlineDetour,
           start,
-          SERVICE_MINUTES,
+          serviceMinutes,
         );
         if (solutionDetour.feasible) {
           finalMatrix = detour.matrix;
@@ -789,7 +802,7 @@ export async function optimizeRoute(
       earliest,
       finalDeadline,
       start,
-      SERVICE_MINUTES,
+      serviceMinutes,
       true,
     ) ?? scheduleTimes(
       order,
@@ -797,7 +810,7 @@ export async function optimizeRoute(
       earliest,
       finalDeadline,
       start,
-      SERVICE_MINUTES,
+      serviceMinutes,
       false,
     ) ?? [];
     total = Number.isFinite(solution.totalMinutes) ? solution.totalMinutes : 0;
@@ -829,7 +842,7 @@ export async function optimizeRoute(
       name: obj.name,
       address: obj.address,
       arrival: formatMinutes(arrival),
-      departure: formatMinutes(arrival + SERVICE_MINUTES),
+      departure: formatMinutes(arrival + serviceMinutes[node]),
       is_pedestrian_zone_until_11: obj.is_pedestrian_zone_until_11,
       key_number: obj.key_number,
       opens_at: obj.opens_at,

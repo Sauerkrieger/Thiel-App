@@ -53,9 +53,14 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 
 ### `object_items` – Items eines Objekts
 - `id`, `object_id` (FK cascade), `item_name`
-- `is_always_required` – fest ausgewählt & ausgegraut im Pack-/Tour-Modus
+- `is_always_required` – fest ausgewählt & ausgegraut im Pack-/Tour-Modus (im Foto-Import je Item per Checkbox setzbar)
 - `quantity` (default 1), `note` (nullable), `photo_path` (nullable, Storage)
 - Kein Unique-Constraint auf `(object_id, item_name)` – gleiche Bezeichnung mit unterschiedlicher Menge/Bemerkung ist erlaubt
+
+### `inventory_items` – Inventar (Item-Katalog, nur Admin)
+- `id`, `name`, `note` (nullable, Anmerkung), `created_at`, `updated_at`
+- RLS: Lesen für alle authentifizierten Nutzer, verwalten (anlegen/bearbeiten/löschen) nur für Admins
+- Seed: initiale Item-Liste (Franzenmop, M-Power, Micromops-Varianten, Tana SR13, …)
 
 ### `weekly_default_routes` – Wochentags-Vorauswahl (pro Benutzer)
 - `id`, `user_id` (FK auth.users, **jeder Nutzer hat eigene Defaults**), `day_of_week` (0–6, 0 = Sonntag), `object_id`, `selection_order`
@@ -97,6 +102,7 @@ die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „
 
 ### 5.1 Objektverwaltung (`/objects`)
 - CRUD für Objekte (Name, Adresse, Kategorie, Öffnungszeit, Schlüsselnummer)
+- **Suche + Sortierung** je Attribut: Name/Adresse (A–Z/Z–A), Schlüssel-Nr. (auf-/absteigend), Kategorie, Items-Anzahl
 - **Adress-Autocomplete** per ORS (`/api/geocoding/autocomplete`) + **Verifizierung** beim Speichern (`/api/geocoding/verify`), Stadtteil-Suffixe werden fürs Geocoding normalisiert
 - **Fußgängerzone wird beim Speichern automatisch per Overpass erkannt** (keine Checkbox)
 - Items je Objekt: Name, Menge, Bemerkung, **Foto-Upload** (`/api/items/photo`, 10 MB, Admin)
@@ -105,12 +111,12 @@ die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „
 Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
 - **Objekte** (`objects/analyze` + `objects`): abfotografierte Adresslisten → Vorschau mit Duplikat-Erkennung (normalisierte Adresse + Fuzzy-Match), ORS-Geocoding-Status je Eintrag, Fußgängerzonen-Check (OCR-Hinweis **oder** Overpass)
 - **Schlüssel** (`keys/analyze` + `keys`): erkannte Schlüsselnummern → Zuordnung zu bestehenden Objekten (Dropdown zeigt vorhandene Schlüsselnummern) oder **„Neues Objekt anlegen…"** (Name/Adresse eingeben, wird geocodiert + Fußgängerzone geprüft, Duplikat-Schutz über bestehende Adressen)
-- **Items** (`items/analyze` + `items`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert
+- **Items** (`items/analyze` + `items`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert, **je Item per Checkbox als Standard-Item markierbar** (`is_always_required`)
 
 ### 5.3 Tourenplanung (`/planung`)
 - **Wochentags-Defaults:** Vorauswahl des gleichen Wochentags (pro Benutzer) wird geladen; Änderungen werden per `save_weekly_defaults` gespeichert
 - **Foto-Auswahl** (`/api/planning/photo`): abfotografierte Routenliste → Häkchen automatisch setzen (Match per Adresse/Name, Unmatched werden aufgelistet)
-- **Startzeit** wählen → optimierte Route berechnen lassen
+- **Startzeit** automatisch (aktuelle Uhrzeit + Vorbereitungszeit, auf 5 Min gerundet) – kein manuelles Auswahlfeld mehr
 
 ### 5.4 Routen-Optimierung (`/api/planning/optimize`)
 Eingebettet in `src/lib/routing/optimizer.ts`:
@@ -123,13 +129,15 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
    - Fußgängerzone bis 11:00 → **Deadline 11:00** (Ankunft MUSS davor)
    - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
 4. **Fußgängerzonen-Umweg:** Ist die Deadline nicht erreichbar, wird per Overpass der **nächstgelegene befahrbare Haltepunkt** gesucht (`findNearestDrivablePoint`); der Stopp wird dort angefahren, der Rest wird **zu Fuß** gelaufen (Badge „x m zu Fuß", `approach_by_foot`)
-5. **Vorbereitungszeit** am Lager: 5 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
-6. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
+5. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
+6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 3 Min, Objekt 5 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
+7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
 
 Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
 
 ### 5.5 Pack-Modus (`/planung` nach Optimierung)
 - Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
+- **Geschätztes Arbeitsende** wird angezeigt (Lager-Rückkehr + Aufräumzeit: 3 Min/Stopp + 5 Min) – bewusst ohne Rechnungsweg
 - Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht)
 - **Karte unten** (Leaflet): Rundtour Lager → alle Stopps → Lager inkl. Rückweg, nummerierte Marker, Fußweg-Anteile
 - **„Ausfahren beginnen"** → Tour anlegen (`/api/tours`) und in den Tour-Modus wechseln
@@ -157,6 +165,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Benutzer (Admin):** `GET/POST /api/auth/users` · `PATCH/DELETE /api/auth/users/[id]`
 **Geocoding:** `POST /api/geocoding/autocomplete` · `POST /api/geocoding/verify`
 **Objekte (Admin/Facility):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
+**Inventar (Admin):** `GET/POST /api/inventory` · `PUT/DELETE /api/inventory/[id]`
 **Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
 **Items:** `POST /api/items/ocr` · `POST /api/items/photo` (Admin)
 **Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
@@ -182,13 +191,14 @@ src/
   middleware.ts                     # Session-Refresh + Seiten-/API-Schutz
   app/
     page.tsx                        # Redirect → /objects
-    login/ · objects/ · planung/ · tour/[id]/ · historie/ · einstellungen/
+    login/ · objects/ · inventar/ · planung/ · tour/[id]/ · historie/ · einstellungen/
     api/                            # auth, users, passkeys, geocoding, items,
-                                    # objects (inkl. import/*), planning, tours
+                                    # objects (inkl. import/*), inventory, planning, tours
   components/
     app-shell.tsx                   # Header-Navigation (rollenabhängig)
     map/route-map.tsx               # Leaflet-Route
     objects/                        # Objektverwaltung + Foto-Import-Dialoge
+    inventory/                      # Inventar (Item-Katalog, Admin)
     planning/                       # Planung, Pack-Modus, Foto-Auswahl
     tour/                           # Tour-Modus, Liefer-Dialog
     settings/ · history/ · auth/ · ui/
@@ -199,7 +209,7 @@ src/
     routing/tsp.ts · time.ts
     supabase/                       # server/admin/middleware-Client
     webauthn.ts                     # Passkey-Verifikation
-supabase/migrations/                # 11 Migrationen (Schema von Grund auf)
+supabase/migrations/                # 13 Migrationen (Schema von Grund auf)
 ```
 
 ## 10. Entwicklung

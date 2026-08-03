@@ -11,20 +11,6 @@ export type ObjectWithItems = ObjectRecord & {
   object_items: ObjectItem[];
 };
 
-export type ImportDuplicate = {
-  /** Vom OCR erkannte Adresse */
-  address: string;
-  /** Bereits vorhandenes Objekt, das gematcht wurde */
-  matched: string;
-};
-
-export type ImportResult = {
-  total: number;
-  created: ObjectRecord[];
-  duplicates: ImportDuplicate[];
-  errors: string[];
-};
-
 /** Einheitliches Fehlerformat der API-Routen. */
 export type ApiError = {
   code?: string;
@@ -103,7 +89,7 @@ export type RouteOptimizationResult = {
   mode: "ors-optimization" | "ors-matrix" | "google-matrix" | "haversine";
   /** Vom Nutzer gewählte Startzeit = Abfahrtszeit (Beginn der Tour). */
   start_time: string;
-  /** Dauer der Vorbereitung am Lager (5 Min/Stopp + 5 Min Schlüssel). */
+  /** Dauer der Vorbereitung am Lager (3 Min/Stopp + 5 Min Schlüssel). */
   prep_duration_minutes: number;
   /** Beginn der Vorbereitung am Lager (start_time − Vorbereitungszeit). */
   prep_begin: string;
@@ -207,43 +193,6 @@ export type UserListItem = AuthUser & {
 };
 
 /* ------------------------------------------------------------------ */
-/* Foto-Import: Objekte (Schritt 8)                                    */
-/* ------------------------------------------------------------------ */
-
-/** Vom OCR erkanntes Objekt für die Vorauswahl (noch nicht angelegt). */
-export type ObjectImportPreviewEntry = {
-  name: string;
-  address: string;
-  category: ObjectCategory;
-  is_pedestrian_zone_until_11: boolean;
-  opens_at: string | null;
-  /** true, wenn die Adresse bereits in der DB existiert (Duplikat). */
-  is_duplicate: boolean;
-  /** Koordinaten des ORS-Treffers (wenn die Adresse verifiziert wurde). */
-  latitude: number | null;
-  longitude: number | null;
-  /** Ob ORS die Adresse auflösen konnte. */
-  geocoding_status: "ok" | "not_found";
-};
-
-/** Antwort von POST /api/objects/import/objects/analyze. */
-export type ObjectImportPreview = {
-  objects: ObjectImportPreviewEntry[];
-};
-
-/** Bestätigtes Objekt für POST /api/objects/import/objects. */
-export type ObjectImportInput = {
-  name: string;
-  address: string;
-  category: ObjectCategory;
-  is_pedestrian_zone_until_11: boolean;
-  opens_at: string | null;
-  /** Koordinaten (falls vorhanden; sonst geocodiert der Server nach). */
-  latitude: number | null;
-  longitude: number | null;
-};
-
-/* ------------------------------------------------------------------ */
 /* Foto-Import: Schlüssel & Items (Schritt 8)                          */
 /* ------------------------------------------------------------------ */
 
@@ -288,19 +237,6 @@ export type KeyImportResult = {
   assigned: number;
   already_had_key: number;
   not_found: number;
-  /** Anzahl neu angelegter Objekte (aus „Objekt nicht gefunden“-Einträgen). */
-  new_objects_created: number;
-};
-
-/** Vom OCR erkannte Items-Gruppe (Objekt-Hinweis + Items). */
-export type ItemGroupImportEntry = {
-  name: string | null;
-  address: string | null;
-  items: {
-    item_name: string;
-    quantity: number;
-    note: string | null;
-  }[];
 };
 
 /** Items-Gruppe zugeordnet zu einem bestehenden Objekt (Vorauswahl). */
@@ -309,15 +245,47 @@ export type ItemGroupImportMatch = {
   object_name: string;
   address: string | null;
   matched_by: "adresse" | "name";
+  /** Kunde aus dem Foto (Admin-Info, wird am Objekt gespeichert). */
+  customer: string | null;
+  customer_number: string | null;
+  cleaning_interval: string | null;
   items: {
     item_name: string;
     quantity: number;
     note: string | null;
+    /** true = Standard-Item (bei jeder Belieferung fest vorgesehen). */
+    is_always_required: boolean;
   }[];
 };
 
-/** Items-Gruppe, deren Objekt nicht existiert. */
-export type ItemGroupImportUnmatched = ItemGroupImportEntry;
+/**
+ * Items-Gruppe, deren Objekt nicht existiert – wird als neues Objekt
+ * angelegt. Die Adresse wird per Geocoding aufgelöst („Firma googeln“),
+ * wenn auf dem Zettel nur Name und/oder Ort standen.
+ */
+export type ItemGroupImportUnmatched = {
+  name: string | null;
+  /** Beste bekannte Adresse (Geocoding-Treffer oder vom Zettel); null = keine. */
+  address: string | null;
+  city: string | null;
+  /** Kategorie des neuen Objekts (Treppenhaus bei nur-Adresse-Objekt-Zelle). */
+  category: ObjectCategory;
+  customer: string | null;
+  customer_number: string | null;
+  cleaning_interval: string | null;
+  items: {
+    item_name: string;
+    quantity: number;
+    note: string | null;
+    /** true = Standard-Item (bei jeder Belieferung fest vorgesehen). */
+    is_always_required: boolean;
+  }[];
+  /** Koordinaten des Geocoding-Treffers (null = nicht auflösbar). */
+  latitude: number | null;
+  longitude: number | null;
+  /** Ob eine exakte Adresse mit Hausnummer vorliegt. */
+  geocoding_status: "ok" | "not_found";
+};
 
 /** Antwort von POST /api/objects/import/items/analyze. */
 export type ItemGroupImportPreview = {
@@ -325,11 +293,37 @@ export type ItemGroupImportPreview = {
   unmatched: ItemGroupImportUnmatched[];
 };
 
+/** Neu anzulegendes Objekt mit Items (aus „Objekt nicht gefunden“-Einträgen). */
+export type ItemGroupImportNewObject = {
+  name: string;
+  /** Exakte Adresse mit Hausnummer (Pflicht). */
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+  category: ObjectCategory;
+  customer: string | null;
+  customer_number: string | null;
+  cleaning_interval: string | null;
+  items: {
+    item_name: string;
+    quantity: number;
+    note: string | null;
+    /** true = Standard-Item (bei jeder Belieferung fest vorgesehen). */
+    is_always_required: boolean;
+  }[];
+};
+
 /** Ergebnis nach dem Bestätigen von POST /api/objects/import/items. */
 export type ItemGroupImportResult = {
+  /** Objekte (bestehende + neu angelegte), denen Items zugeordnet wurden. */
   assigned: number;
   items_added: number;
+  /** Bestehende Objekt-IDs, die nicht existierten. */
   not_found: number;
+  /** Anzahl neu angelegter Objekte. */
+  new_objects_created: number;
+  /** Neue Objekte, die übersprungen wurden (keine exakte Adresse/Duplikat-Fehler). */
+  new_objects_skipped: number;
 };
 
 /* ------------------------------------------------------------------ */

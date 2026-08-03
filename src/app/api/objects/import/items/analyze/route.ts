@@ -6,7 +6,10 @@ import {
   extractItemGroupsFromImage,
   findMatchingObjectId,
   findBestObjectByName,
+  type ExtractedItemGroup,
 } from "@/lib/ocr";
+import { orsGeocodeSearch } from "@/lib/ors";
+import { hasHouseNumber } from "@/lib/utils";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ItemGroupImportPreview } from "@/types/api";
 
@@ -15,6 +18,66 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+type ResolvedGroupAddress = {
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocoding_status: "ok" | "not_found";
+};
+
+/**
+ * Sucht für eine nicht zugeordnete Items-Gruppe die exakte Adresse (Straße +
+ * Hausnummer). Stand auf dem Zettel nur der Name und/oder der Ort, wird die
+ * Adresse per ORS-Geocoding gesucht („Firma googeln“ anhand der Bild-Infos).
+ */
+async function resolveItemGroupAddress(
+  group: ExtractedItemGroup,
+): Promise<ResolvedGroupAddress> {
+  // Steht auf dem Zettel bereits eine Straße + Hausnummer, wird nur damit
+  // (plus Ort) geocodiert – der Firmenname könnte sonst einen falschen
+  // Treffer nach vorne ziehen. Sonst wird über Name (+ Ort) gesucht.
+  const hasOcrAddress = hasHouseNumber(group.address ?? "");
+  const parts = hasOcrAddress
+    ? [group.address, group.city]
+    : [group.name, group.address, group.city];
+  const query = parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(", ");
+
+  const hit = query ? await orsGeocodeSearch(query) : null;
+
+  if (hit) {
+    if (hasHouseNumber(hit.label)) {
+      return {
+        address: hit.label,
+        latitude: hit.latitude,
+        longitude: hit.longitude,
+        geocoding_status: "ok",
+      };
+    }
+    // ORS hat nur Ort/Straße aufgelöst – die exakte Adresse steht ggf. auf dem Zettel.
+    if (hasHouseNumber(group.address ?? "")) {
+      return {
+        address: group.address,
+        latitude: hit.latitude,
+        longitude: hit.longitude,
+        geocoding_status: "ok",
+      };
+    }
+  }
+
+  // Kein exakter Treffer: Adresse vom Zettel behalten; der Nutzer ergänzt ggf.
+  const ocrAddress = group.address?.trim() || null;
+  return {
+    address: ocrAddress,
+    latitude: null,
+    longitude: null,
+    geocoding_status:
+      ocrAddress !== null && hasHouseNumber(ocrAddress) ? "ok" : "not_found",
+  };
+}
 
 /** POST /api/objects/import/items/analyze -> Vorauswahl: Objekt + Items. */
 export async function POST(request: Request) {
@@ -75,11 +138,17 @@ export async function POST(request: Request) {
     }));
 
     const result: ItemGroupImportPreview = { matches: [], unmatched: [] };
+    const unmatchedGroups: ExtractedItemGroup[] = [];
 
     for (const group of extracted) {
-      // 1) Adresse- oder Name-Match (exakt/Fuzzy) wie bei der Tourenliste
+      // 1) Adresse- oder Name-Match (exakt/Fuzzy) wie bei der Tourenliste.
+      //    Adresse + Ort zusammenfügen, da das Modell beides getrennt liefern kann.
+      const fullAddress = [group.address, group.city]
+        .filter((part): part is string => Boolean(part?.trim()))
+        .map((part) => part.trim())
+        .join(", ");
       const byEntry = findMatchingObjectId(
-        { name: group.name, address: group.address },
+        { name: group.name, address: fullAddress },
         targets,
       );
       // 2) Falls kein Treffer: Namens-Match inkl. Abkürzungen
@@ -94,16 +163,44 @@ export async function POST(request: Request) {
           object_name: obj.name,
           address: obj.address,
           matched_by: match.matched_by,
-          items: group.items,
+          customer: group.customer,
+          customer_number: group.customer_number,
+          cleaning_interval: group.cleaning_interval,
+          // Standard-Markierung setzt der Nutzer in der Vorschau.
+          items: group.items.map((item) => ({
+            ...item,
+            is_always_required: false,
+          })),
         });
       } else {
-        result.unmatched.push({
-          name: group.name,
-          address: group.address,
-          items: group.items,
-        });
+        unmatchedGroups.push(group);
       }
     }
+
+    // Nicht gefundene Objekte: exakte Adresse per Geocoding auflösen, damit
+    // das neue Objekt immer mit Straße + Hausnummer angelegt werden kann.
+    result.unmatched = await Promise.all(
+      unmatchedGroups.map(async (group) => {
+        const resolved = await resolveItemGroupAddress(group);
+        return {
+          name: group.name,
+          address: resolved.address,
+          city: group.city,
+          category: group.category,
+          customer: group.customer,
+          customer_number: group.customer_number,
+          cleaning_interval: group.cleaning_interval,
+          // Standard-Markierung setzt der Nutzer in der Vorschau.
+          items: group.items.map((item) => ({
+            ...item,
+            is_always_required: false,
+          })),
+          latitude: resolved.latitude,
+          longitude: resolved.longitude,
+          geocoding_status: resolved.geocoding_status,
+        };
+      }),
+    );
 
     return NextResponse.json(result);
   } catch (e) {

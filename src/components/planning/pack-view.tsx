@@ -14,7 +14,12 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RouteMap } from "@/components/map/route-map";
-import { formatDuration } from "@/lib/routing/time";
+import {
+  formatDuration,
+  formatMinutes,
+  prepMinutesForCount,
+  toMinutes,
+} from "@/lib/routing/time";
 import type { OptimizedStop, RouteOptimizationResult } from "@/types/api";
 
 type Props = {
@@ -50,6 +55,17 @@ export function PackView({ route, onOpenStop }: Props) {
     .filter((key): key is number => typeof key === "number");
   const sortedKeys = [...new Set(keyNumbers)].sort((a, b) => a - b);
 
+  // Geschätztes Arbeitsende = Lager-Rückkehr + Aufräumzeit (3 Min pro Stopp
+  // + 5 Min) – bewusst nur als Ergebnis dargestellt, ohne Rechnungsweg.
+  const workEnd = useMemo(
+    () =>
+      formatMinutes(
+        toMinutes(route.warehouse_arrival) +
+          prepMinutesForCount(route.stops.length),
+      ),
+    [route],
+  );
+
   return (
     <div className="space-y-5">
       {/* Zusammenfassung */}
@@ -71,9 +87,16 @@ export function PackView({ route, onOpenStop }: Props) {
             <Truck className="h-4 w-4 text-primary" />
             Vorbereitung {route.prep_duration_minutes} Min · Abfahrt{" "}
             {route.departure_time} · Lager-Rückkehr ~{route.warehouse_arrival}{" "}
-            · ca. {formatDuration(route.total_duration_minutes)}
+            ·            ca. {formatDuration(route.total_duration_minutes)}
           </span>
         </div>
+
+        {/* Geschätztes Arbeitsende (ohne Rechnungsweg) */}
+        <p className="mt-2 flex items-center gap-1.5 text-sm font-medium">
+          <Flag className="h-4 w-4 text-primary" />
+          Geschätztes Arbeitsende:{" "}
+          <span className="font-semibold tabular-nums">{workEnd} Uhr</span>
+        </p>
 
         {/* Schlüssel-Packliste */}
         {sortedKeys.length > 0 && (

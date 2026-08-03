@@ -16,7 +16,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -39,11 +47,24 @@ import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 
+/** Sortiermöglichkeiten der Objektliste (je Attribut). */
+type ObjectSort =
+  | "name-asc"
+  | "name-desc"
+  | "address-asc"
+  | "address-desc"
+  | "key-asc"
+  | "key-desc"
+  | "category-asc"
+  | "items-asc"
+  | "items-desc";
+
 export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
   const [objects, setObjects] = useState<ObjectWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<ObjectSort>("name-asc");
 
   const [formDialog, setFormDialog] = useState<{
     open: boolean;
@@ -82,15 +103,42 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
     void load();
   }, [load]);
 
+  const itemCount = (o: ObjectWithItems) => o.object_items?.length ?? 0;
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return objects;
-    return objects.filter(
-      (o) =>
-        o.name.toLowerCase().includes(q) ||
-        o.address.toLowerCase().includes(q),
-    );
-  }, [objects, search]);
+    const list = q
+      ? objects.filter(
+          (o) =>
+            o.name.toLowerCase().includes(q) ||
+            o.address.toLowerCase().includes(q),
+        )
+      : [...objects];
+    list.sort((a, b) => {
+      switch (sort) {
+        case "name-desc":
+          return b.name.localeCompare(a.name, "de");
+        case "address-asc":
+          return a.address.localeCompare(b.address, "de");
+        case "address-desc":
+          return b.address.localeCompare(a.address, "de");
+        case "key-asc":
+          return (a.key_number ?? Number.MAX_SAFE_INTEGER) -
+            (b.key_number ?? Number.MAX_SAFE_INTEGER);
+        case "key-desc":
+          return (b.key_number ?? -1) - (a.key_number ?? -1);
+        case "category-asc":
+          return a.category.localeCompare(b.category, "de");
+        case "items-asc":
+          return itemCount(a) - itemCount(b);
+        case "items-desc":
+          return itemCount(b) - itemCount(a);
+        default:
+          return a.name.localeCompare(b.name, "de");
+      }
+    });
+    return list;
+  }, [objects, search, sort]);
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -113,8 +161,6 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
       setDeleting(false);
     }
   }
-
-  const itemCount = (o: ObjectWithItems) => o.object_items?.length ?? 0;
 
   return (
     <div className="container py-6 sm:py-10">
@@ -145,16 +191,40 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
-      {/* Suchleiste */}
-      <div className="relative mt-6 max-w-sm">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Objekte suchen…"
-          className="pl-9"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Suche + Sortierung */}
+      <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative max-w-sm flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Objekte suchen…"
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Sortierung</Label>
+          <Select
+            value={sort}
+            onValueChange={(v) => setSort(v as ObjectSort)}
+          >
+            <SelectTrigger className="w-48" aria-label="Sortierung der Objekte">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="name-asc">Name (A–Z)</SelectItem>
+              <SelectItem value="name-desc">Name (Z–A)</SelectItem>
+              <SelectItem value="address-asc">Adresse (A–Z)</SelectItem>
+              <SelectItem value="address-desc">Adresse (Z–A)</SelectItem>
+              <SelectItem value="key-asc">Schlüssel-Nr. aufsteigend</SelectItem>
+              <SelectItem value="key-desc">Schlüssel-Nr. absteigend</SelectItem>
+              <SelectItem value="category-asc">Kategorie (A–Z)</SelectItem>
+              <SelectItem value="items-asc">Items aufsteigend</SelectItem>
+              <SelectItem value="items-desc">Items absteigend</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Inhalt */}
@@ -362,8 +432,8 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       </div>
       <h2 className="mt-4 text-base font-semibold">Noch keine Objekte</h2>
       <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-        Lege dein erstes Objekt manuell an oder fotografiere eine gedruckte
-        Adressliste und importiere sie per KI.
+        Lege dein erstes Objekt manuell an – Items kannst du später auch per
+        Foto-Import hinzufügen.
       </p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
         <Button onClick={onCreate}>

@@ -63,6 +63,9 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
   const [category, setCategory] = useState<ObjectCategory>("objekt");
   const [keyNumber, setKeyNumber] = useState("");
   const [opensAt, setOpensAt] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [customerNumber, setCustomerNumber] = useState("");
+  const [cleaningInterval, setCleaningInterval] = useState("");
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -80,6 +83,9 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
     setCategory(object?.category ?? "objekt");
     setKeyNumber(object?.key_number != null ? String(object.key_number) : "");
     setOpensAt(object?.opens_at ?? "");
+    setCustomer(object?.customer ?? "");
+    setCustomerNumber(object?.customer_number ?? "");
+    setCleaningInterval(object?.cleaning_interval ?? "");
     setItems(
       (object?.object_items ?? []).map((item) => ({
         item_name: item.item_name,
@@ -252,6 +258,9 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
             ? keyParsed
             : null,
         opens_at: opensAt || null,
+        customer: customer.trim() || null,
+        customer_number: customerNumber.trim() || null,
+        cleaning_interval: cleaningInterval.trim() || null,
         items: payloadItems,
       };
 
@@ -369,6 +378,44 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 Objekt darf erst ab dieser Uhrzeit angefahren werden.
               </p>
             </div>
+          </div>
+
+          {/* Admin-Info (nur für Admins sichtbar) */}
+          <div className="space-y-2">
+            <Label>Admin-Info</Label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="obj-customer">Kunde</Label>
+                <Input
+                  id="obj-customer"
+                  value={customer}
+                  onChange={(e) => setCustomer(e.target.value)}
+                  placeholder="z. B. Firma Meyer GmbH"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="obj-customer-number">Kundennummer</Label>
+                <Input
+                  id="obj-customer-number"
+                  value={customerNumber}
+                  onChange={(e) => setCustomerNumber(e.target.value)}
+                  placeholder="z. B. 4711"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="obj-cleaning-interval">Reinigungsturnus</Label>
+                <Input
+                  id="obj-cleaning-interval"
+                  value={cleaningInterval}
+                  onChange={(e) => setCleaningInterval(e.target.value)}
+                  placeholder="z. B. wöchentlich"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Diese Felder sind nur für Admins sichtbar und werden beim
+              Foto-Import automatisch erkannt.
+            </p>
           </div>
 
           {/* Strukturierte Items */}

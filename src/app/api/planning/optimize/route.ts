@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     const { data: objects, error } = await supabase
       .from("objects")
       .select(
-        "id, name, address, is_pedestrian_zone_until_11, key_number, opens_at",
+        "id, name, address, category, is_pedestrian_zone_until_11, key_number, opens_at",
       )
       .in("id", objectIds as string[]);
 
@@ -67,6 +67,7 @@ export async function POST(request: Request) {
         id: obj.id,
         name: obj.name,
         address: obj.address,
+        category: obj.category,
         is_pedestrian_zone_until_11: obj.is_pedestrian_zone_until_11,
         key_number: obj.key_number,
         opens_at: obj.opens_at,

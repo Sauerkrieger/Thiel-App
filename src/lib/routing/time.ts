@@ -3,14 +3,27 @@
  * Bewusst ohne Server-Abhängigkeiten, damit sie auch im Client nutzbar sind.
  */
 
+import type { ObjectCategory } from "@/types/database";
+
 /** Packzeit am Lager pro Stopp/Objekt vor Abfahrt. */
-export const PREP_MINUTES_PER_STOP = 5;
+export const PREP_MINUTES_PER_STOP = 3;
 /** Einmalige Zeit am Lager zum Einsammeln der Schlüssel. */
 export const KEY_COLLECTION_MINUTES = 5;
 
-/** Vorbereitungszeit für eine Tour mit `count` Stopps (5 Min/Stopp + 5 Min Schlüssel). */
+/** Vorbereitungszeit für eine Tour mit `count` Stopps (3 Min/Stopp + 5 Min Schlüssel). */
 export function prepMinutesForCount(count: number): number {
   return count * PREP_MINUTES_PER_STOP + KEY_COLLECTION_MINUTES;
+}
+
+/** Haltzeit an einem Ziel: Objekt 5 Min, Treppenhaus 3 Min. */
+export const SERVICE_MINUTES_OBJECT = 5;
+export const SERVICE_MINUTES_TREPPENHAUS = 3;
+
+/** Haltzeit (Servicezeit) je Kategorie. */
+export function serviceMinutesForCategory(category: ObjectCategory): number {
+  return category === "treppenhaus"
+    ? SERVICE_MINUTES_TREPPENHAUS
+    : SERVICE_MINUTES_OBJECT;
 }
 
 /** "HH:MM" → Minuten seit 0 Uhr. */

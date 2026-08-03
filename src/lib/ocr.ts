@@ -1,32 +1,5 @@
 import type { ObjectCategory } from "@/types/database";
 
-/** Vom OCR erkanntes Objekt (noch nicht validiert). */
-export type ExtractedObject = {
-  name?: string | null;
-  address: string;
-  category?: ObjectCategory | null;
-  is_pedestrian_zone_until_11?: boolean | null;
-  opens_at?: string | null;
-};
-
-const SYSTEM_PROMPT = `Du bist ein präziser OCR-Assistent für eine Liefer- und Tourenplanungs-App. Ein Nutzer fotografiert eine gedruckte Adressliste (Lieferobjekte / Treppenhäuser). Extrahiere aus dem Bild alle Objekte als strukturiertes JSON.
-
-Format-Antwort NUR als JSON-Objekt, ohne zusätzlichen Text:
-{"objects": [{"name": "...", "address": "...", "category": "objekt|treppenhaus", "is_pedestrian_zone_until_11": false, "opens_at": "11:00"}]}
-
-Regeln:
-- "address": vollständige Adresse mit Straße und Hausnummer – Pflichtfeld.
-- "name": Bezeichnung des Objekts, falls erkennbar (z. B. Firma/Kunde), sonst null.
-- "category": nur "objekt" oder "treppenhaus"; Standard ist "objekt".
-- "is_pedestrian_zone_until_11": true nur, wenn dies eindeutig erkennbar ist (z. B. Vermerk "Fußgängerzone", "nur bis 11 Uhr").
-- "opens_at": nur wenn eine Uhrzeit erkennbar ist, sonst null (Format "HH:MM", z. B. "11:00").
-- Fasse zusammengehörige Zeilen zu einem Eintrag zusammen (z. B. Name + Adresse in getrennten Zeilen).
-- Ignoriere Überschriften, Seitennummern, Logos, Kopfteile und unlesbare Einträge.
-- Falls das Bild keine brauchbare Liste enthält: {"objects":[]}`;
-
-const USER_PROMPT =
-  "Analysiere das folgende Foto einer gedruckten Adressliste und extrahiere alle Objekte als JSON.";
-
 export class GeminiApiNotConfiguredError extends Error {
   constructor() {
     super(
@@ -97,71 +70,6 @@ async function callGeminiVision(
     );
   }
   return text;
-}
-
-/** Gemini (Vision) aufrufen und erkannte Objekte zurückgeben. */
-export async function extractAddressesFromImage(
-  imageBase64: string,
-  mimeType: string,
-): Promise<ExtractedObject[]> {
-  const content = await callGeminiVision(
-    SYSTEM_PROMPT,
-    USER_PROMPT,
-    imageBase64,
-    mimeType,
-  );
-  return parseOcrResult(content);
-}
-
-/** JSON aus der Antwort extrahieren, validieren und bereinigen. */
-export function parseOcrResult(content: string): ExtractedObject[] {
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return [];
-
-  try {
-    const parsed = JSON.parse(content.slice(start, end + 1)) as {
-      objects?: unknown;
-    };
-    if (!Array.isArray(parsed.objects)) return [];
-
-    return parsed.objects
-      .filter(
-        (entry): entry is Record<string, unknown> =>
-          typeof entry === "object" && entry !== null,
-      )
-      .map((entry) => ({
-        name:
-          typeof entry.name === "string" && entry.name.trim()
-            ? entry.name.trim()
-            : null,
-        address:
-          typeof entry.address === "string" ? entry.address.trim() : "",
-        category: sanitizeCategory(entry.category),
-        is_pedestrian_zone_until_11: Boolean(
-          entry.is_pedestrian_zone_until_11,
-        ),
-        opens_at: sanitizeOpensAt(entry.opens_at),
-      }))
-      .filter((obj) => obj.address.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-function sanitizeCategory(value: unknown): ObjectCategory {
-  if (typeof value === "string" && value.toLowerCase() === "treppenhaus") {
-    return "treppenhaus";
-  }
-  return "objekt";
-}
-
-/** Nur plausible Uhrzeiten (HH:MM) durchlassen. */
-function sanitizeOpensAt(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const match = value.match(/^([01]?\d|2[0-3]):([0-5]\d)/);
-  if (!match) return null;
-  return `${match[1].padStart(2, "0")}:${match[2]}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -460,20 +368,34 @@ export function parseKeysResult(content: string): ExtractedKey[] {
 /* Objekt-Items-Erkennung (Foto → Objekt + Items, Schritt 8)           */
 /* ------------------------------------------------------------------ */
 
-/** Aus einem Foto erkannte Gruppe: Objekt-Hinweis (Name/Adresse) + Items. */
+/** Aus einem Foto erkannte Gruppe: Objekt-Hinweis (Name/Adresse/Ort) + Items. */
 export type ExtractedItemGroup = {
   name: string | null;
   address: string | null;
+  city: string | null;
+  /** Kategorie (Treppenhaus, wenn in der Objekt-Zelle nur eine Adresse steht). */
+  category: ObjectCategory;
+  /** Kunde (Firma/Ansprechpartner) – Admin-Info. */
+  customer: string | null;
+  customer_number: string | null;
+  cleaning_interval: string | null;
   items: ExtractedItem[];
 };
 
-const ITEM_GROUPS_SYSTEM_PROMPT = `Du bist ein präziser OCR-Assistent für eine Liefer- und Tourenplanungs-App. Ein Nutzer fotografiert einen Zettel / eine Packliste, auf der oben der Name des Objekts (oft auch die Adresse) steht und darunter die zu liefernden Items. Extrahiere alle Einträge als strukturiertes JSON.
+const ITEM_GROUPS_SYSTEM_PROMPT = `Du bist ein präziser OCR-Assistent für eine Liefer- und Tourenplanungs-App. Ein Nutzer fotografiert einen Zettel / eine Packliste, auf der der Objektname und die zu liefernden Items stehen. Oft ist es eine Tabelle mit Spalten für Objekt, Kunde, Kundennummer, Reinigungsturnus und den Items (Menge + Bezeichnung + Bemerkung). Extrahiere alle Einträge als strukturiertes JSON.
 
 Format-Antwort NUR als JSON-Objekt, ohne zusätzlichen Text:
-{"groups": [{"name": "Büro Meyer", "address": "Hauptstraße 12, 12345 Musterstadt", "items": [{"quantity": 60, "item_name": "Micromops", "note": "rot, gelb - kein blau"}]}]}
+{"groups": [{"name": "Büro Meyer", "address": "Hauptstraße 12", "city": "97072 Musterstadt", "category": "objekt", "customer": "Firma Meyer GmbH", "customer_number": "4711", "cleaning_interval": "wöchentlich", "items": [{"quantity": 60, "item_name": "Micromops", "note": "rot, gelb - kein blau"}]}]}
 
 Regeln:
-- Jede Gruppe entspricht einem Objekt: "name" (Bezeichnung, kann abgekürzt sein) und/oder "address" (Straße + Hausnummer) – mindestens eines muss gefüllt sein.
+- Jede Gruppe entspricht einem Objekt:
+  - "name": Inhalt der Objekt-Spalte. Steht dort nur eine Adresse (ohne Namen), wird diese Adresse als Name übernommen. Ist die Objekt-Spalte leer, wird der Inhalt der Kunde-Spalte als Name übernommen.
+  - "address": Straße UND Hausnummer, falls auf dem Zettel angegeben (z. B. "Hauptstraße 12"), sonst null. Trage hier NIE nur eine Straße oder nur einen Ort ein.
+  - "city": Ort bzw. PLZ + Ort, falls erkennbar, sonst null. Auch angeben, wenn auf dem Zettel keine Straße steht.
+  - "category": "objekt" oder "treppenhaus". "treppenhaus", wenn in der Objekt-Spalte nur eine Adresse steht (Name ist dann die Adresse), sonst "objekt".
+  - "customer": Kunde (Firma/Ansprechpartner), falls vorhanden, sonst null.
+  - "customer_number": Kundennummer, falls vorhanden, sonst null.
+  - "cleaning_interval": Reinigungsturnus (z. B. "wöchentlich", "alle 14 Tage"), falls vorhanden, sonst null.
 - "items": die Liste der zu liefernden Gegenstände des Objekts.
   - "quantity": Menge als positive ganze Zahl, falls eine Zahl erkennbar ist, sonst 1.
   - "item_name": Bezeichnung des Gegenstands – Pflichtfeld.
@@ -540,14 +462,49 @@ export function parseItemGroupsResult(content: string): ExtractedItemGroup[] {
           })
           .filter((item) => item.item_name.length > 0);
 
+        // Namens-/Kategorie-Regeln (Objekt-Zelle):
+        //   - Nur eine Adresse in der Objekt-Zelle → Treppenhaus (Name = Adresse)
+        //   - Leere Objekt-Zelle → Kunde wird zum Namen
+        let name =
+          typeof entry.name === "string" && entry.name.trim()
+            ? entry.name.trim().slice(0, 200)
+            : null;
+        const address =
+          typeof entry.address === "string" && entry.address.trim()
+            ? entry.address.trim()
+            : null;
+        const customer =
+          typeof entry.customer === "string" && entry.customer.trim()
+            ? entry.customer.trim().slice(0, 200)
+            : null;
+        let category: ObjectCategory =
+          entry.category === "treppenhaus" ? "treppenhaus" : "objekt";
+        if (!name && address) {
+          name = address;
+          category = "treppenhaus";
+        }
+        if (!name && !address && customer) {
+          name = customer;
+        }
+
         return {
-          name:
-            typeof entry.name === "string" && entry.name.trim()
-              ? entry.name.trim().slice(0, 200)
+          name,
+          address,
+          city:
+            typeof entry.city === "string" && entry.city.trim()
+              ? entry.city.trim().slice(0, 200)
               : null,
-          address:
-            typeof entry.address === "string" && entry.address.trim()
-              ? entry.address.trim()
+          category,
+          customer,
+          customer_number:
+            typeof entry.customer_number === "string" &&
+            entry.customer_number.trim()
+              ? entry.customer_number.trim().slice(0, 100)
+              : null,
+          cleaning_interval:
+            typeof entry.cleaning_interval === "string" &&
+            entry.cleaning_interval.trim()
+              ? entry.cleaning_interval.trim().slice(0, 100)
               : null,
           items,
         };

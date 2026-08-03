@@ -11,10 +11,10 @@ import {
   MapPin,
   Plus,
   ScanLine,
-  Store,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { hasHouseNumber } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -37,17 +37,15 @@ import {
 } from "@/components/ui/dialog";
 import type { ObjectCategory } from "@/types/database";
 import type {
-  ImportResult,
   ItemGroupImportPreview,
   ItemGroupImportResult,
   KeyImportPreview,
   KeyImportResult,
-  ObjectImportPreview,
 } from "@/types/api";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-type Mode = "objects" | "keys" | "items";
+type Mode = "keys" | "items";
 
 type Props = {
   open: boolean;
@@ -63,30 +61,6 @@ type KeySelection = {
   key_number: number;
   already_has_key: boolean;
   selected: boolean;
-  /** true: für diesen Schlüssel wird ein neues Objekt angelegt. */
-  is_new_object?: boolean;
-  /** Name des neuen Objekts (nur bei is_new_object). */
-  new_name?: string;
-  /** Adresse des neuen Objekts (nur bei is_new_object). */
-  new_address?: string;
-};
-
-/** Sonderwert im Objekt-Dropdown: „Neues Objekt anlegen“. */
-const NEW_OBJECT_VALUE = "__new_object__";
-
-/** Bearbeitbares Objekt in der Objekt-Vorauswahl. */
-type ObjectSelection = {
-  name: string;
-  address: string;
-  category: ObjectCategory;
-  opens_at: string;
-  selected: boolean;
-  is_duplicate: boolean;
-  /** Koordinaten des ORS-Treffers (null = nicht verifiziert / geändert). */
-  latitude: number | null;
-  longitude: number | null;
-  /** Ob ORS die Adresse auflösen konnte (für das Badge). */
-  geocoding_status: "ok" | "not_found";
 };
 
 /** Bearbeitbares Item innerhalb einer Items-Gruppe. */
@@ -94,6 +68,8 @@ type ItemDraft = {
   item_name: string;
   quantity: string;
   note: string;
+  /** true = Standard-Item (bei jeder Belieferung fest vorgesehen). */
+  is_always_required: boolean;
 };
 
 /** Aus der Items-Vorauswahl bestätigbare Gruppe. */
@@ -103,6 +79,23 @@ type ItemSelection = {
   address: string | null;
   items: ItemDraft[];
   selected: boolean;
+  /** true: das erkannte Objekt existiert nicht und wird neu angelegt. */
+  is_new_object?: boolean;
+  /** Name des neuen Objekts (nur bei is_new_object). */
+  new_name?: string;
+  /** Exakte Adresse des neuen Objekts (nur bei is_new_object). */
+  new_address?: string;
+  /** Koordinaten aus dem Geocoding (nur bei is_new_object). */
+  latitude?: number | null;
+  longitude?: number | null;
+  /** Ob eine exakte Adresse mit Hausnummer vorliegt (nur bei is_new_object). */
+  geocoding_status?: "ok" | "not_found";
+  /** Kunde (Admin-Info, wird am Objekt gespeichert). */
+  customer: string;
+  customer_number: string;
+  cleaning_interval: string;
+  /** Kategorie des neuen Objekts (nur bei is_new_object). */
+  category?: ObjectCategory;
 };
 
 const MODE_OPTIONS: {
@@ -111,12 +104,6 @@ const MODE_OPTIONS: {
   title: string;
   description: string;
 }[] = [
-  {
-    mode: "objects",
-    icon: Store,
-    title: "Objekte",
-    description: "Adressliste fotografieren – neue Objekte anlegen.",
-  },
   {
     mode: "keys",
     icon: KeyRound,
@@ -127,7 +114,7 @@ const MODE_OPTIONS: {
     mode: "items",
     icon: ListChecks,
     title: "Items",
-    description: "Packliste mit Objektnamen – Items zuordnen.",
+    description: "Packliste mit Objektnamen – Items zuordnen, unbekannte Objekte automatisch anlegen.",
   },
 ];
 
@@ -141,9 +128,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // Ergebnisse / Vorauswahlen je Modus
-  const [objectPreview, setObjectPreview] = useState<ObjectImportPreview | null>(null);
-  const [objectSelections, setObjectSelections] = useState<ObjectSelection[]>([]);
-  const [objectResult, setObjectResult] = useState<ImportResult | null>(null);
   const [keyPreview, setKeyPreview] = useState<KeyImportPreview | null>(null);
   const [keySelections, setKeySelections] = useState<KeySelection[]>([]);
   const [keyResult, setKeyResult] = useState<KeyImportResult | null>(null);
@@ -161,9 +145,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     setBusy(false);
     setApplying(false);
     setError(null);
-    setObjectPreview(null);
-    setObjectSelections([]);
-    setObjectResult(null);
     setKeyPreview(null);
     setKeySelections([]);
     setKeyResult(null);
@@ -180,9 +161,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   function pickMode(next: Mode) {
     setMode(next);
-    setObjectPreview(null);
-    setObjectSelections([]);
-    setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
     setItemPreview(null);
@@ -191,9 +169,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
   }
 
   function backToUpload() {
-    setObjectPreview(null);
-    setObjectSelections([]);
-    setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
     setItemPreview(null);
@@ -214,9 +189,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     if (preview) URL.revokeObjectURL(preview);
     setFile(next);
     setPreview(URL.createObjectURL(next));
-    setObjectPreview(null);
-    setObjectSelections([]);
-    setObjectResult(null);
     setKeyPreview(null);
     setKeyResult(null);
     setItemPreview(null);
@@ -245,8 +217,10 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         }
         const previewData = body as KeyImportPreview;
         setKeyPreview(previewData);
-        // Erkannte Zuordnungen + „Objekt nicht gefunden“-Einträge, die man
-        // einem bestehenden Objekt zuordnen oder als neues Objekt anlegen kann.
+        // Erkannte Zuordnungen + „Objekt nicht gefunden“-Einträge. Neue
+        // Objekte werden beim Schlüssel-Import nicht angelegt – Schlüssel
+        // ohne passendes Objekt können nur einem bestehenden Objekt
+        // zugeordnet werden (oder werden nicht übernommen).
         setKeySelections([
           ...previewData.matches.map((m) => ({
             object_id: m.object_id,
@@ -262,13 +236,11 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
             address: "",
             key_number: u.key_number,
             already_has_key: false,
-            selected: true,
-            is_new_object: true,
-            new_name: u.name ?? "",
-            new_address: "",
+            selected: false,
           })),
         ]);
-      } else if (mode === "items") {
+      } else {
+        // Items: Vorschau + automatisches Anlegen unbekannter Objekte.
         const res = await fetch("/api/objects/import/items/analyze", {
           method: "POST",
           body: formData,
@@ -280,45 +252,47 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         }
         const previewData = body as ItemGroupImportPreview;
         setItemPreview(previewData);
-        setItemSelections(
-          previewData.matches.map((m) => ({
+        // Treffer + nicht gefundene Objekte: Letztere werden automatisch als
+        // neue Objekte angelegt (Adresse wurde per Geocoding aufgelöst).
+        setItemSelections([
+          ...previewData.matches.map((m) => ({
             object_id: m.object_id,
             object_name: m.object_name,
             address: m.address,
+            customer: m.customer ?? "",
+            customer_number: m.customer_number ?? "",
+            cleaning_interval: m.cleaning_interval ?? "",
             items: m.items.map((i) => ({
               item_name: i.item_name,
               quantity: String(i.quantity),
               note: i.note ?? "",
+              is_always_required: i.is_always_required,
             })),
             selected: true,
           })),
-        );
-      } else {
-        // Objekte: erst Vorschau, danach bestätigen.
-        const res = await fetch("/api/objects/import/objects/analyze", {
-          method: "POST",
-          body: formData,
-        });
-        const body = await res.json();
-        if (!res.ok) {
-          setError(body.error ?? "Analyse fehlgeschlagen.");
-          return;
-        }
-        const previewData = body as ObjectImportPreview;
-        setObjectPreview(previewData);
-        setObjectSelections(
-          previewData.objects.map((o) => ({
-            name: o.name,
-            address: o.address,
-            category: o.category,
-            opens_at: o.opens_at ?? "",
-            selected: !o.is_duplicate,
-            is_duplicate: o.is_duplicate,
-            latitude: o.latitude,
-            longitude: o.longitude,
-            geocoding_status: o.geocoding_status,
+          ...previewData.unmatched.map((u) => ({
+            object_id: "",
+            object_name: u.name ?? "(ohne Name)",
+            address: u.address,
+            customer: u.customer ?? "",
+            customer_number: u.customer_number ?? "",
+            cleaning_interval: u.cleaning_interval ?? "",
+            items: u.items.map((i) => ({
+              item_name: i.item_name,
+              quantity: String(i.quantity),
+              note: i.note ?? "",
+              is_always_required: i.is_always_required,
+            })),
+            selected: true,
+            is_new_object: true,
+            new_name: u.name ?? "",
+            new_address: u.address ?? "",
+            latitude: u.latitude,
+            longitude: u.longitude,
+            geocoding_status: u.geocoding_status,
+            category: u.category,
           })),
-        );
+        ]);
       }
     } catch {
       setError("Analyse fehlgeschlagen. Bitte erneut versuchen.");
@@ -329,38 +303,14 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   /** Schritt 2: bestätigte Schlüssel-Zuordnungen übernehmen. */
   async function handleApplyKeys() {
-    const ready = keySelections.filter(
-      (k) => k.selected && !k.already_has_key && k.key_number > 0,
-    );
-    const assignments = ready
-      .filter((k) => !k.is_new_object && k.object_id)
+    const assignments = keySelections
+      .filter((k) => k.selected && !k.already_has_key && k.key_number > 0)
+      .filter((k) => k.object_id)
       .map((k) => ({ object_id: k.object_id, key_number: k.key_number }));
-    // Neue Objekte brauchen Name UND Adresse (Pflichtfeld in der DB).
-    const newObjects = ready
-      .filter((k) => k.is_new_object)
-      .map((k) => ({
-        name: (k.new_name ?? "").trim(),
-        address: (k.new_address ?? "").trim(),
-        key_number: k.key_number,
-      }))
-      .filter((o) => o.name.length > 0 && o.address.length > 0);
-    const skippedNew =
-      ready.filter((k) => k.is_new_object).length - newObjects.length;
 
-    if (assignments.length === 0 && newObjects.length === 0) {
-      if (skippedNew > 0) {
-        toast.warning(
-          `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – Name und Adresse fehlen.`,
-        );
-      } else {
-        toast.info("Keine gültigen Schlüssel zum Übernehmen ausgewählt.");
-      }
+    if (assignments.length === 0) {
+      toast.info("Keine gültigen Schlüssel zum Übernehmen ausgewählt.");
       return;
-    }
-    if (skippedNew > 0) {
-      toast.warning(
-        `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – Name und Adresse fehlen.`,
-      );
     }
 
     setApplying(true);
@@ -369,7 +319,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
       const res = await fetch("/api/objects/import/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignments, new_objects: newObjects }),
+        body: JSON.stringify({ assignments }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -385,70 +335,79 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     }
   }
 
-  /** Schritt 2: bestätigte Objekte anlegen. */
-  async function handleApplyObjects() {
-    const objects = objectSelections
-      .filter((o) => o.selected && o.address.trim().length > 0)
-      .map((o) => ({
-        name: o.name.trim() || o.address.trim(),
-        address: o.address.trim(),
-        category: o.category,
-        opens_at: o.opens_at || null,
-        latitude: o.latitude,
-        longitude: o.longitude,
-      }));
-    if (objects.length === 0) {
-      toast.info("Keine Objekte zum Anlegen ausgewählt.");
-      return;
-    }
-    setApplying(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/objects/import/objects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objects }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body.error ?? "Anlegen fehlgeschlagen.");
-        return;
-      }
-      setObjectResult(body as ImportResult);
-      onImported();
-    } catch {
-      setError("Anlegen fehlgeschlagen.");
-    } finally {
-      setApplying(false);
-    }
-  }
-
   /** Schritt 2: bestätigte Items-Gruppen übernehmen. */
   async function handleApplyItems() {
     const groups = itemSelections
-      .filter((g) => g.selected)
+      .filter((g) => g.selected && !g.is_new_object)
       .map((g) => ({
         object_id: g.object_id,
+        customer: g.customer.trim() || null,
+        customer_number: g.customer_number.trim() || null,
+        cleaning_interval: g.cleaning_interval.trim() || null,
         items: g.items
           .filter((i) => i.item_name.trim().length > 0)
           .map((i) => ({
             item_name: i.item_name.trim(),
             quantity: Number.parseInt(i.quantity, 10) || 1,
             note: i.note.trim() || null,
+            is_always_required: i.is_always_required,
           })),
       }))
       .filter((g) => g.items.length > 0);
-    if (groups.length === 0) {
-      toast.info("Keine Items zum Übernehmen ausgewählt.");
+
+    // Nicht gefundene Objekte werden neu angelegt – eine exakte Adresse
+    // (mit Hausnummer) ist dafür Pflicht.
+    const newObjects = itemSelections
+      .filter((g) => g.selected && g.is_new_object)
+      .map((g) => ({
+        name: (g.new_name ?? "").trim(),
+        address: (g.new_address ?? "").trim(),
+        latitude: g.latitude ?? null,
+        longitude: g.longitude ?? null,
+        category: g.category ?? "objekt",
+        customer: g.customer.trim() || null,
+        customer_number: g.customer_number.trim() || null,
+        cleaning_interval: g.cleaning_interval.trim() || null,
+        items: g.items
+          .filter((i) => i.item_name.trim().length > 0)
+          .map((i) => ({
+            item_name: i.item_name.trim(),
+            quantity: Number.parseInt(i.quantity, 10) || 1,
+            note: i.note.trim() || null,
+            is_always_required: i.is_always_required,
+          })),
+      }))
+      .filter(
+        (o) =>
+          o.name.length > 0 && hasHouseNumber(o.address) && o.items.length > 0,
+      );
+    const skippedNew =
+      itemSelections.filter((g) => g.selected && g.is_new_object).length -
+      newObjects.length;
+
+    if (groups.length === 0 && newObjects.length === 0) {
+      if (skippedNew > 0) {
+        toast.warning(
+          `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – exakte Adresse (mit Hausnummer) fehlt.`,
+        );
+      } else {
+        toast.info("Keine Items zum Übernehmen ausgewählt.");
+      }
       return;
     }
+    if (skippedNew > 0) {
+      toast.warning(
+        `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – exakte Adresse (mit Hausnummer) fehlt.`,
+      );
+    }
+
     setApplying(true);
     setError(null);
     try {
       const res = await fetch("/api/objects/import/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groups }),
+        body: JSON.stringify({ groups, new_objects: newObjects }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -466,12 +425,12 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   const description = (() => {
     if (mode === "keys") {
-      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern den Objekten zu – du kannst die Zuordnung anpassen, Schlüssel ohne passendes Objekt einem anderen Objekt zuordnen oder als neues Objekt anlegen. Du bestätigst vor dem Speichern.";
+      return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern bestehenden Objekten zu – du kannst die Zuordnung in der Vorschau anpassen. Schlüssel ohne passendes Objekt werden nicht übernommen. Du bestätigst vor dem Speichern.";
     }
     if (mode === "items") {
-      return "Fotografiere eine Packliste, auf der der Objektname (oft mit Adresse) und die Items stehen. Die KI ordnet die Items dem passenden Objekt zu – du bestätigst vor dem Speichern.";
+      return "Fotografiere eine Packliste mit Objektname (oft mit Adresse oder Ort), Kunde/Kundennummer/Reinigungsturnus und Items. Die KI ordnet die Items dem passenden Objekt zu; unbekannte Objekte werden automatisch mit exakter Adresse angelegt. Du bestätigst vor dem Speichern.";
     }
-    return "Fotografiere eine gedruckte Adressliste. Die KI erkennt die Objekte – du kannst Name, Adresse und Kategorie anpassen und bestätigst vor dem Anlegen. Eine Fußgängerzone wird automatisch anhand der Adresse erkannt.";
+    return "Fotografiere eine Liste – die KI erkennt die Einträge, du bestätigst vor dem Speichern.";
   })();
 
   return (
@@ -520,13 +479,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         )}
 
         {/* Schritt 1: Bild hochladen / analysieren */}
-        {mode &&
-          !objectPreview &&
-          !keyPreview &&
-          !itemPreview &&
-          !objectResult &&
-          !keyResult &&
-          !itemResult && (
+        {mode && !keyPreview && !itemPreview && !keyResult && !itemResult && (
             <div className="space-y-4">
               <div
                 role="button"
@@ -592,14 +545,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
             </div>
           )}
 
-        {/* Schritt 2 (Objekte): Vorauswahl bearbeiten + bestätigen */}
-        {mode === "objects" && objectPreview && !objectResult && (
-          <ObjectPreviewBody
-            selections={objectSelections}
-            setSelections={setObjectSelections}
-          />
-        )}
-
         {/* Schritt 2 (Schlüssel): Vorauswahl bearbeiten + bestätigen */}
         {mode === "keys" && keyPreview && !keyResult && (
           <KeyPreviewBody
@@ -619,19 +564,12 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         )}
 
         {/* Schritt 3: Ergebnisse */}
-        {mode === "objects" && objectResult && (
-          <ObjectResultBody result={objectResult} />
-        )}
         {mode === "keys" && keyResult && <KeyResultBody result={keyResult} />}
         {mode === "items" && itemResult && (
           <ItemResultBody result={itemResult} />
         )}
 
-        {error &&
-          !objectResult &&
-          !keyResult &&
-          !itemResult &&
-          (objectPreview || keyPreview || itemPreview) && (
+        {error && !keyResult && !itemResult && (keyPreview || itemPreview) && (
             <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {error}
             </p>
@@ -639,9 +577,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
         <DialogFooter>
           {/* Ergebnis -> Fertig */}
-          {mode === "objects" && objectResult && (
-            <Button onClick={() => handleClose(false)}>Fertig</Button>
-          )}
           {mode === "keys" && keyResult && (
             <Button onClick={() => handleClose(false)}>Fertig</Button>
           )}
@@ -650,32 +585,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           )}
 
           {/* Vorauswahl -> Bestätigen + zurück */}
-          {mode === "objects" && objectPreview && !objectResult && (
-            <>
-              <Button
-                variant="ghost"
-                onClick={backToUpload}
-                disabled={applying}
-                className="gap-1.5"
-              >
-                <ArrowLeft />
-                Anderes Bild
-              </Button>
-              <Button
-                onClick={() => void handleApplyObjects()}
-                disabled={applying}
-              >
-                {applying ? (
-                  <>
-                    <LoaderCircle className="animate-spin" />
-                    Wird angelegt…
-                  </>
-                ) : (
-                  "Übernehmen"
-                )}
-              </Button>
-            </>
-          )}
           {mode === "keys" && keyPreview && !keyResult && (
             <>
               <Button
@@ -730,13 +639,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           )}
 
           {/* Hochladen -> Abbrechen + Analysieren */}
-          {mode &&
-            !objectPreview &&
-            !keyPreview &&
-            !itemPreview &&
-            !objectResult &&
-            !keyResult &&
-            !itemResult && (
+          {mode && !keyPreview && !itemPreview && !keyResult && !itemResult && (
               <>
                 <Button
                   variant="ghost"
@@ -786,153 +689,6 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Objekt-Vorauswahl (editierbar)                                      */
-/* ------------------------------------------------------------------ */
-
-function ObjectPreviewBody({
-  selections,
-  setSelections,
-}: {
-  selections: ObjectSelection[];
-  setSelections: React.Dispatch<React.SetStateAction<ObjectSelection[]>>;
-}) {
-  const selectedCount = selections.filter((o) => o.selected).length;
-
-  function update(index: number, patch: Partial<ObjectSelection>) {
-    setSelections((prev) =>
-      prev.map((o, i) => (i === index ? { ...o, ...patch } : o)),
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {selections.length > 0 && (
-        <div>
-          <p className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <Store className="h-4 w-4 text-primary" />
-            Erkannte Objekte
-            <Badge variant="secondary">{selectedCount}</Badge>
-          </p>
-          <div className="space-y-3">
-            {selections.map((o, i) => (
-              <div key={i} className="rounded-md border bg-card p-2.5">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    checked={o.selected}
-                    onCheckedChange={(v) => update(i, { selected: v === true })}
-                    aria-label={`${o.name}: anlegen`}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                    {o.name || "(ohne Name)"}
-                  </span>
-                  {o.is_duplicate && (
-                    <Badge variant="secondary">Bereits vorhanden</Badge>
-                  )}
-                </div>
-
-                <div className="mt-2 space-y-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">
-                      Name
-                    </Label>
-                    <Input
-                      className="mt-1 h-8"
-                      value={o.name}
-                      onChange={(e) => update(i, { name: e.target.value })}
-                      aria-label={`Name für Objekt ${i + 1}`}
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">
-                      Adresse
-                    </Label>
-                    <div className="mt-1 flex items-center gap-2">
-                      <Input
-                        className="h-8 flex-1"
-                        value={o.address}
-                        onChange={(e) =>
-                          update(i, {
-                            address: e.target.value,
-                            // Adresse geändert: ORS-Koordinaten gelten nicht mehr,
-                            // der Server geocodiert beim Anlegen neu.
-                            latitude: null,
-                            longitude: null,
-                            geocoding_status: "not_found",
-                          })
-                        }
-                        aria-label={`Adresse für Objekt ${i + 1}`}
-                      />
-                      {o.geocoding_status === "ok" ? (
-                        <Badge
-                          variant="outline"
-                          className="shrink-0 gap-1 border-success/40 text-success"
-                        >
-                          <CheckCircle2 className="h-3 w-3" />
-                          ORS-Treffer
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="shrink-0">
-                          Adresse nicht gefunden
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">
-                        Kategorie
-                      </Label>
-                      <Select
-                        value={o.category}
-                        onValueChange={(v) =>
-                          update(i, { category: v as ObjectCategory })
-                        }
-                      >
-                        <SelectTrigger className="mt-1 h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="objekt">Objekt</SelectItem>
-                          <SelectItem value="treppenhaus">
-                            Treppenhaus
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">
-                        Öffnet ab
-                      </Label>
-                      <Input
-                        type="time"
-                        className="mt-1 h-8"
-                        value={o.opens_at}
-                        onChange={(e) => update(i, { opens_at: e.target.value })}
-                        aria-label={`Öffnet ab für Objekt ${i + 1}`}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Fußgängerzonen werden automatisch anhand der Adresse
-                    erkannt.
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {selections.length === 0 && (
-        <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-          Keine Objekte im Foto erkannt.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Schlüssel-Vorauswahl (editierbar)                                   */
 /* ------------------------------------------------------------------ */
 
@@ -963,30 +719,7 @@ function KeyPreviewBody({
       address: obj.address,
       already_has_key: obj.key_number != null,
       selected: obj.key_number == null,
-      is_new_object: false,
     });
-  }
-
-  /** Für diesen Schlüssel ein neues Objekt anlegen (Name vorbelegt). */
-  function pickNewObject(index: number) {
-    setSelections((prev) =>
-      prev.map((k, i) =>
-        i === index
-          ? {
-              ...k,
-              object_id: "",
-              // Name fürs Eingabefeld vorbelegen (auch wenn aus bestehender
-              // Zuordnung gewechselt wird).
-              new_name: k.new_name?.trim() || k.object_name,
-              object_name: k.new_name?.trim() || k.object_name,
-              address: "",
-              already_has_key: false,
-              selected: true,
-              is_new_object: true,
-            }
-          : k,
-      ),
-    );
   }
 
   return (
@@ -1002,45 +735,28 @@ function KeyPreviewBody({
             {selections.map((k, i) => (
               <li
                 key={i}
-                className={[
-                  "flex items-start gap-3 rounded-md border bg-card p-2.5",
-                  k.is_new_object ? "border-dashed" : "",
-                ].join(" ")}
+                className="flex items-start gap-3 rounded-md border bg-card p-2.5"
               >
                 <Checkbox
                   checked={k.selected}
-                  disabled={k.already_has_key}
+                  // Ohne zugewiesenes Objekt (nicht gefundener Schlüssel)
+                  // kann nichts übernommen werden.
+                  disabled={k.already_has_key || !k.object_id}
                   onCheckedChange={(v) => update(i, { selected: v === true })}
                   aria-label={`${k.object_name}: Schlüssel zuordnen`}
                 />
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <Label className="text-xs text-muted-foreground">
-                      Objekt
-                    </Label>
-                    {k.is_new_object && (
-                      <Badge variant="secondary">Neu anlegen</Badge>
-                    )}
-                  </div>
+                  <Label className="text-xs text-muted-foreground">
+                    Objekt
+                  </Label>
                   <Select
-                    value={k.is_new_object ? NEW_OBJECT_VALUE : k.object_id}
-                    onValueChange={(v) =>
-                      v === NEW_OBJECT_VALUE
-                        ? pickNewObject(i)
-                        : pickObject(i, v)
-                    }
+                    value={k.object_id}
+                    onValueChange={(v) => pickObject(i, v)}
                   >
                     <SelectTrigger className="mt-1 h-8 w-full">
                       <SelectValue placeholder="Objekt wählen…" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem
-                        value={NEW_OBJECT_VALUE}
-                        className="gap-2 font-medium"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Neues Objekt anlegen…
-                      </SelectItem>
                       {preview.objects.map((obj) => (
                         <SelectItem key={obj.id} value={obj.id}>
                           {obj.name}
@@ -1052,53 +768,17 @@ function KeyPreviewBody({
                     </SelectContent>
                   </Select>
 
-                  {k.is_new_object ? (
-                    <div className="space-y-1.5">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">
-                          Name (neues Objekt)
-                        </Label>
-                        <Input
-                          className="mt-1 h-8"
-                          value={k.new_name ?? ""}
-                          onChange={(e) =>
-                            update(i, {
-                              new_name: e.target.value,
-                              object_name: e.target.value,
-                            })
-                          }
-                          placeholder="Name des Objekts"
-                          aria-label={`Name des neuen Objekts für Schlüssel Nr. ${k.key_number}`}
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-muted-foreground">
-                          Adresse (neues Objekt)
-                        </Label>
-                        <Input
-                          className="mt-1 h-8"
-                          value={k.new_address ?? ""}
-                          onChange={(e) =>
-                            update(i, { new_address: e.target.value })
-                          }
-                          placeholder="Straße, PLZ Ort"
-                          aria-label={`Adresse des neuen Objekts für Schlüssel Nr. ${k.key_number}`}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      {k.address && (
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <MapPin className="h-3 w-3" />
-                          {k.address}
-                        </span>
-                      )}
-                      {k.already_has_key && (
-                        <Badge variant="secondary">Schlüssel vorhanden</Badge>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {k.address && (
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <MapPin className="h-3 w-3" />
+                        {k.address}
+                      </span>
+                    )}
+                    {k.already_has_key && (
+                      <Badge variant="secondary">Schlüssel vorhanden</Badge>
+                    )}
+                  </div>
 
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
@@ -1192,7 +872,12 @@ function ItemPreviewBody({
               ...g,
               items: [
                 ...g.items,
-                { item_name: "", quantity: "1", note: "" },
+                {
+                  item_name: "",
+                  quantity: "1",
+                  note: "",
+                  is_always_required: false,
+                },
               ],
             }
           : g,
@@ -1212,8 +897,11 @@ function ItemPreviewBody({
           <div className="space-y-3">
             {selections.map((g, gi) => (
               <div
-                key={g.object_id}
-                className="rounded-md border bg-card p-2.5"
+                key={gi}
+                className={[
+                  "rounded-md border bg-card p-2.5",
+                  g.is_new_object ? "border-dashed" : "",
+                ].join(" ")}
               >
                 <label className="flex items-center gap-2">
                   <Checkbox
@@ -1223,56 +911,194 @@ function ItemPreviewBody({
                     }
                     aria-label={`${g.object_name}: Gruppe übernehmen`}
                   />
-                  <span className="min-w-0">
+                  <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">
                       {g.object_name}
                     </span>
-                    {g.address && (
+                    {!g.is_new_object && g.address && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3" />
                         {g.address}
                       </span>
                     )}
                   </span>
+                  {g.is_new_object && (
+                    <Badge variant="secondary">Neu anlegen</Badge>
+                  )}
+                  {g.is_new_object && g.category === "treppenhaus" && (
+                    <Badge variant="outline">Treppenhaus</Badge>
+                  )}
                 </label>
+
+                {/* Admin-Info: Kunde / Kundennummer / Reinigungsturnus */}
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div className="col-span-2">
+                    <Label className="text-xs text-muted-foreground">
+                      Kunde (nur Admin)
+                    </Label>
+                    <Input
+                      className="mt-1 h-8"
+                      value={g.customer}
+                      onChange={(e) =>
+                        updateGroup(gi, { customer: e.target.value })
+                      }
+                      placeholder="z. B. Firma Meyer GmbH"
+                      aria-label={`Kunde für ${g.object_name}`}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      Kundennummer
+                    </Label>
+                    <Input
+                      className="mt-1 h-8"
+                      value={g.customer_number}
+                      onChange={(e) =>
+                        updateGroup(gi, { customer_number: e.target.value })
+                      }
+                      placeholder="z. B. 4711"
+                      aria-label={`Kundennummer für ${g.object_name}`}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">
+                      Reinigungsturnus
+                    </Label>
+                    <Input
+                      className="mt-1 h-8"
+                      value={g.cleaning_interval}
+                      onChange={(e) =>
+                        updateGroup(gi, { cleaning_interval: e.target.value })
+                      }
+                      placeholder="z. B. wöchentlich"
+                      aria-label={`Reinigungsturnus für ${g.object_name}`}
+                    />
+                  </div>
+                </div>
+
+                {g.is_new_object && (
+                  <div className="mt-2 space-y-2">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">
+                        Name (neues Objekt)
+                      </Label>
+                      <Input
+                        className="mt-1 h-8"
+                        value={g.new_name ?? ""}
+                        onChange={(e) =>
+                          updateGroup(gi, {
+                            new_name: e.target.value,
+                            object_name: e.target.value,
+                          })
+                        }
+                        placeholder="Name des Objekts"
+                        aria-label={`Name des neuen Objekts ${gi + 1}`}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">
+                        Adresse (neues Objekt)
+                      </Label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <Input
+                          className="h-8 flex-1"
+                          value={g.new_address ?? ""}
+                          onChange={(e) =>
+                            updateGroup(gi, {
+                              new_address: e.target.value,
+                              // Adresse geändert: Koordinaten gelten nicht
+                              // mehr, der Server geocodiert beim Anlegen neu.
+                              latitude: null,
+                              longitude: null,
+                              geocoding_status: hasHouseNumber(
+                                e.target.value,
+                              )
+                                ? "ok"
+                                : "not_found",
+                            })
+                          }
+                          placeholder="Straße + Hausnummer (Pflicht)"
+                          aria-label={`Adresse des neuen Objekts ${gi + 1}`}
+                        />
+                        {g.geocoding_status === "ok" ? (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 gap-1 border-success/40 text-success"
+                          >
+                            <CheckCircle2 className="h-3 w-3" />
+                            Adresse gefunden
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="shrink-0">
+                            Adresse fehlt
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {g.items.length > 0 && (
                   <ul className="mt-2 space-y-1.5">
                     {g.items.map((item, ii) => (
                       <li
                         key={ii}
-                        className="flex items-center gap-1.5"
+                        className="rounded-md border bg-muted/20 p-1.5"
                       >
-                        <Input
-                          type="number"
-                          min={1}
-                          inputMode="numeric"
-                          className="h-8 w-16"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateItem(gi, ii, { quantity: e.target.value })
-                          }
-                          aria-label={`Menge ${item.item_name || "Item " + (ii + 1)}`}
-                        />
-                        <Input
-                          className="h-8 flex-1"
-                          value={item.item_name}
-                          onChange={(e) =>
-                            updateItem(gi, ii, { item_name: e.target.value })
-                          }
-                          placeholder="Bezeichnung"
-                          aria-label={`Bezeichnung Item ${ii + 1}`}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                          aria-label={`Item ${ii + 1} entfernen`}
-                          onClick={() => removeItem(gi, ii)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            type="number"
+                            min={1}
+                            inputMode="numeric"
+                            className="h-8 w-16"
+                            value={item.quantity}
+                            onChange={(e) =>
+                              updateItem(gi, ii, { quantity: e.target.value })
+                            }
+                            aria-label={`Menge ${item.item_name || "Item " + (ii + 1)}`}
+                          />
+                          <Input
+                            className="h-8 flex-1"
+                            value={item.item_name}
+                            onChange={(e) =>
+                              updateItem(gi, ii, { item_name: e.target.value })
+                            }
+                            placeholder="Bezeichnung"
+                            aria-label={`Bezeichnung Item ${ii + 1}`}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                            aria-label={`Item ${ii + 1} entfernen`}
+                            onClick={() => removeItem(gi, ii)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 pl-0.5">
+                          <Checkbox
+                            checked={item.is_always_required}
+                            onCheckedChange={(v) =>
+                              updateItem(gi, ii, {
+                                is_always_required: v === true,
+                              })
+                            }
+                            aria-label={`${item.item_name || `Item ${ii + 1}`}: als Standard-Item markieren`}
+                          />
+                          <span
+                            className={
+                              item.is_always_required
+                                ? "text-xs font-medium text-success"
+                                : "text-xs text-muted-foreground"
+                            }
+                          >
+                            {item.is_always_required
+                              ? "Standard-Item (immer mitnehmen)"
+                              : "Als Standard-Item markieren"}
+                          </span>
+                        </label>
                       </li>
                     ))}
                   </ul>
@@ -1290,31 +1116,6 @@ function ItemPreviewBody({
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {preview.unmatched.length > 0 && (
-        <div>
-          <p className="mb-2 text-sm font-medium text-muted-foreground">
-            Objekt nicht gefunden ({preview.unmatched.length}) – wird nicht
-            übernommen
-          </p>
-          <ul className="space-y-1">
-            {preview.unmatched.map((u, i) => (
-              <li
-                key={i}
-                className="rounded-md border bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground"
-              >
-                <span className="font-medium">
-                  {u.name ?? "(ohne Name)"}
-                </span>
-                {u.address && <span> · {u.address}</span>}
-                <span className="ml-2 text-xs">
-                  {u.items.length} Item{u.items.length === 1 ? "" : "s"}
-                </span>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 
@@ -1354,82 +1155,13 @@ function ResultStat({
   );
 }
 
-function ObjectResultBody({ result }: { result: ImportResult }) {
+function KeyResultBody({ result }: { result: KeyImportResult }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-2 text-center">
         <ResultStat
-          value={result.created.length}
-          label="neu angelegt"
-          tone="success"
-        />
-        <ResultStat
-          value={result.duplicates.length}
-          label="übersprungen"
-          tone="neutral"
-        />
-        <ResultStat value={result.errors.length} label="Fehler" tone="destructive" />
-      </div>
-
-      {result.created.length > 0 && (
-        <ul className="max-h-40 space-y-1.5 overflow-y-auto">
-          {result.created.map((obj) => (
-            <li
-              key={obj.id}
-              className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm"
-            >
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
-              <span className="font-medium">{obj.name}</span>
-              <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
-                <MapPin className="h-3 w-3" />
-                {obj.address}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {result.duplicates.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Bereits vorhanden – übersprungen
-          </p>
-          <ul className="max-h-28 space-y-1 overflow-y-auto">
-            {result.duplicates.map((dup, i) => (
-              <li
-                key={i}
-                className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-sm text-muted-foreground"
-              >
-                <Badge variant="secondary">Duplikat</Badge>
-                {dup.address}
-                <span className="ml-auto text-xs">→ {dup.matched}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {result.errors.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {result.errors.length} Einträge konnten nicht zugeordnet werden.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function KeyResultBody({ result }: { result: KeyImportResult }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-        <ResultStat
           value={result.assigned}
           label="Schlüssel zugeordnet"
-          tone="success"
-        />
-        <ResultStat
-          value={result.new_objects_created}
-          label="Objekte angelegt"
           tone="success"
         />
         <ResultStat
@@ -1445,20 +1177,25 @@ function KeyResultBody({ result }: { result: KeyImportResult }) {
       </div>
       <p className="text-xs text-muted-foreground">
         Objekte, die bereits eine Schlüsselnummer hatten, wurden nicht
-        überschrieben. Manuell angelegte Objekte erhalten die Schlüsselnummer
-        direkt beim Anlegen.
+        überschrieben. Schlüssel ohne passendes Objekt werden nicht übernommen.
       </p>
     </div>
   );
 }
 
 function ItemResultBody({ result }: { result: ItemGroupImportResult }) {
+  const skipped = result.not_found + result.new_objects_skipped;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
         <ResultStat
           value={result.assigned}
           label="Objekte befüllt"
+          tone="success"
+        />
+        <ResultStat
+          value={result.new_objects_created}
+          label="Objekte angelegt"
           tone="success"
         />
         <ResultStat
@@ -1466,15 +1203,13 @@ function ItemResultBody({ result }: { result: ItemGroupImportResult }) {
           label="Items hinzugefügt"
           tone="neutral"
         />
-        <ResultStat
-          value={result.not_found}
-          label="Objekt nicht gefunden"
-          tone="destructive"
-        />
+        <ResultStat value={skipped} label="übersprungen" tone="destructive" />
       </div>
       <p className="text-xs text-muted-foreground">
-        Die Items wurden den erkannten Objekten als Standard-Items
-        hinzugefügt und erscheinen in der nächsten Tour.
+        Nicht gefundene Objekte wurden automatisch mit exakter Adresse
+        angelegt. Als „Standard“ markierte Items sind bei jeder Belieferung
+        fest vorgesehen – alle übernommenen Items erscheinen in der nächsten
+        Tour.
       </p>
     </div>
   );

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -28,9 +28,7 @@ import { PhotoSelectDialog } from "./photo-select-dialog";
 import { PackView } from "./pack-view";
 import { PackDialog } from "./pack-dialog";
 import {
-  defaultStartTime,
   formatMinutes,
-  prepMinutesForCount,
   toMinutes,
 } from "@/lib/routing/time";
 import type { DayOfWeek } from "@/types/database";
@@ -69,12 +67,6 @@ export function PlanningPage() {
 
   // 0 = Sonntag ... 6 = Samstag (JS getDay() = DB-Konvention)
   const dayOfWeek = new Date().getDay() as DayOfWeek;
-  // Standard-Startzeit: aktuelle Uhrzeit + Vorbereitungszeit (auf 5 Min aufgerundet)
-  const [startTime, setStartTime] = useState(() =>
-    defaultStartTime(prepMinutesForCount(0)),
-  );
-  // true, sobald der Nutzer die Startzeit selbst geändert hat
-  const startTimeTouched = useRef(false);
 
   const [objects, setObjects] = useState<PlanningObject[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -126,14 +118,6 @@ export function PlanningPage() {
     void load();
   }, [load]);
 
-  // Startzeit-Default an die aktuelle Auswahl koppeln, solange der Nutzer
-  // sie nicht selbst geändert hat (Vorbereitung: 5 Min/Stopp + 5 Min Schlüssel).
-  useEffect(() => {
-    if (!startTimeTouched.current) {
-      setStartTime(defaultStartTime(prepMinutesForCount(selected.size)));
-    }
-  }, [selected]);
-
   const dirty = useMemo(() => {
     if (selected.size !== savedIds.length) return true;
     return savedIds.some((id) => !selected.has(id));
@@ -183,7 +167,6 @@ export function PlanningPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           object_ids: Array.from(selected),
-          start_time: startTime,
         }),
       });
       const body = await res.json();
@@ -347,19 +330,6 @@ export function PlanningPage() {
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {!route && (
             <>
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => {
-                    startTimeTouched.current = true;
-                    setStartTime(e.target.value);
-                  }}
-                  className="h-9 w-28"
-                  aria-label="Startzeit der Tour (Standard: aktuelle Uhrzeit + Vorbereitung)"
-                />
-              </div>
               <Button
                 variant="outline"
                 onClick={() => setPhotoOpen(true)}
@@ -541,8 +511,8 @@ export function PlanningPage() {
           ) : (
             <>
               <p className="min-w-0 text-sm">
-                <span className="font-semibold">{selected.size}</span> von{" "}
-                {objects.length} Objekten ausgewählt
+                <span className="font-semibold">{selected.size}</span>{" "}
+                Objekt{selected.size === 1 ? "" : "e"} ausgewählt
               </p>
               <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
                 <Save />
