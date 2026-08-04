@@ -36,11 +36,13 @@ async function resolveItemGroupAddress(
 ): Promise<ResolvedGroupAddress> {
   // Steht auf dem Zettel bereits eine Straße + Hausnummer, wird nur damit
   // (plus Ort) geocodiert – der Firmenname könnte sonst einen falschen
-  // Treffer nach vorne ziehen. Sonst wird über Name (+ Ort) gesucht.
+  // Treffer nach vorne ziehen. Sonst wird über Kunde + Objektname (+ Ort)
+  // gesucht – leere Teile fallen weg, wenn z. B. nur der Kunde oder nur der
+  // Objektname etwas Sagendes ist.
   const hasOcrAddress = hasHouseNumber(group.address ?? "");
   const parts = hasOcrAddress
     ? [group.address, group.city]
-    : [group.name, group.address, group.city];
+    : [group.name, group.customer, group.address, group.city];
   const query = parts
     .map((part) => part?.trim())
     .filter((part): part is string => Boolean(part))

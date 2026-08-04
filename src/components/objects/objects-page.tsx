@@ -204,9 +204,6 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          Tippe auf eine Spaltenüberschrift, um danach zu sortieren.
-        </p>
       </div>
 
       {/* Inhalt */}

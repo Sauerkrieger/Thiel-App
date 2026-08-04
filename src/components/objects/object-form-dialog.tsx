@@ -388,11 +388,6 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               rows={2}
               className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
-            <p className="text-xs text-muted-foreground">
-              Sichtbar für alle (Fahrer, Admin, …) – z. B. Zugangs- oder
-              Besonderheiten-Hinweise. Bearbeitet werden kann sie nur von
-              Admins.
-            </p>
           </div>
 
           {/* Admin-Info (nur für Admins sichtbar) */}
@@ -427,10 +422,6 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Diese Felder sind nur für Admins sichtbar und werden beim
-              Foto-Import automatisch erkannt.
-            </p>
           </div>
 
           {/* Strukturierte Items */}

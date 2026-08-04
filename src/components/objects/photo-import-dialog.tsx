@@ -1084,7 +1084,7 @@ function ItemPreviewBody({
                           onChange={(e) =>
                             updateItem(gi, ii, { note: e.target.value })
                           }
-                          placeholder="Bemerkung (optional, z. B. rot, gelb - kein blau)"
+                          placeholder="Bemerkung"
                           aria-label={`Bemerkung Item ${ii + 1}`}
                         />
                         <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 pl-0.5">
