@@ -5,13 +5,13 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
-  ExternalLink,
   KeyRound,
   ListChecks,
   LoaderCircle,
   MapPin,
   Plus,
   ScanLine,
+  Search,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -99,28 +99,6 @@ type ItemSelection = {
   /** Kategorie des neuen Objekts (nur bei is_new_object). */
   category?: ObjectCategory;
 };
-
-/**
- * Google-Maps-Such-URL (Website) für eine noch nicht gefundene Adresse:
- * sucht nach Kunde + Objektname (+ Würzburg). Gleiche Teile (z. B. wenn
- * Kunde und Name identisch sind) werden nur einmal übernommen.
- */
-function googleMapsSearchUrl(customer: string, objectName: string): string {
-  const parts: string[] = [];
-  const add = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    const normalized = trimmed.toLowerCase();
-    if (parts.some((p) => p.toLowerCase() === normalized)) return;
-    parts.push(trimmed);
-  };
-  add(customer);
-  add(objectName);
-  parts.push("Würzburg");
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-    parts.join(", "),
-  )}`;
-}
 
 const MODE_OPTIONS: {
   mode: Mode;
@@ -853,26 +831,45 @@ function ItemPreviewBody({
 }) {
   const selectedCount = selections.filter((g) => g.selected).length;
 
-  /** Gruppe, deren Google-Maps-Adresse gerade eingefügt wird (null = zu). */
-  const [mapsPaste, setMapsPaste] = useState<{
-    groupIndex: number;
-    value: string;
-  } | null>(null);
+  /** Gruppe, für die gerade eine Adresse per ORS gesucht wird (null = keine). */
+  const [autoLookupBusy, setAutoLookupBusy] = useState<number | null>(null);
 
-  /** Adresse aus dem Google-Maps-Einfügen-Dialog in die Adresszeile übernehmen. */
-  function handleMapsPasteApply() {
-    if (!mapsPaste) return;
-    const value = mapsPaste.value.trim();
-    if (!value) return;
-    updateGroup(mapsPaste.groupIndex, {
-      new_address: value,
-      // Koordinaten gelten nicht mehr – der Server geocodiert beim
-      // Anlegen neu (bei fehlender PLZ begrenzt auf Würzburg).
-      latitude: null,
-      longitude: null,
-      geocoding_status: hasHouseNumber(value) ? "ok" : "not_found",
-    });
-    setMapsPaste(null);
+  /**
+   * Adresse automatisch per ORS suchen (Kunde + Objektname + Würzburg) und
+   * bei Treffer direkt in die Adresszeile eintragen.
+   */
+  async function handleAutoLookup(groupIndex: number) {
+    const group = selections[groupIndex];
+    if (!group || autoLookupBusy !== null) return;
+    setAutoLookupBusy(groupIndex);
+    try {
+      const res = await fetch("/api/geocoding/company-address", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: group.object_name,
+          customer: group.customer,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.status !== "ok" || !body.address) {
+        toast.warning(
+          "Keine passende Adresse in Würzburg gefunden – bitte manuell eintragen.",
+        );
+        return;
+      }
+      updateGroup(groupIndex, {
+        new_address: body.address,
+        latitude: body.latitude,
+        longitude: body.longitude,
+        geocoding_status: "ok",
+      });
+      toast.success("Adresse automatisch übernommen.");
+    } catch {
+      toast.error("Adresssuche fehlgeschlagen.");
+    } finally {
+      setAutoLookupBusy(null);
+    }
   }
 
   function updateGroup(index: number, patch: Partial<ItemSelection>) {
@@ -1080,25 +1077,24 @@ function ItemPreviewBody({
                               Adresse fehlt
                             </Badge>
                           )}
-                          {/* Google-Maps-Suche (immer sichtbar, auch zum
-                              Backchecken) – öffnet die Suche und zusätzlich
-                              ein Feld zum Einfügen der gefundenen Adresse. */}
-                          <a
-                            href={googleMapsSearchUrl(
-                              g.customer,
-                              g.object_name,
-                            )}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={() =>
-                              setMapsPaste({ groupIndex: gi, value: "" })
-                            }
-                            title={`${g.object_name || g.customer || "Objekt"} in Google Maps suchen und Adresse übernehmen`}
-                            aria-label="Adresse in Google Maps suchen und übernehmen"
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                          {/* Adresse automatisch suchen (Kunde + Objektname +
+                              Würzburg) – füllt die Adresszeile direkt aus. */}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            onClick={() => void handleAutoLookup(gi)}
+                            disabled={autoLookupBusy !== null}
+                            title="Adresse automatisch suchen (Kunde + Name + Würzburg)"
+                            aria-label="Adresse automatisch suchen und eintragen"
                           >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
+                            {autoLookupBusy === gi ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Search className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
                         </span>
                       </div>
                     </div>
@@ -1200,54 +1196,6 @@ function ItemPreviewBody({
           Keine Items im Foto erkannt.
         </p>
       )}
-
-      {/* Google-Maps-Adresse einfügen */}
-      <Dialog
-        open={mapsPaste !== null}
-        onOpenChange={(open) => !open && setMapsPaste(null)}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ExternalLink className="h-5 w-5 text-primary" />
-              Adresse aus Google Maps übernehmen
-            </DialogTitle>
-            <DialogDescription>
-              Google Maps wurde mit der Suche geöffnet. Kopiere dort die
-              passende Adresse und füge sie hier ein – sie wird dann
-              automatisch in die Adresszeile übernommen.
-            </DialogDescription>
-          </DialogHeader>
-          <textarea
-            value={mapsPaste?.value ?? ""}
-            onChange={(e) =>
-              setMapsPaste((prev) =>
-                prev ? { ...prev, value: e.target.value } : prev,
-              )
-            }
-            placeholder="z. B. Hauptstraße 12, 97070 Würzburg"
-            rows={2}
-            autoFocus
-            className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMapsPaste(null)}
-            >
-              Abbrechen
-            </Button>
-            <Button
-              onClick={handleMapsPasteApply}
-              disabled={!mapsPaste?.value.trim()}
-              className="gap-2"
-            >
-              <ExternalLink />
-              In Adresszeile übernehmen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
