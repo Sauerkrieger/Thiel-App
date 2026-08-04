@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       supabase
         .from("objects")
         .select(
-          "id, name, address, category, is_pedestrian_zone_until_11, opens_at",
+          "id, name, address, category, is_pedestrian_zone_until_11, opens_at, remark",
         )
         .order("name"),
       supabase

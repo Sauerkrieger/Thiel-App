@@ -92,6 +92,8 @@ export type RouteObject = {
   is_pedestrian_zone_until_11: boolean;
   key_number: number | null;
   opens_at: string | null;
+  /** Bemerkung zum Objekt (für alle sichtbar). */
+  remark: string | null;
 };
 
 export type OptimizedStop = {
@@ -103,6 +105,8 @@ export type OptimizedStop = {
   is_pedestrian_zone_until_11: boolean;
   key_number: number | null;
   opens_at: string | null;
+  /** Bemerkung zum Objekt (für alle sichtbar). */
+  remark: string | null;
   /** true, wenn der Stopp über einen befahrbaren Punkt außerhalb der Fußgängerzone angefahren wird. */
   approach_by_foot: boolean;
   /** Fußweg vom befahrbaren Punkt zum Objekt in Metern (nur bei approach_by_foot). */
@@ -846,6 +850,7 @@ export async function optimizeRoute(
       is_pedestrian_zone_until_11: obj.is_pedestrian_zone_until_11,
       key_number: obj.key_number,
       opens_at: obj.opens_at,
+      remark: obj.remark ?? null,
       approach_by_foot: walking !== undefined,
       walking_distance_m: walking ?? null,
       latitude: fallbackCoord || !coord ? null : coord.lat,

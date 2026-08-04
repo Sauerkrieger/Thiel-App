@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { orsAuthorizationHeader } from "@/lib/ors";
+import { cleanAddressLabel } from "@/lib/address";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +84,8 @@ export async function GET(request: Request) {
         const label = f.properties?.label?.trim();
         if (!label || !isNumber(lat) || !isNumber(lng)) return null;
         return {
-          label,
+          // Redundante Teile (z. B. "By, Deutschland") aus dem Label entfernen
+          label: cleanAddressLabel(label),
           name: f.properties?.name?.trim() ?? "",
           latitude: lat,
           longitude: lng,

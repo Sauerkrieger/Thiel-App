@@ -286,14 +286,6 @@ export function AddressAutocomplete({
         </span>
       </div>
 
-      {/* Verifiziert-Hinweis */}
-      {verified && (
-        <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-success">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          Adresse verifiziert
-        </p>
-      )}
-
       {/* Vorschlagsliste */}
       {showDropdown && (
         <ul

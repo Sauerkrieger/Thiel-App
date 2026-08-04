@@ -20,7 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SetupHint } from "@/components/setup-hint";
 import { RouteMap } from "@/components/map/route-map";
+import { ObjectRemark } from "@/components/objects/object-remark";
+import { cleanAddressLabel } from "@/lib/address";
 import { DeliveryDialog } from "./delivery-dialog";
+import { NavigateButton } from "./navigate-button";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
@@ -212,11 +215,22 @@ export function TourPage({ tourId }: Props) {
                 const delivered = stop.is_delivered;
                 return (
                   <li key={stop.id}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openStop(stop)}
+                      onKeyDown={(e) => {
+                        // Nur reagieren, wenn die Zeile selbst fokussiert ist
+                        // (Enter/Space auf inneren Buttons wie Navigation /
+                        // Bemerkung soll NICHT zusätzlich den Dialog öffnen).
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openStop(stop);
+                        }
+                      }}
                       className={[
-                        "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                        "flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
                         delivered
                           ? "border-success/30 bg-success/5 hover:bg-success/10"
                           : "border-transparent bg-card hover:border-primary/40 hover:bg-accent/40",
@@ -234,11 +248,11 @@ export function TourPage({ tourId }: Props) {
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span
-                          className={delivered ? "font-medium text-muted-foreground" : "font-medium"}
-                        >
-                          {stop.object?.name ?? "Unbekanntes Objekt"}
-                        </span>
+                          <span
+                            className={delivered ? "font-medium text-muted-foreground" : "font-medium"}
+                          >
+                            {stop.object?.name ?? "Unbekanntes Objekt"}
+                          </span>
                           {delivered && (
                             <Badge variant="success" className="gap-1">
                               <CheckCircle2 className="h-3 w-3" />
@@ -248,18 +262,32 @@ export function TourPage({ tourId }: Props) {
                         </span>
                         <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                           <MapPin className="h-3 w-3 shrink-0" />
-                          {stop.object?.address ?? "Adresse unbekannt"}
+                          {cleanAddressLabel(
+                            stop.object?.address ?? "Adresse unbekannt",
+                          )}
                         </span>
+                        {stop.object?.remark && (
+                          <ObjectRemark
+                            remark={stop.object.remark}
+                            objectName={stop.object.name}
+                            className="mt-0.5"
+                          />
+                        )}
                       </span>
                       {stop.arrival_time && (
                         <span className="shrink-0 text-sm font-semibold tabular-nums">
                           {stop.arrival_time.slice(0, 5)}
                         </span>
                       )}
+                      <NavigateButton
+                        latitude={stop.object?.latitude ?? null}
+                        longitude={stop.object?.longitude ?? null}
+                        label={stop.object?.name ?? "Objekt"}
+                      />
                       <ChevronRight
                         className={delivered ? "h-4 w-4 shrink-0 text-muted-foreground" : "h-4 w-4 shrink-0 text-primary"}
                       />
-                    </button>
+                    </div>
                   </li>
                 );
               })}

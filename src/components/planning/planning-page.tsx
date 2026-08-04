@@ -11,12 +11,14 @@ import {
   CheckCircle2,
   Clock,
   MapPin,
+  MessageSquareText,
   Play,
   Route,
   Save,
   Search,
   Store,
 } from "lucide-react";
+import { cleanAddressLabel } from "@/lib/address";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -278,8 +280,17 @@ export function PlanningPage() {
             </span>
             <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
               <MapPin className="h-3 w-3 shrink-0" />
-              {obj.address}
+              {cleanAddressLabel(obj.address)}
             </span>
+            {obj.remark && (
+              <span
+                className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground/80"
+                title={obj.remark}
+              >
+                <MessageSquareText className="h-3 w-3 shrink-0" />
+                <span className="truncate">{obj.remark}</span>
+              </span>
+            )}
           </span>
           <Check
             className={[
@@ -329,32 +340,22 @@ export function PlanningPage() {
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {!route && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => setPhotoOpen(true)}
-                disabled={loading}
-              >
-                <Camera />
-                Foto-Auswahl
-              </Button>
-              <Button
-                onClick={() => void handleOptimize()}
-                disabled={selected.size === 0 || optimizing || loading}
-              >
-                {optimizing ? (
-                  <>
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
-                    Route wird berechnet…
-                  </>
-                ) : (
-                  <>
-                    <Route />
-                    Route berechnen & sortieren
-                  </>
-                )}
-              </Button>
-            </>
+            <Button
+              onClick={() => void handleOptimize()}
+              disabled={selected.size === 0 || optimizing || loading}
+            >
+              {optimizing ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
+                  Route wird berechnet…
+                </>
+              ) : (
+                <>
+                  <Route />
+                  Route berechnen & sortieren
+                </>
+              )}
+            </Button>
           )}
           {route && (
             <Button
@@ -390,10 +391,10 @@ export function PlanningPage() {
         </div>
       )}
 
-      {/* Suche (nur im Auswahl-Modus) */}
+      {/* Suche + Foto-Auswahl (nur im Auswahl-Modus) */}
       {!route && !loading && !error && objects.length > 0 && (
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative max-w-sm flex-1">
+        <div className="mt-4 space-y-3">
+          <div className="relative max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
@@ -403,7 +404,16 @@ export function PlanningPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setPhotoOpen(true)}
+              disabled={loading}
+              className="gap-1.5"
+            >
+              <Camera />
+              Foto-Auswahl
+            </Button>
             <Button
               variant="ghost"
               size="sm"

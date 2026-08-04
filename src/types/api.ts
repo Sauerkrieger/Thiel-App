@@ -30,6 +30,7 @@ export type PlanningObject = Pick<
   | "category"
   | "is_pedestrian_zone_until_11"
   | "opens_at"
+  | "remark"
 >;
 
 /** Antwort von GET /api/planning. */
@@ -75,6 +76,8 @@ export type OptimizedStop = {
   is_pedestrian_zone_until_11: boolean;
   key_number: number | null;
   opens_at: string | null;
+  /** Bemerkung zum Objekt (für alle sichtbar). */
+  remark: string | null;
   /** true, wenn der Stopp über einen befahrbaren Punkt außerhalb der Fußgängerzone angefahren wird. */
   approach_by_foot: boolean;
   /** Fußweg vom befahrbaren Punkt zum Objekt in Metern (nur bei approach_by_foot). */
@@ -137,6 +140,8 @@ export type TourStopWithObject = {
     category: ObjectCategory;
     latitude: number | null;
     longitude: number | null;
+    /** Bemerkung zum Objekt (für alle sichtbar). */
+    remark: string | null;
   };
 };
 

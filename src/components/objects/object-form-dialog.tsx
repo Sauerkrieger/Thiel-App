@@ -66,6 +66,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
   const [customer, setCustomer] = useState("");
   const [customerNumber, setCustomerNumber] = useState("");
   const [cleaningInterval, setCleaningInterval] = useState("");
+  const [remark, setRemark] = useState("");
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -86,6 +87,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
     setCustomer(object?.customer ?? "");
     setCustomerNumber(object?.customer_number ?? "");
     setCleaningInterval(object?.cleaning_interval ?? "");
+    setRemark(object?.remark ?? "");
     setItems(
       (object?.object_items ?? []).map((item) => ({
         item_name: item.item_name,
@@ -261,6 +263,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
         customer: customer.trim() || null,
         customer_number: customerNumber.trim() || null,
         cleaning_interval: cleaningInterval.trim() || null,
+        remark: remark.trim() || null,
         items: payloadItems,
       };
 
@@ -326,12 +329,6 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               verified={latitude !== null && longitude !== null}
               placeholder="z. B. Hauptstraße 12, 12345 Musterstadt"
             />
-            <p className="text-xs text-muted-foreground">
-              Vorschläge erscheinen ab 3 Zeichen. Wähle einen Treffer aus oder
-              verlasse das Feld mit einer getippten Adresse – ORS findet dann
-              automatisch den passenden Treffer (Label + Koordinaten werden
-              übernommen). Eine Fußgängerzone wird automatisch erkannt.
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -378,6 +375,24 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 Objekt darf erst ab dieser Uhrzeit angefahren werden.
               </p>
             </div>
+          </div>
+
+          {/* Bemerkung (für alle sichtbar, nur Admins bearbeiten) */}
+          <div className="space-y-2">
+            <Label htmlFor="obj-remark">Bemerkung</Label>
+            <textarea
+              id="obj-remark"
+              value={remark}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder="z. B. Zugang über den Hof, Klingel 2. OG"
+              rows={2}
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              Sichtbar für alle (Fahrer, Admin, …) – z. B. Zugangs- oder
+              Besonderheiten-Hinweise. Bearbeitet werden kann sie nur von
+              Admins.
+            </p>
           </div>
 
           {/* Admin-Info (nur für Admins sichtbar) */}

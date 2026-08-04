@@ -9,9 +9,11 @@ import {
   Footprints,
   KeyRound,
   MapPin,
+  MessageSquareText,
   Truck,
   XCircle,
 } from "lucide-react";
+import { cleanAddressLabel } from "@/lib/address";
 import { Badge } from "@/components/ui/badge";
 import { RouteMap } from "@/components/map/route-map";
 import {
@@ -174,8 +176,17 @@ export function PackView({ route, onOpenStop }: Props) {
                 </span>
                 <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                   <MapPin className="h-3 w-3 shrink-0" />
-                  {stop.address}
+                  {cleanAddressLabel(stop.address)}
                 </span>
+                {stop.remark && (
+                  <span
+                    className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground/80"
+                    title={stop.remark}
+                  >
+                    <MessageSquareText className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{stop.remark}</span>
+                  </span>
+                )}
               </div>
               <span className="flex shrink-0 flex-col items-end gap-1">
                 <span className="flex items-center gap-1 text-sm font-semibold tabular-nums">

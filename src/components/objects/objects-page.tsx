@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Camera,
+  ChevronsUpDown,
   KeyRound,
   ListChecks,
   MapPin,
@@ -13,18 +16,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { cleanAddressLabel } from "@/lib/address";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -43,28 +40,26 @@ import {
 } from "@/components/ui/dialog";
 import { ObjectFormDialog } from "./object-form-dialog";
 import { ItemsDialog } from "./items-dialog";
+import { ObjectRemark } from "./object-remark";
 import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 
-/** Sortiermöglichkeiten der Objektliste (je Attribut). */
-type ObjectSort =
-  | "name-asc"
-  | "name-desc"
-  | "address-asc"
-  | "address-desc"
-  | "key-asc"
-  | "key-desc"
-  | "category-asc"
-  | "items-asc"
-  | "items-desc";
+/** Sortierbare Spalten der Objektliste (Klick auf Spaltenkopf). */
+type SortKey = "name" | "address" | "key" | "category" | "items" | "remark";
+
+type SortState = {
+  key: SortKey;
+  /** 1 = aufsteigend, -1 = absteigend. */
+  dir: 1 | -1;
+};
 
 export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
   const [objects, setObjects] = useState<ObjectWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<ObjectSort>("name-asc");
+  const [sort, setSort] = useState<SortState>({ key: "name", dir: 1 });
 
   const [formDialog, setFormDialog] = useState<{
     open: boolean;
@@ -105,6 +100,14 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
 
   const itemCount = (o: ObjectWithItems) => o.object_items?.length ?? 0;
 
+  /** Klick auf Spaltenkopf: gleiche Spalte toggelt die Richtung, sonst aufsteigend. */
+  function toggleSort(key: SortKey) {
+    setSort((prev) => ({
+      key,
+      dir: prev.key === key ? (prev.dir === 1 ? -1 : 1) : 1,
+    }));
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = q
@@ -114,27 +117,25 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
             o.address.toLowerCase().includes(q),
         )
       : [...objects];
+    const dir = sort.dir;
     list.sort((a, b) => {
-      switch (sort) {
-        case "name-desc":
-          return b.name.localeCompare(a.name, "de");
-        case "address-asc":
-          return a.address.localeCompare(b.address, "de");
-        case "address-desc":
-          return b.address.localeCompare(a.address, "de");
-        case "key-asc":
-          return (a.key_number ?? Number.MAX_SAFE_INTEGER) -
-            (b.key_number ?? Number.MAX_SAFE_INTEGER);
-        case "key-desc":
-          return (b.key_number ?? -1) - (a.key_number ?? -1);
-        case "category-asc":
-          return a.category.localeCompare(b.category, "de");
-        case "items-asc":
-          return itemCount(a) - itemCount(b);
-        case "items-desc":
-          return itemCount(b) - itemCount(a);
+      switch (sort.key) {
+        case "address":
+          return a.address.localeCompare(b.address, "de") * dir;
+        case "key":
+          // Objekte ohne Schlüsselnummer immer ans Ende
+          if (a.key_number == null && b.key_number == null) return 0;
+          if (a.key_number == null) return 1;
+          if (b.key_number == null) return -1;
+          return (a.key_number - b.key_number) * dir;
+        case "category":
+          return a.category.localeCompare(b.category, "de") * dir;
+        case "items":
+          return (itemCount(a) - itemCount(b)) * dir;
+        case "remark":
+          return (a.remark ?? "").localeCompare(b.remark ?? "", "de") * dir;
         default:
-          return a.name.localeCompare(b.name, "de");
+          return a.name.localeCompare(b.name, "de") * dir;
       }
     });
     return list;
@@ -191,7 +192,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
-      {/* Suche + Sortierung */}
+      {/* Suche (Sortierung jetzt über die Spaltenköpfe) */}
       <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative max-w-sm flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -203,28 +204,9 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Sortierung</Label>
-          <Select
-            value={sort}
-            onValueChange={(v) => setSort(v as ObjectSort)}
-          >
-            <SelectTrigger className="w-48" aria-label="Sortierung der Objekte">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name-asc">Name (A–Z)</SelectItem>
-              <SelectItem value="name-desc">Name (Z–A)</SelectItem>
-              <SelectItem value="address-asc">Adresse (A–Z)</SelectItem>
-              <SelectItem value="address-desc">Adresse (Z–A)</SelectItem>
-              <SelectItem value="key-asc">Schlüssel-Nr. aufsteigend</SelectItem>
-              <SelectItem value="key-desc">Schlüssel-Nr. absteigend</SelectItem>
-              <SelectItem value="category-asc">Kategorie (A–Z)</SelectItem>
-              <SelectItem value="items-asc">Items aufsteigend</SelectItem>
-              <SelectItem value="items-desc">Items absteigend</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          Tippe auf eine Spaltenüberschrift, um danach zu sortieren.
+        </p>
       </div>
 
       {/* Inhalt */}
@@ -250,15 +232,47 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
             Keine Objekte gefunden, die zu „{search}“ passen.
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="overflow-x-auto rounded-lg border bg-card shadow-sm">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40">
-                  <TableHead className="pl-4">Name</TableHead>
-                  <TableHead>Adresse</TableHead>
-                  <TableHead>Schlüssel</TableHead>
-                  <TableHead>Kategorie</TableHead>
-                  <TableHead>Items</TableHead>
+                  <SortableHeader
+                    label="Name"
+                    sortKey="name"
+                    sort={sort}
+                    onToggle={toggleSort}
+                    className="pl-4"
+                  />
+                  <SortableHeader
+                    label="Adresse"
+                    sortKey="address"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
+                  <SortableHeader
+                    label="Schlüssel"
+                    sortKey="key"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
+                  <SortableHeader
+                    label="Kategorie"
+                    sortKey="category"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
+                  <SortableHeader
+                    label="Items"
+                    sortKey="items"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
+                  <SortableHeader
+                    label="Bemerkung"
+                    sortKey="remark"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
                   <TableHead className="pr-4 text-right">Aktionen</TableHead>
                 </TableRow>
               </TableHeader>
@@ -269,7 +283,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                     <TableCell>
                       <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                         <MapPin className="h-3.5 w-3.5 shrink-0" />
-                        {obj.address}
+                        {cleanAddressLabel(obj.address)}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -305,6 +319,14 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                           {itemCount(obj)}
                         </span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <ObjectRemark
+                        remark={obj.remark}
+                        objectName={obj.name}
+                        // Spalte schmal halten – volle Bemerkung per Tipp
+                        className="max-w-52"
+                      />
                     </TableCell>
                     <TableCell className="pr-4">
                       {isAdmin ? (
@@ -400,6 +422,47 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Sortierbarer Spaltenkopf: Klick sortiert auf-/absteigend (Pfeil zeigt Richtung). */
+function SortableHeader({
+  label,
+  sortKey,
+  sort,
+  onToggle,
+  className,
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: SortState;
+  onToggle: (key: SortKey) => void;
+  className?: string;
+}) {
+  const active = sort.key === sortKey;
+  const DirectionIcon = active
+    ? sort.dir === 1
+      ? ArrowUp
+      : ArrowDown
+    : ChevronsUpDown;
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey)}
+        title={`Nach ${label} sortieren`}
+        aria-label={`Nach ${label} sortieren${active ? (sort.dir === 1 ? " (absteigend)" : " (aufsteigend)") : ""}`}
+        className={cn(
+          "inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide transition-colors",
+          active
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {label}
+        <DirectionIcon className={cn("h-3.5 w-3.5", !active && "opacity-40")} />
+      </button>
+    </TableHead>
   );
 }
 

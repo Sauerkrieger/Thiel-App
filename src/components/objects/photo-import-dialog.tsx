@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { hasHouseNumber } from "@/lib/utils";
+import { cleanAddressLabel } from "@/lib/address";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -772,7 +773,7 @@ function KeyPreviewBody({
                     {k.address && (
                       <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3" />
-                        {k.address}
+                        {cleanAddressLabel(k.address)}
                       </span>
                     )}
                     {k.already_has_key && (
@@ -918,7 +919,7 @@ function ItemPreviewBody({
                     {!g.is_new_object && g.address && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3" />
-                        {g.address}
+                        {cleanAddressLabel(g.address)}
                       </span>
                     )}
                   </span>
@@ -1077,6 +1078,15 @@ function ItemPreviewBody({
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
+                        <Input
+                          className="mt-1.5 h-8"
+                          value={item.note}
+                          onChange={(e) =>
+                            updateItem(gi, ii, { note: e.target.value })
+                          }
+                          placeholder="Bemerkung (optional, z. B. rot, gelb - kein blau)"
+                          aria-label={`Bemerkung Item ${ii + 1}`}
+                        />
                         <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 pl-0.5">
                           <Checkbox
                             checked={item.is_always_required}

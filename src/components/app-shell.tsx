@@ -54,17 +54,21 @@ export function AppShell({
         <div className="container flex h-14 items-center gap-4">
           <Link
             href="/"
-            className="flex min-w-0 items-center gap-2.5"
+            className="flex min-w-0 shrink-0 items-center gap-2.5"
             aria-label="Thiel Dienstleistungen – Startseite"
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
               <Building2 className="h-4 w-4" />
             </span>
-            <span className="truncate text-sm font-semibold tracking-tight">
+            <span className="hidden truncate text-sm font-semibold tracking-tight sm:inline">
               Thiel Dienstleistungen
             </span>
           </Link>
-          <nav className="ml-auto flex items-center gap-1">
+          {/* Horizontal scrollbar: bei vielen Tabs / schmalen Screens (Handy)
+              läuft die Leiste seitlich weiter, statt umzubrechen. */}
+          <nav
+            className="ml-auto flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {NAV_ITEMS.filter(
               (item) => !item.roles || (userRole && item.roles.includes(userRole)),
             ).map((item) => {
@@ -78,7 +82,7 @@ export function AppShell({
                   aria-label={item.icon ? item.label : undefined}
                   title={item.icon ? item.label : undefined}
                   className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                     item.icon && "px-2",
                     active
                       ? "bg-primary/10 text-primary"

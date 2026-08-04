@@ -7,7 +7,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Check, Image, ListChecks, PackageCheck, Truck } from "lucide-react";
+import {
+  Check,
+  Image,
+  ListChecks,
+  MessageSquareText,
+  PackageCheck,
+  Truck,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
+import { NavigateButton } from "./navigate-button";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo, TourStopWithObject } from "@/types/api";
 
@@ -188,14 +196,27 @@ export function DeliveryDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ListChecks className="h-5 w-5 text-primary" />
-            Belieferung – {stop?.object?.name ?? "Unbekanntes Objekt"}
+            <ListChecks className="h-5 w-5 shrink-0 text-primary" />
+            <span className="min-w-0 flex-1 truncate">
+              Belieferung – {stop?.object?.name ?? "Unbekanntes Objekt"}
+            </span>
+            <NavigateButton
+              latitude={stop?.object?.latitude ?? null}
+              longitude={stop?.object?.longitude ?? null}
+              label={stop?.object?.name ?? "Objekt"}
+            />
           </DialogTitle>
           <DialogDescription>
             Standard-Items sind fest vorgesehen. Wähle aus, welche variablen
             Items bei der <strong>nächsten</strong> Belieferung mitgebracht
             werden müssen – optional mit Bemerkung.
           </DialogDescription>
+          {stop?.object?.remark && (
+            <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+              <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-pre-wrap">{stop.object.remark}</span>
+            </p>
+          )}
         </DialogHeader>
 
         {loading ? (

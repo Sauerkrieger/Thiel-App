@@ -8,6 +8,7 @@ import {
 } from "@/lib/http";
 import { parseItemInputs } from "@/lib/items";
 import { safeIsInPedestrianZone } from "@/lib/overpass";
+import { cleanAddressLabel } from "@/lib/address";
 import { requireUser, isAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +31,11 @@ export async function GET() {
 
   try {
     const supabase = getSupabaseAdmin();
-    // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins.
+    // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins;
+    // die Bemerkung (remark) ist für alle sichtbar.
     const select = isAdmin(auth.user)
       ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)"
-      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)";
+      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)";
     const { data, error } = await supabase
       .from("objects")
       .select(select)
@@ -65,7 +67,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const address = typeof body.address === "string" ? body.address.trim() : "";
+    const address = cleanAddressLabel(
+      typeof body.address === "string" ? body.address.trim() : "",
+    );
     const latitude = validLatitude(body.latitude);
     const longitude = validLongitude(body.longitude);
 
@@ -111,6 +115,7 @@ export async function POST(request: Request) {
         customer: text(body.customer, 200),
         customer_number: text(body.customer_number, 100),
         cleaning_interval: text(body.cleaning_interval, 100),
+        remark: text(body.remark, 500),
       })
       .select()
       .single();

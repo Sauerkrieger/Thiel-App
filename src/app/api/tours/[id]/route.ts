@@ -87,7 +87,7 @@ export async function GET(_request: Request, { params }: Context) {
     const { data, error } = await supabase
       .from("active_tours")
       .select(
-        "*, tour_stops(*, object:objects(id, name, address, category, latitude, longitude))",
+        "*, tour_stops(*, object:objects(id, name, address, category, latitude, longitude, remark))",
       )
       .eq("id", id)
       .order("stop_order", { referencedTable: "tour_stops" })

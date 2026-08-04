@@ -10,6 +10,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cleanAddressLabel } from "@/lib/address";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -147,7 +148,7 @@ export function PhotoSelectDialog({ open, onOpenChange, onApply }: Props) {
                     <span className="font-medium">{match.name}</span>
                     <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
                       <MapPin className="h-3 w-3" />
-                      {match.address}
+                      {cleanAddressLabel(match.address)}
                     </span>
                     <Badge variant="outline" className="ml-1 shrink-0">
                       {match.matched_by === "adresse"

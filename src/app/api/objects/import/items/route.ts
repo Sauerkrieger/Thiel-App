@@ -7,8 +7,13 @@ import {
   validLongitude,
 } from "@/lib/http";
 import { parseItemInputs, type ItemInput } from "@/lib/items";
+import { cleanAddressLabel } from "@/lib/address";
 import { findDuplicate, normalizeAddress } from "@/lib/ocr";
-import { normalizeAddressForGeocoding, orsGeocodeSearch } from "@/lib/ors";
+import {
+  normalizeAddressForGeocoding,
+  orsGeocodeSearch,
+  WUERZBURG_BOUNDARY,
+} from "@/lib/ors";
 import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { hasHouseNumber } from "@/lib/utils";
 import { requireUser, isAdmin } from "@/lib/auth";
@@ -210,8 +215,14 @@ export async function POST(request: Request) {
       let latitude = n.latitude;
       let longitude = n.longitude;
       if (latitude === null || longitude === null) {
+        // Ohne PLZ/Ort im Zettel wird die Adresse in Würzburg vermutet –
+        // die Suche wird dann auf das Würzburger Stadtgebiet begrenzt.
+        const boundary = /\b\d{5}\b/.test(n.address)
+          ? undefined
+          : WUERZBURG_BOUNDARY;
         const hit = await orsGeocodeSearch(
           normalizeAddressForGeocoding(n.address),
+          { boundary },
         );
         if (hit) {
           latitude = hit.latitude;
@@ -229,7 +240,7 @@ export async function POST(request: Request) {
         .from("objects")
         .insert({
           name: n.name,
-          address: n.address,
+          address: cleanAddressLabel(n.address),
           category: n.category,
           is_pedestrian_zone_until_11: isPedestrianZone,
           opens_at: null,

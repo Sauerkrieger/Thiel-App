@@ -111,6 +111,8 @@ export interface Database {
           customer_number: string | null;
           /** Reinigungsturnus (z. B. wöchentlich) – nur für Admins sichtbar. */
           cleaning_interval: string | null;
+          /** Bemerkung zum Objekt – für alle sichtbar; nur Admins bearbeiten. */
+          remark: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -127,6 +129,7 @@ export interface Database {
           customer?: string | null;
           customer_number?: string | null;
           cleaning_interval?: string | null;
+          remark?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -143,6 +146,7 @@ export interface Database {
           customer?: string | null;
           customer_number?: string | null;
           cleaning_interval?: string | null;
+          remark?: string | null;
           created_at?: string;
           updated_at?: string;
         };

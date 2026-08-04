@@ -8,7 +8,7 @@ import {
   findBestObjectByName,
   type ExtractedItemGroup,
 } from "@/lib/ocr";
-import { orsGeocodeSearch } from "@/lib/ors";
+import { orsGeocodeSearch, WUERZBURG_BOUNDARY } from "@/lib/ors";
 import { hasHouseNumber } from "@/lib/utils";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ItemGroupImportPreview } from "@/types/api";
@@ -46,7 +46,12 @@ async function resolveItemGroupAddress(
     .filter((part): part is string => Boolean(part))
     .join(", ");
 
-  const hit = query ? await orsGeocodeSearch(query) : null;
+  // Steht kein Ort auf dem Zettel (z. B. nur Kunde/Name), muss die Adresse
+  // geraten werden – die Suche wird dann auf das Würzburger Stadtgebiet
+  // begrenzt. Nennt der Zettel einen anderen Ort (z. B. Ochsenfurt), wird
+  // dieser verwendet (keine Begrenzung).
+  const boundary = group.city?.trim() ? undefined : WUERZBURG_BOUNDARY;
+  const hit = query ? await orsGeocodeSearch(query, { boundary }) : null;
 
   if (hit) {
     if (hasHouseNumber(hit.label)) {
