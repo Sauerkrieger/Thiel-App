@@ -5,13 +5,13 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
+  ExternalLink,
   KeyRound,
   ListChecks,
   LoaderCircle,
   MapPin,
   Plus,
   ScanLine,
-  Search,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -99,6 +99,29 @@ type ItemSelection = {
   /** Kategorie des neuen Objekts (nur bei is_new_object). */
   category?: ObjectCategory;
 };
+
+/**
+ * Google-Maps-Such-URL (Website) für Kunde + Objektname + Würzburg.
+ * Gleiche Teile (z. B. wenn Kunde und Name identisch sind) werden nur
+ * einmal übernommen. Reines manuelles Feature – unabhängig von der
+ * automatischen ORS-Suche bei der Foto-Analyse.
+ */
+function googleMapsSearchUrl(customer: string, objectName: string): string {
+  const parts: string[] = [];
+  const add = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const normalized = trimmed.toLowerCase();
+    if (parts.some((p) => p.toLowerCase() === normalized)) return;
+    parts.push(trimmed);
+  };
+  add(customer);
+  add(objectName);
+  parts.push("Würzburg");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    parts.join(", "),
+  )}`;
+}
 
 const MODE_OPTIONS: {
   mode: Mode;
@@ -831,47 +854,6 @@ function ItemPreviewBody({
 }) {
   const selectedCount = selections.filter((g) => g.selected).length;
 
-  /** Gruppe, für die gerade eine Adresse per ORS gesucht wird (null = keine). */
-  const [autoLookupBusy, setAutoLookupBusy] = useState<number | null>(null);
-
-  /**
-   * Adresse automatisch per ORS suchen (Kunde + Objektname + Würzburg) und
-   * bei Treffer direkt in die Adresszeile eintragen.
-   */
-  async function handleAutoLookup(groupIndex: number) {
-    const group = selections[groupIndex];
-    if (!group || autoLookupBusy !== null) return;
-    setAutoLookupBusy(groupIndex);
-    try {
-      const res = await fetch("/api/geocoding/company-address", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: group.object_name,
-          customer: group.customer,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.status !== "ok" || !body.address) {
-        toast.warning(
-          "Keine passende Adresse in Würzburg gefunden – bitte manuell eintragen.",
-        );
-        return;
-      }
-      updateGroup(groupIndex, {
-        new_address: body.address,
-        latitude: body.latitude,
-        longitude: body.longitude,
-        geocoding_status: "ok",
-      });
-      toast.success("Adresse automatisch übernommen.");
-    } catch {
-      toast.error("Adresssuche fehlgeschlagen.");
-    } finally {
-      setAutoLookupBusy(null);
-    }
-  }
-
   function updateGroup(index: number, patch: Partial<ItemSelection>) {
     setSelections((prev) =>
       prev.map((g, i) => (i === index ? { ...g, ...patch } : g)),
@@ -1077,24 +1059,23 @@ function ItemPreviewBody({
                               Adresse fehlt
                             </Badge>
                           )}
-                          {/* Adresse automatisch suchen (Kunde + Objektname +
-                              Würzburg) – füllt die Adresszeile direkt aus. */}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7 shrink-0"
-                            onClick={() => void handleAutoLookup(gi)}
-                            disabled={autoLookupBusy !== null}
-                            title="Adresse automatisch suchen (Kunde + Name + Würzburg)"
-                            aria-label="Adresse automatisch suchen und eintragen"
-                          >
-                            {autoLookupBusy === gi ? (
-                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Search className="h-3.5 w-3.5" />
+                          {/* Google-Maps-Suche (manuelles Feature, immer
+                              sichtbar – auch zum Backchecken bei bereits
+                              gefundener Adresse). Unabhängig von der
+                              automatischen ORS-Suche der Foto-Analyse. */}
+                          <a
+                            href={googleMapsSearchUrl(
+                              g.customer,
+                              g.object_name,
                             )}
-                          </Button>
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`${g.object_name || g.customer || "Objekt"} in Google Maps suchen (Würzburg)`}
+                            aria-label="Adresse in Google Maps suchen"
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
                         </span>
                       </div>
                     </div>

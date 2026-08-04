@@ -75,6 +75,38 @@ async function resolveItemGroupAddress(
     }
   }
 
+  // Automatische Rettung per ORS: Steht auf dem Zettel KEINE exakte Adresse
+  // (nur Kunde/Name – die Adresse müsste also geraten werden), wird automatisch
+  // über Kunde + Objektname (+ Ort bzw. Würzburg) gesucht – ein Treffer mit
+  // Hausnummer wird direkt übernommen. Eine aufgeschriebene Straße+Hausnummer
+  // hat dagegen immer Vorrang und wird NIE durch die Namens-Suche überschrieben.
+  if (!hasOcrAddress) {
+    const companyParts: string[] = [];
+    const addPart = (value: string | null | undefined) => {
+      const v = value?.trim();
+      if (!v) return;
+      const normalized = v.toLowerCase();
+      if (companyParts.some((p) => p.toLowerCase() === normalized)) return;
+      companyParts.push(v);
+    };
+    addPart(group.customer);
+    addPart(group.name);
+    addPart(group.city);
+    if (!group.city?.trim()) addPart("Würzburg");
+    const companyHit =
+      companyParts.length > 0
+        ? await orsGeocodeSearch(companyParts.join(", "), { boundary })
+        : null;
+    if (companyHit && hasHouseNumber(companyHit.label)) {
+      return {
+        address: companyHit.label,
+        latitude: companyHit.latitude,
+        longitude: companyHit.longitude,
+        geocoding_status: "ok",
+      };
+    }
+  }
+
   // Kein exakter Treffer: Adresse vom Zettel behalten; der Nutzer ergänzt ggf.
   const ocrAddress = group.address?.trim() || null;
   // Ohne Ortsangabe auf dem Zettel ist die Adresse nicht als Würzburg-Adresse
