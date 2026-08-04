@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
+  ExternalLink,
   KeyRound,
   ListChecks,
   LoaderCircle,
@@ -98,6 +99,28 @@ type ItemSelection = {
   /** Kategorie des neuen Objekts (nur bei is_new_object). */
   category?: ObjectCategory;
 };
+
+/**
+ * Google-Maps-Such-URL (Website) für eine noch nicht gefundene Adresse:
+ * sucht nach Kunde + Objektname (+ Würzburg). Gleiche Teile (z. B. wenn
+ * Kunde und Name identisch sind) werden nur einmal übernommen.
+ */
+function googleMapsSearchUrl(customer: string, objectName: string): string {
+  const parts: string[] = [];
+  const add = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const normalized = trimmed.toLowerCase();
+    if (parts.some((p) => p.toLowerCase() === normalized)) return;
+    parts.push(trimmed);
+  };
+  add(customer);
+  add(objectName);
+  parts.push("Würzburg");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    parts.join(", "),
+  )}`;
+}
 
 const MODE_OPTIONS: {
   mode: Mode;
@@ -1030,9 +1053,24 @@ function ItemPreviewBody({
                             Adresse gefunden
                           </Badge>
                         ) : (
-                          <Badge variant="secondary" className="shrink-0">
-                            Adresse fehlt
-                          </Badge>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            <Badge variant="secondary" className="shrink-0">
+                              Adresse fehlt
+                            </Badge>
+                            <a
+                              href={googleMapsSearchUrl(
+                                g.customer,
+                                g.object_name,
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`${g.object_name || g.customer || "Objekt"} in Google Maps suchen (Würzburg)`}
+                              aria-label="Adresse in Google Maps suchen"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </span>
                         )}
                       </div>
                     </div>
