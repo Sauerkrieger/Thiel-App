@@ -187,8 +187,10 @@ offene Syncs, letzter Sync).
 - [x] **7. UI: Sync-/Offline-Indikator** ✅ – SyncBadge in `app-shell.tsx`
       (Offline / Synchronisiert / „n offline“ mit Klick-Sync / Fehler),
       `initSync(userId)` beim Mount, `layout.tsx` reicht `userId` durch
-- [ ] **8. Validierung & Deploy** – `npx tsc --noEmit`, `next build`, Code-Review,
-      dann `db push`, Commit & Push
+- [x] **8. Validierung & Deploy** ✅ – `npx tsc --noEmit` fehlerfrei, `next build`
+      erfolgreich, Code-Review ohne kritische Befunde; `db push` (Migration
+      `20260804000002` auf der Remote-DB angewendet, Spalten verifiziert),
+      Commit `e0a836b` & Push auf `main`
 
 ### 5.1 Bekannte Einschränkungen (dokumentiert)
 
