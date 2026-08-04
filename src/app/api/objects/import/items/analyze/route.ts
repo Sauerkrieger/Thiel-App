@@ -77,12 +77,19 @@ async function resolveItemGroupAddress(
 
   // Kein exakter Treffer: Adresse vom Zettel behalten; der Nutzer ergänzt ggf.
   const ocrAddress = group.address?.trim() || null;
+  // Ohne Ortsangabe auf dem Zettel ist die Adresse nicht als Würzburg-Adresse
+  // verifizierbar (kein Treffer, keine Koordinaten) – sie darf NICHT ungeprüft
+  // als „gefunden“ durchgehen, sondern wird als „Adresse fehlt“ markiert.
+  // Steht ein Ort auf dem Zettel, ist die Zettel-Adresse dagegen vertrauenswürdig.
+  const hasCityOnPaper = Boolean(group.city?.trim());
   return {
     address: ocrAddress,
     latitude: null,
     longitude: null,
     geocoding_status:
-      ocrAddress !== null && hasHouseNumber(ocrAddress) ? "ok" : "not_found",
+      ocrAddress !== null && hasHouseNumber(ocrAddress) && hasCityOnPaper
+        ? "ok"
+        : "not_found",
   };
 }
 
