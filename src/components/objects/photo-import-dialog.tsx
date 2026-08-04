@@ -853,6 +853,28 @@ function ItemPreviewBody({
 }) {
   const selectedCount = selections.filter((g) => g.selected).length;
 
+  /** Gruppe, deren Google-Maps-Adresse gerade eingefügt wird (null = zu). */
+  const [mapsPaste, setMapsPaste] = useState<{
+    groupIndex: number;
+    value: string;
+  } | null>(null);
+
+  /** Adresse aus dem Google-Maps-Einfügen-Dialog in die Adresszeile übernehmen. */
+  function handleMapsPasteApply() {
+    if (!mapsPaste) return;
+    const value = mapsPaste.value.trim();
+    if (!value) return;
+    updateGroup(mapsPaste.groupIndex, {
+      new_address: value,
+      // Koordinaten gelten nicht mehr – der Server geocodiert beim
+      // Anlegen neu (bei fehlender PLZ begrenzt auf Würzburg).
+      latitude: null,
+      longitude: null,
+      geocoding_status: hasHouseNumber(value) ? "ok" : "not_found",
+    });
+    setMapsPaste(null);
+  }
+
   function updateGroup(index: number, patch: Partial<ItemSelection>) {
     setSelections((prev) =>
       prev.map((g, i) => (i === index ? { ...g, ...patch } : g)),
@@ -1044,34 +1066,40 @@ function ItemPreviewBody({
                           placeholder="Straße + Hausnummer (Pflicht)"
                           aria-label={`Adresse des neuen Objekts ${gi + 1}`}
                         />
-                        {g.geocoding_status === "ok" ? (
-                          <Badge
-                            variant="outline"
-                            className="shrink-0 gap-1 border-success/40 text-success"
-                          >
-                            <CheckCircle2 className="h-3 w-3" />
-                            Adresse gefunden
-                          </Badge>
-                        ) : (
-                          <span className="flex shrink-0 items-center gap-1.5">
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {g.geocoding_status === "ok" ? (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 gap-1 border-success/40 text-success"
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                              Adresse gefunden
+                            </Badge>
+                          ) : (
                             <Badge variant="secondary" className="shrink-0">
                               Adresse fehlt
                             </Badge>
-                            <a
-                              href={googleMapsSearchUrl(
-                                g.customer,
-                                g.object_name,
-                              )}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={`${g.object_name || g.customer || "Objekt"} in Google Maps suchen (Würzburg)`}
-                              aria-label="Adresse in Google Maps suchen"
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                          </span>
-                        )}
+                          )}
+                          {/* Google-Maps-Suche (immer sichtbar, auch zum
+                              Backchecken) – öffnet die Suche und zusätzlich
+                              ein Feld zum Einfügen der gefundenen Adresse. */}
+                          <a
+                            href={googleMapsSearchUrl(
+                              g.customer,
+                              g.object_name,
+                            )}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() =>
+                              setMapsPaste({ groupIndex: gi, value: "" })
+                            }
+                            title={`${g.object_name || g.customer || "Objekt"} in Google Maps suchen und Adresse übernehmen`}
+                            aria-label="Adresse in Google Maps suchen und übernehmen"
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1172,6 +1200,54 @@ function ItemPreviewBody({
           Keine Items im Foto erkannt.
         </p>
       )}
+
+      {/* Google-Maps-Adresse einfügen */}
+      <Dialog
+        open={mapsPaste !== null}
+        onOpenChange={(open) => !open && setMapsPaste(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ExternalLink className="h-5 w-5 text-primary" />
+              Adresse aus Google Maps übernehmen
+            </DialogTitle>
+            <DialogDescription>
+              Google Maps wurde mit der Suche geöffnet. Kopiere dort die
+              passende Adresse und füge sie hier ein – sie wird dann
+              automatisch in die Adresszeile übernommen.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={mapsPaste?.value ?? ""}
+            onChange={(e) =>
+              setMapsPaste((prev) =>
+                prev ? { ...prev, value: e.target.value } : prev,
+              )
+            }
+            placeholder="z. B. Hauptstraße 12, 97070 Würzburg"
+            rows={2}
+            autoFocus
+            className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMapsPaste(null)}
+            >
+              Abbrechen
+            </Button>
+            <Button
+              onClick={handleMapsPasteApply}
+              disabled={!mapsPaste?.value.trim()}
+              className="gap-2"
+            >
+              <ExternalLink />
+              In Adresszeile übernehmen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
