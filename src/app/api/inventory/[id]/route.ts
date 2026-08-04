@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -58,9 +61,27 @@ export async function PUT(request: Request, { params }: Context) {
     }
 
     const supabase = getSupabaseAdmin();
+    const lww = await checkLww(
+      supabase,
+      "inventory_items",
+      id,
+      raw.client_updated_at,
+    );
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["inventory_items"]["Update"] = {
+      ...update,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("inventory_items")
-      .update(update)
+      .update(updatePayload)
       .eq("id", id)
       .select("id, name, note, created_at, updated_at")
       .single();

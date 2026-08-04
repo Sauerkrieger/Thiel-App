@@ -52,6 +52,22 @@ function extractErrorMessage(error: unknown): string {
 }
 
 /**
+ * 409-Antwort bei einem LWW-Konflikt (Last-Write-Wins).
+ * Der Client übernimmt daraufhin `serverRecord` lokal und verwirft seine
+ * eigene, ältere Version (siehe OFFLINE_SYNC_PLAN.md).
+ */
+export function lwwConflictResponse(serverRecord: unknown) {
+  return NextResponse.json(
+    {
+      error: "Datensatz wurde auf einem anderen Gerät neuer bearbeitet.",
+      code: "CONFLICT",
+      serverRecord,
+    },
+    { status: 409 },
+  );
+}
+
+/**
  * Einheitliches Fehlerformat aller API-Routen.
  * Supabase-Konfigurationsfehler -> 503 + code "SUPABASE_NOT_CONFIGURED".
  */

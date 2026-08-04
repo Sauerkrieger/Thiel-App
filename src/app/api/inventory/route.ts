@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -73,9 +75,21 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
+    const clientUpdatedAt = parseClientUpdatedAt(raw.client_updated_at);
+    const insertPayload: Database["public"]["Tables"]["inventory_items"]["Insert"] = {
+      name,
+      note,
+    };
+    if (clientUpdatedAt) {
+      insertPayload.created_at = clientUpdatedAt;
+      insertPayload.updated_at = clientUpdatedAt;
+      insertPayload.client_updated_at = clientUpdatedAt;
+    }
+    insertPayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("inventory_items")
-      .insert({ name, note })
+      .insert(insertPayload)
       .select("id, name, note, created_at, updated_at")
       .single();
     if (error) throw error;

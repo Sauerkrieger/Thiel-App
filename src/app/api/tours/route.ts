@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
 import { requireUser, isPlanner, isAdmin } from "@/lib/auth";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database } from "@/types/database";
 import type { TourStatus } from "@/types/database";
 import type { TourHistoryItem } from "@/types/api";
 
@@ -185,15 +187,24 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdmin();
     const today = new Date().toISOString().slice(0, 10);
+    const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
+
+    const tourPayload: Database["public"]["Tables"]["active_tours"]["Insert"] = {
+      date: today,
+      status: tourStatus,
+      start_time: startTime ?? null,
+      driver_id: auth.user.id,
+    };
+    if (clientUpdatedAt) {
+      tourPayload.created_at = clientUpdatedAt;
+      tourPayload.updated_at = clientUpdatedAt;
+      tourPayload.client_updated_at = clientUpdatedAt;
+    }
+    tourPayload.synced_at = new Date().toISOString();
 
     const { data: tour, error: tourError } = await supabase
       .from("active_tours")
-      .insert({
-        date: today,
-        status: tourStatus,
-        start_time: startTime ?? null,
-        driver_id: auth.user.id,
-      })
+      .insert(tourPayload)
       .select()
       .single();
 

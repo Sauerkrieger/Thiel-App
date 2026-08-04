@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { UserRole } from "@/types/database";
 
 type CurrentUser = {
@@ -196,7 +197,7 @@ function ProfileSection({ user }: { user: CurrentUser }) {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/me-profile", {
+      const res = await offlineFetch("/api/auth/me-profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), name: name.trim() }),
@@ -457,7 +458,7 @@ function UsersSection({
     }
     setCreating(true);
     try {
-      const res = await fetch("/api/auth/users", {
+      const res = await offlineFetch("/api/auth/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), name: name.trim(), password, role }),
@@ -483,7 +484,7 @@ function UsersSection({
   async function handleRoleChange(id: string, newRole: string) {
     setSavingId(id);
     try {
-      const res = await fetch(`/api/auth/users/${id}`, {
+      const res = await offlineFetch(`/api/auth/users/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: newRole }),
@@ -504,7 +505,7 @@ function UsersSection({
 
   async function handleDelete(id: string, name: string) {
     if (!confirm(`Nutzer „${name}“ wirklich löschen?`)) return;
-    const res = await fetch(`/api/auth/users/${id}`, { method: "DELETE" });
+    const res = await offlineFetch(`/api/auth/users/${id}`, { method: "DELETE" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       toast.error(data.error ?? "Nutzer konnte nicht gelöscht werden.");

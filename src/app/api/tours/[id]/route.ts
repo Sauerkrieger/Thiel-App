@@ -3,6 +3,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
 import { orsGeocodeSearch } from "@/lib/ors";
 import { WAREHOUSE_NAME, WAREHOUSE_ADDRESS } from "@/lib/warehouse";
 import type { TourStatus } from "@/types/database";
@@ -153,9 +156,27 @@ export async function PATCH(request: Request, { params }: Context) {
     }
 
     const supabase = getSupabaseAdmin();
+    const lww = await checkLww(
+      supabase,
+      "active_tours",
+      id,
+      body.client_updated_at,
+    );
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["active_tours"]["Update"] = {
+      status: status as TourStatus,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("active_tours")
-      .update({ status: status as TourStatus })
+      .update(updatePayload)
       .eq("id", id)
       .select()
       .single();

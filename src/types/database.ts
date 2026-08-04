@@ -61,6 +61,10 @@ export interface Database {
           email: string | null;
           created_at: string;
           updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id: string;
@@ -69,6 +73,8 @@ export interface Database {
           email?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -77,6 +83,8 @@ export interface Database {
           email?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [
           {
@@ -115,6 +123,10 @@ export interface Database {
           remark: string | null;
           created_at: string;
           updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -132,6 +144,8 @@ export interface Database {
           remark?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -149,6 +163,8 @@ export interface Database {
           remark?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [];
       };
@@ -166,6 +182,11 @@ export interface Database {
           /** true = Standard-Item, im Pack-/Tour-Modus fest angehakt & ausgegraut. */
           is_always_required: boolean;
           created_at: string;
+          updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -176,6 +197,9 @@ export interface Database {
           photo_path?: string | null;
           is_always_required?: boolean;
           created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -186,6 +210,9 @@ export interface Database {
           photo_path?: string | null;
           is_always_required?: boolean;
           created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [
           {
@@ -207,6 +234,10 @@ export interface Database {
           note: string | null;
           created_at: string;
           updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -214,6 +245,8 @@ export interface Database {
           note?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -221,6 +254,8 @@ export interface Database {
           note?: string | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [];
       };
@@ -234,6 +269,10 @@ export interface Database {
           total_duration_minutes: number | null;
           created_at: string;
           updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -244,6 +283,8 @@ export interface Database {
           total_duration_minutes?: number | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -254,6 +295,8 @@ export interface Database {
           total_duration_minutes?: number | null;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [];
       };
@@ -268,6 +311,11 @@ export interface Database {
           /** JSON-Liste der wählbaren Items für die nächste Belieferung. */
           next_delivery_items: Json;
           created_at: string;
+          updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -278,6 +326,9 @@ export interface Database {
           is_delivered?: boolean;
           next_delivery_items?: Json;
           created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -288,6 +339,9 @@ export interface Database {
           is_delivered?: boolean;
           next_delivery_items?: Json;
           created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [];
       };
@@ -387,6 +441,10 @@ export interface Database {
           selection_order: number;
           created_at: string;
           updated_at: string;
+          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
+          client_updated_at: string | null;
+          /** Serverzeit des letzten Syncs. */
+          synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -396,6 +454,8 @@ export interface Database {
           selection_order?: number;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -405,6 +465,8 @@ export interface Database {
           selection_order?: number;
           created_at?: string;
           updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
         };
         Relationships: [
           {

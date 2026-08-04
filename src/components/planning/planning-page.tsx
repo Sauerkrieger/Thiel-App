@@ -33,6 +33,7 @@ import {
   formatMinutes,
   toMinutes,
 } from "@/lib/routing/time";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { DayOfWeek } from "@/types/database";
 import type {
   ApiError,
@@ -96,7 +97,7 @@ export function PlanningPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/planning?day_of_week=${dayOfWeek}`, {
+      const res = await offlineFetch(`/api/planning?day_of_week=${dayOfWeek}`, {
         cache: "no-store",
       });
       const body = await res.json();
@@ -137,7 +138,7 @@ export function PlanningPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      const res = await fetch("/api/planning", {
+      const res = await offlineFetch("/api/planning", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -164,7 +165,7 @@ export function PlanningPage() {
     if (selected.size === 0) return;
     setOptimizing(true);
     try {
-      const res = await fetch("/api/planning/optimize", {
+      const res = await offlineFetch("/api/planning/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -209,7 +210,7 @@ export function PlanningPage() {
       // verschieben, damit das Auslieferungsfenster dem echten Start entspricht.
       const delta = toMinutes(actualStart) - toMinutes(route.departure_time);
 
-      const res = await fetch("/api/tours", {
+      const res = await offlineFetch("/api/tours", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

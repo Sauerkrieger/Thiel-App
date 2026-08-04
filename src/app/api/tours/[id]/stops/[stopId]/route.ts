@@ -3,6 +3,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
 import type { DeliveryItem } from "@/types/api";
 
 export const dynamic = "force-dynamic";
@@ -80,9 +83,24 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     }
 
+    const lww = await checkLww(supabase, "tour_stops", stopId, body.client_updated_at, [
+      ["tour_id", id],
+    ]);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["tour_stops"]["Update"] = {
+      ...update,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("tour_stops")
-      .update(update)
+      .update(updatePayload)
       .eq("id", stopId)
       .eq("tour_id", id)
       .select()

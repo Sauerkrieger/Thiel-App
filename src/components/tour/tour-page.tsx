@@ -24,6 +24,7 @@ import { ObjectRemark } from "@/components/objects/object-remark";
 import { cleanAddressLabel } from "@/lib/address";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
@@ -49,7 +50,7 @@ export function TourPage({ tourId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/tours/${tourId}`, { cache: "no-store" });
+      const res = await offlineFetch(`/api/tours/${tourId}`, { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
         setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
@@ -90,7 +91,7 @@ export function TourPage({ tourId }: Props) {
     if (!tour) return;
     setFinishing(true);
     try {
-      const res = await fetch(`/api/tours/${tour.id}`, {
+      const res = await offlineFetch(`/api/tours/${tour.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "completed" }),

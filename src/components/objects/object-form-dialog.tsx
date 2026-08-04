@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { itemPhotoUrl } from "@/lib/storage";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ObjectCategory } from "@/types/database";
 import type { ObjectWithItems } from "@/types/api";
 
@@ -267,7 +268,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
         items: payloadItems,
       };
 
-      const res = await fetch(
+      const res = await offlineFetch(
         isEdit ? `/api/objects/${object!.id}` : "/api/objects",
         {
           method: isEdit ? "PUT" : "POST",

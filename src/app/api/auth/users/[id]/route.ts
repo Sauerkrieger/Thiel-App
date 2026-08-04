@@ -6,7 +6,9 @@ import {
   isUserRole,
 } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { UserRole } from "@/types/database";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database, UserRole } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -59,9 +61,23 @@ export async function PATCH(
     if (name) update.name = name;
     if (role) update.role = role;
 
+    // Last-Write-Wins auf dem Profil (Offline-Sync-Schutz)
+    const lww = await checkLww(admin, "profiles", id, body.client_updated_at);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["profiles"]["Update"] = {
+      ...update,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await admin
       .from("profiles")
-      .update(update)
+      .update(updatePayload)
       .eq("id", id)
       .select("id, name, role, email, created_at")
       .single();

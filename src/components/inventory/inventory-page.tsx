@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SetupHint } from "@/components/setup-hint";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError } from "@/types/api";
 import type { InventoryItem } from "@/types/database";
 
@@ -60,7 +61,7 @@ export function InventoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/inventory", { cache: "no-store" });
+      const res = await offlineFetch("/api/inventory", { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
         setError({
@@ -102,7 +103,7 @@ export function InventoryPage() {
     if (!newName.trim()) return;
     setAdding(true);
     try {
-      const res = await fetch("/api/inventory", {
+      const res = await offlineFetch("/api/inventory", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -129,7 +130,7 @@ export function InventoryPage() {
   /** Ein Feld eines Items aktualisieren (Inline-Edit per onBlur). */
   async function handleUpdate(item: InventoryItem, patch: Partial<InventoryItem>) {
     try {
-      const res = await fetch(`/api/inventory/${item.id}`, {
+      const res = await offlineFetch(`/api/inventory/${item.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -151,7 +152,7 @@ export function InventoryPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/inventory/${deleteTarget.id}`, {
+      const res = await offlineFetch(`/api/inventory/${deleteTarget.id}`, {
         method: "DELETE",
       });
       const body = await res.json().catch(() => ({}));

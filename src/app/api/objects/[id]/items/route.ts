@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseItemInput } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -52,15 +54,24 @@ export async function POST(request: Request, { params }: Context) {
     }
 
     const supabase = getSupabaseAdmin();
+    const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
+    const insertPayload: Database["public"]["Tables"]["object_items"]["Insert"] = {
+      object_id: id,
+      item_name: item.item_name,
+      quantity: item.quantity,
+      note: item.note,
+      photo_path: item.photo_path,
+    };
+    if (clientUpdatedAt) {
+      insertPayload.created_at = clientUpdatedAt;
+      insertPayload.updated_at = clientUpdatedAt;
+      insertPayload.client_updated_at = clientUpdatedAt;
+    }
+    insertPayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("object_items")
-      .insert({
-        object_id: id,
-        item_name: item.item_name,
-        quantity: item.quantity,
-        note: item.note,
-        photo_path: item.photo_path,
-      })
+      .insert(insertPayload)
       .select()
       .single();
 

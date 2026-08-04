@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, isAdmin, usernameToEmail, emailToUsername, isUserRole } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { Profile } from "@/types/database";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database, Profile } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -94,10 +95,17 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     // Profil direkt pflegen (Trigger setzt name/role aus metadata).
-    await admin
-      .from("profiles")
-      .update({ name, role, email })
-      .eq("id", created.user.id);
+    const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
+    const profilePayload: Database["public"]["Tables"]["profiles"]["Update"] = {
+      name,
+      role,
+      email,
+    };
+    if (clientUpdatedAt) {
+      profilePayload.client_updated_at = clientUpdatedAt;
+    }
+    profilePayload.synced_at = new Date().toISOString();
+    await admin.from("profiles").update(profilePayload).eq("id", created.user.id);
 
     return NextResponse.json(
       {

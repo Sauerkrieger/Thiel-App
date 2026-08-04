@@ -43,6 +43,7 @@ import { ItemsDialog } from "./items-dialog";
 import { ObjectRemark } from "./object-remark";
 import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 
 /** Sortierbare Spalten der Objektliste (Klick auf Spaltenkopf). */
@@ -77,7 +78,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/objects", { cache: "no-store" });
+      const res = await offlineFetch("/api/objects", { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
         setError({
@@ -145,7 +146,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/objects/${deleteTarget.id}`, {
+      const res = await offlineFetch(`/api/objects/${deleteTarget.id}`, {
         method: "DELETE",
       });
       const body = await res.json().catch(() => ({}));

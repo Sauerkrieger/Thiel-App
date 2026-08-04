@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatItemLabel } from "@/lib/items";
 import { itemPhotoUrl } from "@/lib/storage";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ObjectItem } from "@/types/database";
 import type { ObjectWithItems } from "@/types/api";
 
@@ -41,7 +42,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
     if (!object) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/objects/${object.id}/items`, {
+      const res = await offlineFetch(`/api/objects/${object.id}/items`, {
         cache: "no-store",
       });
       const body = await res.json();
@@ -71,7 +72,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
     if (!object || !newName.trim()) return;
     setAdding(true);
     try {
-      const res = await fetch(`/api/objects/${object.id}/items`, {
+      const res = await offlineFetch(`/api/objects/${object.id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -101,7 +102,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
   async function handleUpdate(item: ObjectItem, patch: Partial<ObjectItem>) {
     if (!object) return;
     try {
-      const res = await fetch(
+      const res = await offlineFetch(
         `/api/objects/${object.id}/items/${item.id}`,
         {
           method: "PUT",
@@ -159,7 +160,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
   async function handleDelete(item: ObjectItem) {
     if (!object) return;
     try {
-      const res = await fetch(
+      const res = await offlineFetch(
         `/api/objects/${object.id}/items/${item.id}`,
         { method: "DELETE" },
       );

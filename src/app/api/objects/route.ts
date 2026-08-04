@@ -10,6 +10,8 @@ import { parseItemInputs } from "@/lib/items";
 import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { cleanAddressLabel } from "@/lib/address";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -98,25 +100,35 @@ export async function POST(request: Request) {
         : null;
 
     const supabase = getSupabaseAdmin();
+    // Offline-Sync: client_updated_at übernehmen (echter Bearbeitungszeitpunkt)
+    const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
+    const insertPayload: Database["public"]["Tables"]["objects"]["Insert"] = {
+      name,
+      address,
+      latitude,
+      longitude,
+      category: isObjectCategory(body.category) ? body.category : "objekt",
+      is_pedestrian_zone_until_11: isPedestrianZone,
+      key_number: parseKeyNumber(body.key_number),
+      opens_at:
+        typeof body.opens_at === "string" && body.opens_at
+          ? body.opens_at
+          : null,
+      customer: text(body.customer, 200),
+      customer_number: text(body.customer_number, 100),
+      cleaning_interval: text(body.cleaning_interval, 100),
+      remark: text(body.remark, 500),
+    };
+    if (clientUpdatedAt) {
+      insertPayload.created_at = clientUpdatedAt;
+      insertPayload.updated_at = clientUpdatedAt;
+      insertPayload.client_updated_at = clientUpdatedAt;
+    }
+    insertPayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("objects")
-      .insert({
-        name,
-        address,
-        latitude,
-        longitude,
-        category: isObjectCategory(body.category) ? body.category : "objekt",
-        is_pedestrian_zone_until_11: isPedestrianZone,
-        key_number: parseKeyNumber(body.key_number),
-        opens_at:
-          typeof body.opens_at === "string" && body.opens_at
-            ? body.opens_at
-            : null,
-        customer: text(body.customer, 200),
-        customer_number: text(body.customer_number, 100),
-        cleaning_interval: text(body.cleaning_interval, 100),
-        remark: text(body.remark, 500),
-      })
+      .insert(insertPayload)
       .select()
       .single();
 

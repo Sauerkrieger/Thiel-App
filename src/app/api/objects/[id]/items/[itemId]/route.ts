@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
 import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string; itemId: string }> };
@@ -60,9 +62,24 @@ export async function PUT(request: Request, { params }: Context) {
     }
 
     const supabase = getSupabaseAdmin();
+    const lww = await checkLww(supabase, "object_items", itemId, body.client_updated_at, [
+      ["object_id", id],
+    ]);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["object_items"]["Update"] = {
+      ...update,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("object_items")
-      .update(update)
+      .update(updatePayload)
       .eq("id", itemId)
       .eq("object_id", id)
       .select()

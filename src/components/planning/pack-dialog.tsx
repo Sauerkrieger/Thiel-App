@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo } from "@/types/api";
 
@@ -141,7 +142,7 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
     if (!objectId) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/objects/${objectId}/pack-info`, {
+      const res = await offlineFetch(`/api/objects/${objectId}/pack-info`, {
         cache: "no-store",
       });
       const body = await res.json();

@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
 import { NavigateButton } from "./navigate-button";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo, TourStopWithObject } from "@/types/api";
 
@@ -90,7 +91,7 @@ export function DeliveryDialog({
     if (!stop?.object?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/objects/${stop.object.id}/pack-info`, {
+      const res = await offlineFetch(`/api/objects/${stop.object.id}/pack-info`, {
         cache: "no-store",
       });
       const body = await res.json();
@@ -138,7 +139,7 @@ export function DeliveryDialog({
     if (!stop) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/tours/${tourId}/stops/${stop.id}`, {
+      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -165,7 +166,7 @@ export function DeliveryDialog({
     if (!stop) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/tours/${tourId}/stops/${stop.id}`, {
+      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_delivered: false }),

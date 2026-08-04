@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SetupHint } from "@/components/setup-hint";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError, TourHistoryItem, UserListItem } from "@/types/api";
 
 const STATUS_LABELS: Record<TourHistoryItem["status"], string> = {
@@ -56,7 +57,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       if (isAdmin && filterUserId && filterUserId !== "all") {
         params.set("user_id", filterUserId);
       }
-      const res = await fetch(`/api/tours?${params.toString()}`, {
+      const res = await offlineFetch(`/api/tours?${params.toString()}`, {
         cache: "no-store",
       });
       const body = await res.json();
@@ -79,7 +80,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
   // Für Admins: Liste aller Nutzer laden (Filter „pro Person").
   useEffect(() => {
     if (!isAdmin) return;
-    fetch("/api/auth/users", { cache: "no-store" })
+    offlineFetch("/api/auth/users", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { users: [] }))
       .then((body) => setUsers(body.users ?? []))
       .catch(() => setUsers([]));
@@ -89,7 +90,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/tours/${deleteTarget.id}`, {
+      const res = await offlineFetch(`/api/tours/${deleteTarget.id}`, {
         method: "DELETE",
       });
       const body = await res.json().catch(() => ({}));

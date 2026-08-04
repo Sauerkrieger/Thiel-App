@@ -31,7 +31,9 @@ export default async function RootLayout({
   return (
     <html lang="de" suppressHydrationWarning>
       <body className="min-h-dvh font-sans">
-        <AppShell userRole={user?.role ?? null}>{children}</AppShell>
+        <AppShell userRole={user?.role ?? null} userId={user?.id ?? null}>
+          {children}
+        </AppShell>
         <Toaster />
       </body>
     </html>

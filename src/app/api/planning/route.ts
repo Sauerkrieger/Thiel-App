@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isPlanner } from "@/lib/auth";
-import type { DayOfWeek } from "@/types/database";
+import { parseClientUpdatedAt } from "@/lib/lww";
+import type { Database, DayOfWeek } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +118,54 @@ export async function PUT(request: Request) {
     const uniqueIds = [...new Set(objectIds as string[])];
 
     const supabase = getSupabaseAdmin();
+    // Last-Write-Wins pro Wochentag: Der eingehende client_updated_at wird
+    // gegen das Maximum der bestehenden Zeilen des Nutzers verglichen.
+    const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
+    if (clientUpdatedAt) {
+      const { data: existingRows } = await supabase
+        .from("weekly_default_routes")
+        .select("client_updated_at")
+        .eq("user_id", auth.user.id)
+        .eq("day_of_week", day as DayOfWeek);
+      if (existingRows) {
+        const maxExistingMs = existingRows.reduce(
+          (max, row) =>
+            row.client_updated_at
+              ? Math.max(max, Date.parse(row.client_updated_at))
+              : max,
+          0,
+        );
+        if (Date.parse(clientUpdatedAt) <= maxExistingMs) {
+          // Konflikt: aktuellen Server-Zustand (Auswahl des Tages) zurückmelden
+          const { data: current } = await supabase
+            .from("weekly_default_routes")
+            .select("object_id, selection_order, client_updated_at")
+            .eq("user_id", auth.user.id)
+            .eq("day_of_week", day as DayOfWeek)
+            .order("selection_order");
+          const currentUpdatedAt = (current ?? [])
+            .map((row) => row.client_updated_at)
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => new Date(value).getTime());
+          return NextResponse.json(
+            {
+              error: "Die Auswahl wurde auf einem anderen Gerät neuer bearbeitet.",
+              code: "CONFLICT",
+              serverRecord: {
+                day_of_week: day,
+                selected_ids: (current ?? []).map((row) => row.object_id),
+                defaults_updated_at:
+                  currentUpdatedAt.length > 0
+                    ? new Date(Math.max(...currentUpdatedAt)).toISOString()
+                    : null,
+              },
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
     const { error } = await supabase.rpc("save_weekly_defaults", {
       p_user_id: auth.user.id,
       p_day_of_week: day,
@@ -124,6 +173,23 @@ export async function PUT(request: Request) {
     });
 
     if (error) throw error;
+
+    // Zeitstempel der neu erzeugten Zeilen setzen (RPC legt sie ohne an)
+    const now = new Date().toISOString();
+    const stampPayload: Database["public"]["Tables"]["weekly_default_routes"]["Update"] = {
+      synced_at: now,
+    };
+    if (clientUpdatedAt) {
+      stampPayload.client_updated_at = clientUpdatedAt;
+      stampPayload.updated_at = clientUpdatedAt;
+    }
+    const { error: stampError } = await supabase
+      .from("weekly_default_routes")
+      .update(stampPayload)
+      .eq("user_id", auth.user.id)
+      .eq("day_of_week", day as DayOfWeek);
+    if (stampError) throw stampError;
+
     return NextResponse.json({ saved: true, count: uniqueIds.length });
   } catch (e) {
     return apiErrorResponse(e);

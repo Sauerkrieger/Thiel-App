@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireUser, usernameToEmail, emailToUsername } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +39,14 @@ export async function PATCH(request: Request) {
 
     const admin = getSupabaseAdmin();
 
+    // Last-Write-Wins auf dem eigenen Profil (Offline-Sync-Schutz).
+    // Muss VOR allen Schreiboperationen laufen (auch der auth.users-E-Mail-
+    // Änderung), damit ein Konflikt die Anfrage atomar ablehnt.
+    const lww = await checkLww(admin, "profiles", user.id, body.client_updated_at);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
     let newEmail = user.email;
     if (username) {
       newEmail = usernameToEmail(username);
@@ -70,9 +81,17 @@ export async function PATCH(request: Request) {
     if (name) update.name = name;
     if (newEmail) update.email = newEmail;
 
+    const updatePayload: Database["public"]["Tables"]["profiles"]["Update"] = {
+      ...update,
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data: profile, error } = await admin
       .from("profiles")
-      .update(update)
+      .update(updatePayload)
       .eq("id", user.id)
       .select("id, name, role, email")
       .single();

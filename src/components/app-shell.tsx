@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Settings } from "lucide-react";
+import { Building2, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { initSync, useSyncState } from "@/lib/offline/sync";
 import type { UserRole } from "@/types/database";
 
 type NavItem = {
@@ -37,11 +39,19 @@ const NAV_ITEMS: NavItem[] = [
 export function AppShell({
   children,
   userRole,
+  userId,
 }: {
   children: React.ReactNode;
   userRole: UserRole | null;
+  userId: string | null;
 }) {
   const pathname = usePathname();
+  const sync = useSyncState();
+
+  // Sync-Engine initialisieren (Offline-Erkennung, Zeit-Offset, Reconnect-Sync)
+  useEffect(() => {
+    if (userId) initSync(userId);
+  }, [userId]);
 
   // Login-Seite: ohne App-Shell (Header/Footer) rendern.
   if (pathname === "/login") {
@@ -94,6 +104,7 @@ export function AppShell({
               );
             })}
           </nav>
+          <SyncBadge sync={sync} />
         </div>
       </header>
       <main className="flex-1">{children}</main>
@@ -101,5 +112,76 @@ export function AppShell({
         Thiel Dienstleistungen · Liefer- &amp; Tourenplanung
       </footer>
     </div>
+  );
+}
+
+/**
+ * Kleiner Sync-/Offline-Indikator im Header. Unsichtbar, wenn alles
+ * synchronisiert ist – sonst: Offline, laufender Sync, ausstehende
+ * Änderungen oder ein Fehler.
+ */
+function SyncBadge({ sync }: { sync: ReturnType<typeof useSyncState> }) {
+  if (
+    sync.online &&
+    !sync.syncing &&
+    sync.pendingCount === 0 &&
+    !sync.lastError
+  ) {
+    return null;
+  }
+
+  const lastSync = sync.lastSyncAt
+    ? ` · Letzter Sync: ${new Date(sync.lastSyncAt).toLocaleTimeString("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })} Uhr`
+    : "";
+
+  if (!sync.online) {
+    return (
+      <span
+        title={`Offline – Änderungen werden lokal gespeichert.${lastSync}`}
+        className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+      >
+        <CloudOff className="h-3.5 w-3.5" />
+        Offline
+      </span>
+    );
+  }
+
+  if (sync.syncing) {
+    return (
+      <span
+        title={`Synchronisation läuft.${lastSync}`}
+        className="ml-1 flex shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground"
+      >
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+        Synchronisiert…
+      </span>
+    );
+  }
+
+  if (sync.pendingCount > 0) {
+    return (
+      <button
+        type="button"
+        title={`${sync.pendingCount} Änderung${sync.pendingCount === 1 ? "" : "en"} warten auf Synchronisation – klicken zum Synchronisieren.${lastSync}`}
+        onClick={() => void import("@/lib/offline/sync").then((m) => m.syncNow())}
+        className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+        {sync.pendingCount} offline
+      </button>
+    );
+  }
+
+  return (
+    <span
+      title={`${sync.lastError ?? "Sync-Fehler"}${lastSync}`}
+      className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+    >
+      <CloudOff className="h-3.5 w-3.5" />
+      Sync-Fehler
+    </span>
   );
 }

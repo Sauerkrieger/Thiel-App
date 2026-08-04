@@ -10,6 +10,9 @@ import { parseItemInputs } from "@/lib/items";
 import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { cleanAddressLabel } from "@/lib/address";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -109,25 +112,37 @@ export async function PUT(request: Request, { params }: Context) {
         : null;
 
     const supabase = getSupabaseAdmin();
+    // Last-Write-Wins: älteres client_updated_at → Konflikt (409 + Server-Zustand)
+    const lww = await checkLww(supabase, "objects", id, body.client_updated_at);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["objects"]["Update"] = {
+      name,
+      address,
+      latitude,
+      longitude,
+      category: isObjectCategory(body.category) ? body.category : "objekt",
+      is_pedestrian_zone_until_11: isPedestrianZone,
+      key_number: parseKeyNumber(body.key_number),
+      opens_at:
+        typeof body.opens_at === "string" && body.opens_at
+          ? body.opens_at
+          : null,
+      customer: text(body.customer, 200),
+      customer_number: text(body.customer_number, 100),
+      cleaning_interval: text(body.cleaning_interval, 100),
+      remark: text(body.remark, 500),
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
     const { data, error } = await supabase
       .from("objects")
-      .update({
-        name,
-        address,
-        latitude,
-        longitude,
-        category: isObjectCategory(body.category) ? body.category : "objekt",
-        is_pedestrian_zone_until_11: isPedestrianZone,
-        key_number: parseKeyNumber(body.key_number),
-        opens_at:
-          typeof body.opens_at === "string" && body.opens_at
-            ? body.opens_at
-            : null,
-        customer: text(body.customer, 200),
-        customer_number: text(body.customer_number, 100),
-        cleaning_interval: text(body.cleaning_interval, 100),
-        remark: text(body.remark, 500),
-      })
+      .update(updatePayload)
       .eq("id", id)
       .select()
       .single();
