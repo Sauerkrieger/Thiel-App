@@ -98,6 +98,7 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "stop_order",
     "arrival_time",
     "is_delivered",
+    "key_number",
     "next_delivery_items",
   ],
 };
@@ -176,6 +177,7 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     stop_order: { t: "number", min: 0, max: 100000, int: true },
     arrival_time: { t: "hhmm" },
     is_delivered: { t: "bool" },
+    key_number: { t: "number", min: 1, max: 100000, int: true },
     next_delivery_items: { t: "json" },
   },
 };

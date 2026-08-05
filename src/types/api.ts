@@ -132,6 +132,7 @@ export type TourStopWithObject = {
   stop_order: number;
   arrival_time: string | null;
   is_delivered: boolean;
+  key_number: number | null;
   next_delivery_items: DeliveryItem[];
   object: {
     id: string;
@@ -349,6 +350,8 @@ export type TourHistoryItem = {
   delivered_count: number;
   /** Gesamtzahl der Stopps. */
   total_stops: number;
+  /** Schlüsselnummern, die für diese Tour eingeplant waren. */
+  key_numbers: number[];
 };
 
 /** Antwort von GET /api/tours (Historie). */

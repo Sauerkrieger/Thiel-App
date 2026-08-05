@@ -253,6 +253,7 @@ async function cacheResponse(
         start_time: tour.start_time,
         driver_name: tour.driver_name,
         created_at: tour.created_at,
+        key_numbers: tour.key_numbers,
       };
     });
     await cacheRows("active_tours", rows);
@@ -341,8 +342,13 @@ async function readOffline(req: OfflineRead): Promise<Response> {
       (row) => row.object_id === id,
     );
     // Letzte Vormerkung für dieses Objekt aus den gecachten Tour-Stopps
+    const excludedTour = req.query.get("exclude_tour");
     const stops = (await cacheRowsOf("tour_stops"))
-      .filter((row) => row.object_id === id)
+      .filter(
+        (row) =>
+          row.object_id === id &&
+          (!excludedTour || row.tour_id !== excludedTour),
+      )
       .sort((a, b) =>
         String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
       );
@@ -425,6 +431,11 @@ async function readOffline(req: OfflineRead): Promise<Response> {
           .map((s) => objectName.get(s.object_id as string))
           .filter((n): n is string => typeof n === "string"),
         delivered_count: delivered.length,
+        key_numbers: [...new Set(
+          tourStops
+            .map((s) => s.key_number)
+            .filter((key): key is number => typeof key === "number"),
+        )].sort((a, b) => a - b),
         total_stops: tourStops.length,
       };
     });
@@ -449,6 +460,7 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         stop_order: stop.stop_order,
         arrival_time: stop.arrival_time,
         is_delivered: stop.is_delivered === true,
+        key_number: typeof stop.key_number === "number" ? stop.key_number : null,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
         object: {
           id: stop.object_id,
@@ -562,6 +574,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
         stop_order: index,
         arrival_time: typeof raw.arrival_time === "string" ? raw.arrival_time : null,
         is_delivered: false,
+        key_number: typeof raw.key_number === "number" ? raw.key_number : null,
         next_delivery_items: null,
       });
     }

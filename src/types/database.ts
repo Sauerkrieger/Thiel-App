@@ -308,6 +308,8 @@ export interface Database {
           stop_order: number;
           arrival_time: string | null;
           is_delivered: boolean;
+          /** Schlüsselnummer, die beim Start der Tour für diesen Stopp eingeplant war. */
+          key_number: number | null;
           /** JSON-Liste der wählbaren Items für die nächste Belieferung. */
           next_delivery_items: Json;
           created_at: string;
@@ -324,6 +326,7 @@ export interface Database {
           stop_order: number;
           arrival_time?: string | null;
           is_delivered?: boolean;
+          key_number?: number | null;
           next_delivery_items?: Json;
           created_at?: string;
           updated_at?: string;
@@ -337,6 +340,7 @@ export interface Database {
           stop_order?: number;
           arrival_time?: string | null;
           is_delivered?: boolean;
+          key_number?: number | null;
           next_delivery_items?: Json;
           created_at?: string;
           updated_at?: string;

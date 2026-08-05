@@ -385,7 +385,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               id="obj-remark"
               value={remark}
               onChange={(e) => setRemark(e.target.value)}
-              placeholder="z. B. Zugang über den Hof, Klingel 2. OG"
+              placeholder="Bemerkung (optional)"
               rows={2}
               className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
@@ -513,7 +513,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                       className="flex-1"
                       value={item.note}
                       onChange={(e) => updateItem(index, { note: e.target.value })}
-                      placeholder="Bemerkung (optional, z. B. rot, gelb - kein blau)"
+                      placeholder="Bemerkung (optional)"
                       aria-label={`Bemerkung für Zeile ${index + 1}`}
                     />
                     <input

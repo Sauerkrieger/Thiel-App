@@ -226,6 +226,7 @@ export function PlanningPage() {
           status: "in_transit",
           stops: route.stops.map((stop) => ({
             object_id: stop.object_id,
+            key_number: stop.key_number ?? null,
             arrival_time: formatMinutes(toMinutes(stop.arrival) + delta),
           })),
         }),

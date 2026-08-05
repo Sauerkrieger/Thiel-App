@@ -58,8 +58,8 @@ type Props = {
  */
 function ItemsTable({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Table>
+    <div className="min-w-0 overflow-hidden rounded-md border">
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow className="hover:bg-muted/40">
             <TableHead className="px-3">Item (Bemerkung)</TableHead>
@@ -91,9 +91,10 @@ export function DeliveryDialog({
     if (!stop?.object?.id) return;
     setLoading(true);
     try {
-      const res = await offlineFetch(`/api/objects/${stop.object.id}/pack-info`, {
-        cache: "no-store",
-      });
+      const res = await offlineFetch(
+        `/api/objects/${stop.object.id}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`,
+        { cache: "no-store" },
+      );
       const body = await res.json();
       if (!res.ok) {
         toast.error(body.error ?? "Items konnten nicht geladen werden.");
@@ -113,7 +114,7 @@ export function DeliveryDialog({
     } finally {
       setLoading(false);
     }
-  }, [stop]);
+  }, [stop, tourId]);
 
   useEffect(() => {
     if (open && stop) void load();
@@ -194,11 +195,11 @@ export function DeliveryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-[calc(100%-1rem)] max-w-md p-4 sm:w-full sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex min-w-0 items-center gap-2 pr-10">
             <ListChecks className="h-5 w-5 shrink-0 text-primary" />
-            <span className="min-w-0 flex-1 truncate">
+            <span className="min-w-0 flex-1 break-words">
               Belieferung – {stop?.object?.name ?? "Unbekanntes Objekt"}
             </span>
             <NavigateButton
@@ -208,9 +209,8 @@ export function DeliveryDialog({
             />
           </DialogTitle>
           <DialogDescription>
-            Standard-Items sind fest vorgesehen. Wähle aus, welche variablen
-            Items bei der <strong>nächsten</strong> Belieferung mitgebracht
-            werden müssen – optional mit Bemerkung.
+            Wähle aus, welche Items bei der nächsten Belieferung mitgebracht
+            werden müssen.
           </DialogDescription>
           {stop?.object?.remark && (
             <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
@@ -239,7 +239,7 @@ export function DeliveryDialog({
                       key={item.id}
                       className="bg-muted/40 hover:bg-muted/40"
                     >
-                      <TableCell className="px-3 py-2">
+                      <TableCell className="min-w-0 px-3 py-2">
                         <span className="flex items-center gap-2">
                           <Checkbox
                             checked
@@ -290,6 +290,9 @@ export function DeliveryDialog({
                     const extra = extras.find(
                       (e) => e.item_name === item.item_name,
                     );
+                    const previous = previousExtras.find(
+                      (e) => e.item_name === item.item_name,
+                    );
                     const checked = Boolean(extra);
                     return (
                       <Fragment key={item.id}>
@@ -300,7 +303,7 @@ export function DeliveryDialog({
                               : "hover:bg-accent/40"
                           }
                         >
-                          <TableCell className="px-3 py-2">
+                          <TableCell className="min-w-0 px-3 py-2">
                             <span className="flex items-center gap-2">
                               {/* Label: Klick auf Checkbox ODER Item-Namen schaltet um */}
                               <label className="flex cursor-pointer items-center gap-2">
@@ -327,6 +330,9 @@ export function DeliveryDialog({
                                   <Image className="h-4 w-4" />
                                 </Button>
                               )}
+                              {previous && (
+                                <Badge variant="secondary">Heute gefordert</Badge>
+                              )}
                               {checked && (
                                 <Badge variant="success">vorgemerkt</Badge>
                               )}
@@ -334,6 +340,11 @@ export function DeliveryDialog({
                             {item.note && (
                               <span className="block text-xs text-muted-foreground">
                                 {item.note}
+                              </span>
+                            )}
+                            {previous?.note && (
+                              <span className="block text-xs font-medium text-primary">
+                                Info: {previous.note}
                               </span>
                             )}
                           </TableCell>
@@ -349,7 +360,7 @@ export function DeliveryDialog({
                                 onChange={(e) =>
                                   setExtraNote(item.item_name, e.target.value)
                                 }
-                                placeholder="Optionale Bemerkung (nur für die nächste Tour)…"
+                                placeholder="Bemerkung (optional)"
                                 className="h-8 text-sm"
                               />
                             </TableCell>

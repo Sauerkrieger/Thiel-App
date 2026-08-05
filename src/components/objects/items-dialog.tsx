@@ -352,7 +352,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
             <Input
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}
-              placeholder="Bemerkung (optional, z. B. rot, gelb - kein blau)"
+              placeholder="Bemerkung (optional)"
               aria-label="Bemerkung neues Item"
             />
             <Button

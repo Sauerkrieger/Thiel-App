@@ -250,7 +250,7 @@ export function InventoryPage() {
                 <Input
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Anmerkung (optional, z. B. grün, blau, gelb, rot)"
+                  placeholder="Bemerkung (optional)"
                   aria-label="Anmerkung des neuen Items"
                 />
                 <Button

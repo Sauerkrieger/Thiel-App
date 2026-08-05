@@ -8,6 +8,7 @@ import {
   Clock,
   History,
   Trash2,
+  KeyRound,
   Truck,
   User as UserIcon,
 } from "lucide-react";
@@ -248,6 +249,12 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       Noch keine Objekte beliefert.
+                    </p>
+                  )}
+                  {(tour.key_numbers ?? []).length > 0 && (
+                    <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <KeyRound className="h-3.5 w-3.5 text-primary" />
+                      Schlüssel mitgenommen: {(tour.key_numbers ?? []).map((key) => `Nr. ${key}`).join(", ")}
                     </p>
                   )}
                 </div>

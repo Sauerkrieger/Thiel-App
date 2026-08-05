@@ -20,6 +20,7 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 type StopInput = {
   object_id?: unknown;
   arrival_time?: unknown;
+  key_number?: unknown;
   next_delivery_items?: unknown;
 };
 
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
     const tourIds = tours.map((t) => t.id);
     const { data: stops, error: stopsError } = await getSupabaseAdmin()
       .from("tour_stops")
-      .select("tour_id, object_id, is_delivered")
+      .select("tour_id, object_id, is_delivered, key_number")
       .in("tour_id", tourIds)
       .order("stop_order");
     if (stopsError) throw stopsError;
@@ -118,6 +119,11 @@ export async function GET(request: Request) {
         delivered_objects: delivered
           .map((s) => nameByObjectId.get(s.object_id))
           .filter((n): n is string => typeof n === "string"),
+        key_numbers: [...new Set(
+          tourStops
+            .map((s) => s.key_number)
+            .filter((key): key is number => typeof key === "number"),
+        )].sort((a, b) => a - b),
         delivered_count: delivered.length,
         total_stops: tourStops.length,
       };
@@ -166,6 +172,18 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    const objectIds = stops
+      .map((stop) => (typeof stop.object_id === "string" ? stop.object_id : ""))
+      .filter((id): id is string => id.length > 0);
+    const { data: keyRows, error: keyRowsError } = await getSupabaseAdmin()
+      .from("objects")
+      .select("id, key_number")
+      .in("id", objectIds);
+    if (keyRowsError) throw keyRowsError;
+    const keyByObjectId = new Map(
+      (keyRows ?? []).map((row) => [row.id, row.key_number]),
+    );
+
     const stopInputs = stops
       .map((stop, index) => ({
         object_id: typeof stop.object_id === "string" ? stop.object_id : "",
@@ -174,6 +192,10 @@ export async function POST(request: Request) {
             ? stop.arrival_time
             : null,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
+        key_number:
+          typeof stop.object_id === "string"
+            ? keyByObjectId.get(stop.object_id) ?? null
+            : null,
         stop_order: index,
       }))
       .filter((stop) => stop.object_id.length > 0);
@@ -217,6 +239,7 @@ export async function POST(request: Request) {
         stop_order: stop.stop_order,
         arrival_time: stop.arrival_time,
         next_delivery_items: stop.next_delivery_items,
+        key_number: stop.key_number,
       })),
     );
 
