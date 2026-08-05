@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import dynamic from "next/dynamic";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,7 +16,6 @@ import {
 } from "lucide-react";
 import { cleanAddressLabel } from "@/lib/address";
 import { Badge } from "@/components/ui/badge";
-import { RouteMap } from "@/components/map/route-map";
 import {
   formatDuration,
   formatMinutes,
@@ -23,6 +23,18 @@ import {
   toMinutes,
 } from "@/lib/routing/time";
 import type { OptimizedStop, RouteOptimizationResult } from "@/types/api";
+
+// Leaflet (Karte) lädt nur im Browser – sonst crasht das Server-Rendering
+// mit „window is not defined“ (Leaflet greift beim Modul-Laden auf window zu).
+const RouteMap = dynamic(
+  () => import("@/components/map/route-map").then((m) => m.RouteMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-72 animate-pulse rounded-xl border bg-muted/20 sm:h-80" />
+    ),
+  },
+);
 
 type Props = {
   route: RouteOptimizationResult;

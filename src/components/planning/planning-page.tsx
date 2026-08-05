@@ -30,7 +30,9 @@ import { PhotoSelectDialog } from "./photo-select-dialog";
 import { PackView } from "./pack-view";
 import { PackDialog } from "./pack-dialog";
 import {
+  defaultStartTime,
   formatMinutes,
+  prepMinutesForCount,
   toMinutes,
 } from "@/lib/routing/time";
 import { offlineFetch } from "@/lib/offline/fetch";
@@ -170,6 +172,12 @@ export function PlanningPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           object_ids: Array.from(selected),
+          // Startzeit im Browser (Gerätezeit) berechnen: aktuelle Uhrzeit +
+          // Vorbereitungszeit (3 Min/Stopp + 5 Min Schlüssel), auf 5 Min
+          // gerundet. Der Server rechnet sonst in seiner Zeitzone (UTC) –
+          // die Startzeit läge dann z. B. im Sommer ~2 Std. in der
+          // Vergangenheit (siehe Fehlerbericht).
+          start_time: defaultStartTime(prepMinutesForCount(selected.size)),
         }),
       });
       const body = await res.json();

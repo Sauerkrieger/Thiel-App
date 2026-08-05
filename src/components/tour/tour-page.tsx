@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -19,8 +20,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SetupHint } from "@/components/setup-hint";
-import { RouteMap } from "@/components/map/route-map";
 import { ObjectRemark } from "@/components/objects/object-remark";
+
+// Leaflet (Karte) lädt nur im Browser – sonst crasht das Server-Rendering
+// mit „window is not defined“ (Leaflet greift beim Modul-Laden auf window zu).
+const RouteMap = dynamic(
+  () => import("@/components/map/route-map").then((m) => m.RouteMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-72 animate-pulse rounded-xl border bg-muted/20 sm:h-80" />
+    ),
+  },
+);
 import { cleanAddressLabel } from "@/lib/address";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";

@@ -533,6 +533,23 @@ async function resolveMatrix(
 /* ------------------------------------------------------------------ */
 
 /**
+ * Fallback-Fahrzeitmatrix (Sekunden) für Zellen, die TomTom nicht routen
+ * kann (z. B. NO_ROUTE_FOUND): bevorzugt die ORS-Matrix (straßengenau),
+ * sonst die Haversine-Luftlinie. Hält die Live-Verkehrsmatrix vollständig,
+ * damit VROOM keine Lücken bekommt und EINE unerreichbare Koordinate nicht
+ * den kompletten Live-Verkehr ausfallen lässt.
+ */
+async function fallbackDurationsSeconds(
+  coords: Coordinate[],
+): Promise<number[][] | null> {
+  const ors = await matrixWithOrs(coords); // Minuten
+  if (ors) return ors.map((row) => row.map((minutes) => minutes * 60));
+  return haversineMinutes(coords).map((row) =>
+    row.map((minutes) => minutes * 60),
+  );
+}
+
+/**
  * Fragt die TomTom-Live-Verkehrsmatrix asynchron ab und versucht die
  * ORS-Optimization-API einmal MIT der Matrix. Schlägt das fehl, wird
  * automatisch OHNE Matrix wiederholt (Robustheit, falls die gehostete
@@ -554,7 +571,7 @@ async function tryOrsWithTraffic(
   provider: "tomtom" | null;
 }> {
   const traffic = useTraffic
-    ? await fetchTomTomTrafficMatrix(coords)
+    ? await fetchTomTomTrafficMatrix(coords, () => fallbackDurationsSeconds(coords))
     : null;
 
   const withMatrix = await solveWithOrsOptimization(

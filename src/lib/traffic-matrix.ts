@@ -42,6 +42,8 @@ export type TrafficMatrix = {
   /**
    * Fahrzeiten in Sekunden (row-major, N×N) inkl. Live-Verkehr.
    * Index-Reihenfolge = Reihenfolge der übergebenen `locations`.
+   * Zellen, die TomTom nicht routen konnte, werden aus der Fallback-Matrix
+   * aufgefüllt (ORS/Haversine) – Live-Verkehr also „wo verfügbar".
    */
   durations: number[][];
   provider: "tomtom";
@@ -63,16 +65,23 @@ type TomTomResponse = {
  * Baut aus der flachen TomTom-v2-Antwort (data-Array mit originIndex/
  * destinationIndex) die N×N-Dauer-Matrix in Sekunden.
  *
- * Gibt null zurück, wenn eine Zelle keine gültige Fahrzeit hat
- * (z. B. detailedError / NO_ROUTE_FOUND) – damit VROOM keine Lücken bekommt.
+ * Fehlgeschlagene Zellen (z. B. detailedError / NO_ROUTE_FOUND) werden als
+ * NaN markiert und NICHT als Gesamtfehler behandelt – der Aufrufer füllt sie
+ * anschließend aus einer Fallback-Matrix (ORS/Haversine) auf. So kippt eine
+ * einzelne unerreichbare Zelle nicht den kompletten Live-Verkehr.
+ *
+ * Gibt nur dann null zurück, wenn die Antwort strukturell unbrauchbar ist
+ * (kein data-Array).
  */
 export function parseTomTomMatrixResponse(
   json: TomTomResponse,
   count: number,
 ): number[][] | null {
   const cells = json?.data;
-  const failures = json?.statistics?.failures ?? 0;
-  if (!Array.isArray(cells) || failures > 0) {
+  if (!Array.isArray(cells)) {
+    console.warn(
+      "[TomTom] Matrix-Antwort unerwartet (kein data-Array) – verwende Standard-Fahrzeiten.",
+    );
     return null;
   }
 
@@ -80,6 +89,7 @@ export function parseTomTomMatrixResponse(
     new Array<number>(count).fill(Number.NaN),
   );
 
+  let failedCells = 0;
   for (const cell of cells) {
     const { originIndex, destinationIndex, routeSummary, detailedError } = cell;
     const seconds = routeSummary?.travelTimeInSeconds;
@@ -94,32 +104,26 @@ export function parseTomTomMatrixResponse(
       !Number.isFinite(seconds) ||
       seconds < 0
     ) {
-      if (detailedError) {
+      // Nur die ersten Fehler einzeln loggen, Rest zusammenfassen (Log-Spam)
+      if (failedCells < 3) {
         console.warn(
-          `[TomTom] Matrix-Zelle (${originIndex}→${destinationIndex}) fehlgeschlagen: ${detailedError.code ?? "unbekannt"} – verwende Standard-Fahrzeiten.`,
-        );
-      } else {
-        console.warn(
-          "[TomTom] Matrix-Antwort unerwartet (Zelle ohne gültige Fahrzeit) – verwende Standard-Fahrzeiten.",
+          `[TomTom] Matrix-Zelle (${originIndex}→${destinationIndex}) fehlgeschlagen: ${detailedError?.code ?? "unbekannt"} – wird per Fallback gefüllt (falls verfügbar).`,
         );
       }
-      return null;
+      failedCells++;
+      continue; // Zelle bleibt NaN → Fallback im Aufrufer
     }
     matrix[originIndex][destinationIndex] = Math.round(seconds);
   }
-
-  // Vollständigkeit prüfen: keine NaN-Zellen erlauben
-  let incomplete = false;
-  for (const row of matrix) {
-    for (const value of row) {
-      if (!Number.isFinite(value)) incomplete = true;
-    }
-  }
-  if (incomplete) {
+  if (failedCells > 3) {
     console.warn(
-      "[TomTom] Matrix unvollständig (Zellen ohne Wert) – verwende Standard-Fahrzeiten.",
+      `[TomTom] Matrix: ${failedCells} Zelle(n) fehlgeschlagen – werden per Fallback gefüllt (falls verfügbar).`,
     );
-    return null;
+  }
+
+  // Diagonale (i→i) ist immer 0 – auch wenn TomTom keinen travelTime liefert.
+  for (let i = 0; i < count; i++) {
+    if (!Number.isFinite(matrix[i][i])) matrix[i][i] = 0;
   }
 
   return matrix;
@@ -130,9 +134,15 @@ export function parseTomTomMatrixResponse(
  *
  * @param locations Koordinaten in exakt der Reihenfolge, in der sie später
  *   als VROOM-Jobs/Depot verwendet werden (kein Versatz!).
+ * @param fallbackDurations Optionale Funktion, die eine N×N-Fahrzeitmatrix
+ *   in Sekunden (gleiche Reihenfolge) liefert. Zellen, die TomTom nicht
+ *   routen kann (z. B. NO_ROUTE_FOUND), werden daraus aufgefüllt, damit eine
+ *   einzelne unerreichbare Koordinate nicht den kompletten Live-Verkehr
+ *   ausfallen lässt.
  */
 export async function fetchTomTomTrafficMatrix(
   locations: { lat: number; lng: number }[],
+  fallbackDurations?: () => Promise<number[][] | null>,
 ): Promise<TrafficMatrix | null> {
   const apiKey = process.env.TOMTOM_API_KEY;
   if (!apiKey) return null;
@@ -182,9 +192,56 @@ export async function fetchTomTomTrafficMatrix(
       return null;
     }
     const json = (await res.json()) as TomTomResponse;
-    const durations = parseTomTomMatrixResponse(json, locations.length);
-    if (!durations) return null;
-    return { durations, provider: "tomtom" };
+    const matrix = parseTomTomMatrixResponse(json, locations.length);
+    if (!matrix) return null;
+
+    // Fehlende Zellen (NaN) aus der Fallback-Matrix auffüllen, damit EINE
+    // unerreichbare Zelle nicht den kompletten Live-Verkehr kippt.
+    let missing = false;
+    outer: for (const row of matrix) {
+      for (const value of row) {
+        if (!Number.isFinite(value)) {
+          missing = true;
+          break outer;
+        }
+      }
+    }
+    if (missing) {
+      const fallback = fallbackDurations ? await fallbackDurations() : null;
+      const fallbackUsable =
+        fallback &&
+        fallback.length === locations.length &&
+        fallback.every((row) => row.length === locations.length);
+      if (fallbackUsable) {
+        for (let i = 0; i < locations.length; i++) {
+          for (let j = 0; j < locations.length; j++) {
+            if (!Number.isFinite(matrix[i][j])) {
+              const fb = fallback[i]?.[j];
+              if (typeof fb === "number" && Number.isFinite(fb) && fb >= 0) {
+                matrix[i][j] = Math.round(fb);
+              }
+            }
+          }
+        }
+      } else if (missing) {
+        console.warn(
+          "[TomTom] Fallback-Matrix fehlt oder passt nicht zur Anfrage – Zellen bleiben ohne Wert.",
+        );
+      }
+    }
+
+    // Immer noch unvollständig → ohne Live-Verkehr rechnen (Fallback reicht nicht)
+    for (const row of matrix) {
+      for (const value of row) {
+        if (!Number.isFinite(value)) {
+          console.warn(
+            "[TomTom] Matrix unvollständig (Fallback reicht nicht) – verwende Standard-Fahrzeiten.",
+          );
+          return null;
+        }
+      }
+    }
+    return { durations: matrix, provider: "tomtom" };
   } catch (err) {
     console.error("[TomTom] Matrix-Anfrage fehlgeschlagen:", err);
     return null;
