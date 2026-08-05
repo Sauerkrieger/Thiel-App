@@ -711,7 +711,27 @@ async function forwardOnline(
       res = await fetch(url, init);
     }
   } catch {
-    // Netzwerkfehler → einheitliche 503-Antwort (wie offline)
+    // Netzwerkfehler bei „scheinbar online“ (z. B. WLAN verbunden, aber kein
+    // Internet durchkommt – navigator.onLine bleibt dann true): lesbare GETs
+    // aus dem Cache bedienen, idempotente Updates (PUT/PATCH, per id + LWW
+    // sicher wiederholbar) offline einreihen – sonst einheitliche 503.
+    const { query } = stripQuery(url);
+    const params = extractParams(path);
+    if (isReadableGet(path, method)) {
+      return readOffline({ kind: "read", path, method, params, query });
+    }
+    if (
+      isQueueableMutation(path, method) &&
+      (method === "PUT" || method === "PATCH")
+    ) {
+      return queueOffline({
+        kind: "queue",
+        path,
+        method,
+        params,
+        body: parseBody(init),
+      });
+    }
     return jsonResponse(503, { error: "Keine Verbindung zum Server." });
   }
 

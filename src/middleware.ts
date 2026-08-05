@@ -50,6 +50,8 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Alles außer statischen Assets & Next-interne Routen absichern.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // sw.js muss ohne Session erreichbar sein (Service-Worker-Registrierung
+    // passiert auch auf der Login-Seite, siehe public/sw.js).
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

@@ -201,3 +201,32 @@ offene Syncs, letzter Sync).
 | Offline-Objektedit ersetzt Items per Name (Union, kein Entfernen) | Entfernen nur online; umbenannte Items können nach dem Sync doppelt angelegt werden |
 | Offline-Historie: Lieferstatus (`0/x`) nur vollständig, wenn Touren-Detailseiten zuvor geladen wurden | `GET /api/tours` liefert keine Stopps; `tour_stops` werden erst beim Detail-GET gecacht |
 | Planungs-GET cached partielle Objekte (ohne Koordinaten) | Falls nie `GET /api/objects` geladen wurde, fehlen offline Koordinaten (Navigation/Karte degradiert) – Merge schützt vorhandene volle Zeilen |
+
+---
+
+## 6. Schritt 9: Offline-App-Shell (Service Worker)
+
+**Status:** ✅ umgesetzt (2026-08-05)
+
+Zusätzlich zur Daten-Offline-Fähigkeit cached ein Service Worker (`public/sw.js`)
+die **App-Shell**, damit die App auch **ganz ohne Internet frisch geöffnet / neu
+geladen** werden kann (vorher: Chrome-Fehler „Dino“, weil HTML/JS von Vercel
+nachgeladen werden mussten).
+
+| Aspekt | Verhalten |
+|---|---|
+| Registrierung | `app-shell.tsx`, nur im Production-Build, direkt im Effekt (kein `load`-Listener) |
+| Build-Assets `/_next/static/*` | cache-first (gehashte, unveränderliche Dateien) |
+| Seiten & RSC-Payloads | network-first mit Cache-Fallback – online immer aktuell, offline die zuletzt geladene Version (RSC über separaten Cache-Key `?_sw=rsc`) |
+| `/api/*` | wird vom SW **nicht** angefasst – Daten-Offline läuft weiter über `offlineFetch`/IndexedDB |
+| Auth-Cookies | `Set-Cookie`/`Vary` werden aus gecachten Kopien entfernt – ein alter Cookie aus dem Cache überschreibt nie die aktuelle Session |
+| `no-store` | wird bewusst ignoriert (Next.js markiert dynamische Seiten so – genau die wollen wir cachen) |
+| Fallback | Unbesuchte Seiten offline → gecachte Startseite (App bootet, Daten aus IndexedDB) |
+| Middleware | `src/middleware.ts`-Matcher nimmt `sw\.js` aus (Registrierung auch ohne Session auf der Login-Seite) |
+| Cache-Aktualisierung | Nach größeren Deploys `CACHE_NAME` in `public/sw.js` erhöhen (alte Caches werden beim Aktivieren gelöscht) |
+| Netzwerkfehler-Fallback | `offlineFetch`: schlägt ein Request fehl, obwohl `navigator.onLine` true ist (z. B. WLAN ohne Internet), werden lesbare GETs aus dem Cache bedient und idempotente PUT/PATCH eingereiht |
+
+**Einschränkung:** Der erste Besuch einer Seite muss online sein (Service Worker
+braucht einmal Internet); nie besuchte Seiten sind offline nicht verfügbar
+(Fallback: Startseite). Die Karten-Kacheln (externe Tile-Server) laden offline
+nicht – die Karte degradiert, Daten/Navigation funktionieren.

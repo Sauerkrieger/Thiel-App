@@ -53,6 +53,23 @@ export function AppShell({
     if (userId) initSync(userId);
   }, [userId]);
 
+  // Service Worker nur im Production-Build registrieren (im Dev-Modus würde
+  // er Hot-Reload/HMR stören). Er cached die App-Shell, damit die App auch
+  // ganz ohne Internet frisch geöffnet werden kann (siehe public/sw.js).
+  // Direkt im Effekt registrieren – ein window-„load“-Listener kann bei
+  // schnellen Seiten bereits gefeuert haben, bevor der Effekt lief.
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return;
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    const id = window.setTimeout(() => {
+      void navigator.serviceWorker.register("/sw.js").catch((error) => {
+        // Service Worker ist optional – App funktioniert auch ohne.
+        console.warn("[SW] Registrierung fehlgeschlagen:", error);
+      });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
   // Login-Seite: ohne App-Shell (Header/Footer) rendern.
   if (pathname === "/login") {
     return <>{children}</>;
