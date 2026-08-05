@@ -10,6 +10,7 @@ import {
 } from "@/lib/ocr";
 import { orsGeocodeSearch, WUERZBURG_BOUNDARY } from "@/lib/ors";
 import { hasHouseNumber } from "@/lib/utils";
+import { isPhotoImportStandardItem } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ItemGroupImportPreview } from "@/types/api";
 
@@ -212,10 +213,11 @@ export async function POST(request: Request) {
           customer: group.customer,
           customer_number: group.customer_number,
           cleaning_interval: group.cleaning_interval,
-          // Standard-Markierung setzt der Nutzer in der Vorschau.
+          // Bekannte Standard-Items werden in der Vorschau automatisch
+          // angekreuzt; alle anderen bleiben unverändert abwählbar.
           items: group.items.map((item) => ({
             ...item,
-            is_always_required: false,
+            is_always_required: isPhotoImportStandardItem(item.item_name),
           })),
         });
       } else {
@@ -236,10 +238,11 @@ export async function POST(request: Request) {
           customer: group.customer,
           customer_number: group.customer_number,
           cleaning_interval: group.cleaning_interval,
-          // Standard-Markierung setzt der Nutzer in der Vorschau.
+          // Bekannte Standard-Items werden in der Vorschau automatisch
+          // angekreuzt; alle anderen bleiben unverändert abwählbar.
           items: group.items.map((item) => ({
             ...item,
-            is_always_required: false,
+            is_always_required: isPhotoImportStandardItem(item.item_name),
           })),
           latitude: resolved.latitude,
           longitude: resolved.longitude,

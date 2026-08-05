@@ -4,7 +4,7 @@ import { apiErrorResponse } from "@/lib/http";
 import {
   GeminiApiNotConfiguredError,
   extractTourListEntries,
-  findMatchingObjectId,
+  findMatchingObjectIds,
   type ObjectMatchTarget,
 } from "@/lib/ocr";
 import { requireUser, isPlanner } from "@/lib/auth";
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdmin();
     const { data: objects, error } = await supabase
       .from("objects")
-      .select("id, name, address");
+      .select("id, name, address, customer");
 
     if (error) throw error;
 
@@ -72,26 +72,31 @@ export async function POST(request: Request) {
       id: obj.id,
       name: obj.name,
       address: obj.address,
+      customer: obj.customer,
     }));
 
     const result: PhotoSelectResult = { matches: [], unmatched: [] };
     const matchedIds = new Set<string>();
 
     for (const entry of entries) {
-      const match = findMatchingObjectId(entry, targets);
+      const matches = findMatchingObjectIds(entry, targets);
+      let added = 0;
 
-      if (match && !matchedIds.has(match.object_id)) {
+      for (const match of matches) {
+        if (matchedIds.has(match.object_id)) continue;
         matchedIds.add(match.object_id);
         const obj = targets.find((target) => target.id === match.object_id);
-        if (obj) {
-          result.matches.push({
-            object_id: obj.id,
-            name: obj.name,
-            address: obj.address,
-            matched_by: match.matched_by,
-          });
-        }
-      } else if (!match) {
+        if (!obj) continue;
+        result.matches.push({
+          object_id: obj.id,
+          name: obj.name,
+          address: obj.address,
+          matched_by: match.matched_by,
+        });
+        added += 1;
+      }
+
+      if (added === 0 && matches.length === 0) {
         result.unmatched.push({
           name: entry.name,
           address: entry.address,

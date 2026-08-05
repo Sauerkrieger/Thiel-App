@@ -21,6 +21,94 @@ export function formatItemLabel(item: ItemLike): string {
   return note ? `${label} (${note})` : label;
 }
 
+/**
+ * Erkennt die beim Foto-Import automatisch als Standard vorgesehenen Items.
+ *
+ * OCR liefert gelegentlich Schreibfehler, Bindestriche oder Singularformen.
+ * Deshalb werden Umlaute/Trennzeichen normalisiert und die bekannten
+ * Item-Stämme mit einer kleinen toleranten Levenshtein-Prüfung gesucht.
+ */
+const PHOTO_IMPORT_STANDARD_ITEM_ROOTS = [
+  "micromop",
+  "mikromop",
+  "franzenmop",
+  "fransenmop",
+  "mpower",
+  "microfasertuch",
+  "mikrofasertuch",
+  "polierleine",
+  "waffeltuch",
+] as const;
+
+function normalizeItemName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function editDistanceAtMost(left: string, right: string, maxDistance: number): boolean {
+  if (Math.abs(left.length - right.length) > maxDistance) return false;
+  let previous = Array.from({ length: right.length + 1 }, (_, i) => i);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+    let rowMinimum = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      const value = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost,
+      );
+      current.push(value);
+      rowMinimum = Math.min(rowMinimum, value);
+    }
+    if (rowMinimum > maxDistance) return false;
+    previous = current;
+  }
+
+  return previous[right.length] <= maxDistance;
+}
+
+/** true für die sechs Foto-Import-Standardgruppen (inkl. OCR-Varianten). */
+export function isPhotoImportStandardItem(itemName: string): boolean {
+  const words = itemName
+    .split(/[^\\p{L}\\p{N}]+/u)
+    .map(normalizeItemName)
+    .filter(Boolean);
+  if (words.length === 0) return false;
+
+  // Auch getrennte OCR-Wörter wie „micro faser tücher“ prüfen.
+  const candidates = [...words];
+  for (let size = 2; size <= 3; size += 1) {
+    for (let start = 0; start + size <= words.length; start += 1) {
+      candidates.push(words.slice(start, start + size).join(""));
+    }
+  }
+
+  return PHOTO_IMPORT_STANDARD_ITEM_ROOTS.some((root) =>
+    candidates.some((candidate) => {
+      // Pluralformen und Zusätze wie Farben werden über den Stamm erkannt.
+      if (candidate.includes(root)) return true;
+
+      // Ähnliche Wörter wie „mower“ dürfen nicht als „mpower“ gelten.
+      // Bei echten OCR-Schreibfehlern wie „mpwer“ bleibt „mp“ erhalten.
+      if (root === "mpower" && !candidate.startsWith("mp")) return false;
+
+      // Nur ein kompletter Wort-/Wortgruppen-Kandidat darf fuzzy passen;
+      // dadurch werden zufällige Teilstrings nicht als Standard markiert.
+      const maxDistance = 2;
+      return (
+        Math.abs(candidate.length - root.length) <= maxDistance &&
+        editDistanceAtMost(candidate, root, maxDistance)
+      );
+    }),
+  );
+}
+
 /** Validierter Item-Input, wie ihn die API-Routen erwarten. */
 export type ItemInput = {
   item_name: string;

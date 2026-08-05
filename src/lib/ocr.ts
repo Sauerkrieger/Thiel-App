@@ -168,7 +168,7 @@ Format-Antwort NUR als JSON-Objekt, ohne zusätzlichen Text:
 Regeln:
 - Jeder Eintrag entspricht genau einem anzufahrenden Objekt (Firma, Kunde, Objekt oder Treppenhaus).
 - "name": Bezeichnung des Objekts, falls erkennbar (z. B. "Büro Meyer"), sonst null.
-- "address": vollständige Adresse mit Straße und Hausnummer, falls erkennbar, sonst null.
+- "address": Straße und Hausnummer, falls erkennbar. Wenn nur der Straßenname ohne Hausnummer erkennbar ist, trage trotzdem den Straßennamen ein; nur bei gar keinem Straßenhinweis null.
 - Mindestens "name" ODER "address" muss gefüllt sein.
 - Fasse Name und Adresse aus getrennten Zeilen zu einem Eintrag zusammen.
 - Ignoriere Häkchen, Nummerierungen, Seitennummern, Überschriften, Datumsangaben und Logos.
@@ -228,7 +228,13 @@ export function parseTourListResult(content: string): TourListEntry[] {
 /* Objekt-Matching (Foto-Auswahl, Schritt 3)                           */
 /* ------------------------------------------------------------------ */
 
-export type ObjectMatchTarget = { id: string; name: string; address: string };
+export type ObjectMatchTarget = {
+  id: string;
+  name: string;
+  address: string;
+  /** Optionaler Kundenname (für die Tourenlisten-Fotoerkennung). */
+  customer?: string | null;
+};
 
 export type ObjectMatchResult = {
   object_id: string;
@@ -289,6 +295,175 @@ export function findMatchingObjectId(
   return best && best.score >= 0.8
     ? { object_id: best.object_id, matched_by: best.matched_by }
     : null;
+}
+
+/** Hausnummer aus einer normalisierten Adresse lesen. */
+function extractHouseNumber(value: string): string | null {
+  // Nur die Straßenangabe vor Komma/PLZ prüfen – eine erkannte Postleitzahl
+  // darf nicht versehentlich als Hausnummer verwendet werden.
+  const streetPart = value.split(",", 1)[0] ?? value;
+  const match = streetPart.match(/\b(?!\d{5}\b)(\d+[a-z]?)\b/i);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+/** Straßenanteil ohne Hausnummer und Orts-/PLZ-Zusätze. */
+function normalizeStreet(value: string): string {
+  const normalized = normalizeAddress(value)
+    .replace(/[äÄ]/g, "a")
+    .replace(/[öÖ]/g, "o")
+    .replace(/[üÜ]/g, "u")
+    .replace(/ß/g, "ss");
+  return normalized.replace(/\b\d+[a-z]?\b.*$/i, "").trim();
+}
+
+/** Prüft, ob ein OCR-Hinweis wahrscheinlich ein Straßenname ist. */
+function isLikelyStreetClue(value: string): boolean {
+  return /(?:straße|strasse|weg|allee|platz|ring|ufer|gasse|damm|steig|chaussee|promenade|markt)$/i.test(
+    value.trim(),
+  );
+}
+
+/** Ähnlichkeit für OCR-Text mit kleinen Schreibfehlern. */
+function ocrTextMatches(clue: string, target: string): boolean {
+  if (clue.length < 3 || target.length < 3) return false;
+  if (clue === target || target.includes(clue) || clue.includes(target)) return true;
+  if (Math.abs(clue.length - target.length) > 2) return false;
+
+  let previous = Array.from({ length: target.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= clue.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= target.length; j += 1) {
+      current.push(
+        Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + (clue[i - 1] === target[j - 1] ? 0 : 1),
+        ),
+      );
+    }
+    previous = current;
+  }
+  return previous[target.length] <= 2;
+}
+
+/**
+ * Liefert alle plausiblen Objekte einer unvollständigen Tourenlisten-Zeile.
+ *
+ * Vollständige Adressen bleiben eindeutig. Bei einer bloßen Straße oder einem
+ * Kunden ohne Hausnummer werden dagegen bewusst alle passenden Objekte
+ * zurückgegeben, damit die Auswahl nicht stillschweigend einen Stopp verliert.
+ */
+export function findMatchingObjectIds(
+  entry: TourListEntry,
+  objects: ObjectMatchTarget[],
+): ObjectMatchResult[] {
+  const nameClue = entry.name ? normalizeAddress(entry.name) : "";
+  const addressClue = entry.address ? normalizeAddress(entry.address) : "";
+  if (!nameClue && !addressClue) return [];
+
+  // Eindeutige Treffer zuerst: eine vollständige Adresse bzw. ein exakter
+  // Objektname darf nicht durch einen späteren Mehrfachtreffer verwässert werden.
+  const exactAddress = objects.filter(
+    (obj) => addressClue.length >= 5 && normalizeAddress(obj.address) === addressClue,
+  );
+  if (exactAddress.length > 0) {
+    return exactAddress.map((obj) => ({
+      object_id: obj.id,
+      matched_by: "adresse" as const,
+    }));
+  }
+  const exactCustomer = objects.filter(
+    (obj) =>
+      nameClue.length >= 3 &&
+      obj.customer != null &&
+      normalizeAddress(obj.customer) === nameClue,
+  );
+  if (exactCustomer.length > 0) {
+    return exactCustomer.map((obj) => ({
+      object_id: obj.id,
+      matched_by: "name" as const,
+    }));
+  }
+
+  const exactName = objects.filter(
+    (obj) => nameClue.length >= 3 && normalizeAddress(obj.name) === nameClue,
+  );
+  if (exactName.length > 0) {
+    return exactName.map((obj) => ({
+      object_id: obj.id,
+      matched_by: "name" as const,
+    }));
+  }
+
+  // Neben der vollständigen OCR-Zeile auch einzelne Wörter und kurze
+  // Wortgruppen prüfen. So funktionieren „Johanniter Walterstraße" sowie
+  // „Walterstraße" ohne Hausnummer.
+  const allClues = new Set<string>();
+  for (const raw of [nameClue, addressClue]) {
+    if (!raw) continue;
+    const words = raw.split(" ").filter(Boolean);
+    allClues.add(raw);
+    for (let size = 1; size <= 3; size += 1) {
+      for (let start = 0; start + size <= words.length; start += 1) {
+        allClues.add(words.slice(start, start + size).join(" "));
+      }
+    }
+  }
+
+  const houseNumber = extractHouseNumber(addressClue);
+  const streetClues = [...allClues]
+    .map(normalizeStreet)
+    .filter(
+      (clue) =>
+        clue.length >= 4 &&
+        (isLikelyStreetClue(clue) || Boolean(addressClue)),
+    );
+  const streetMatches = objects.filter((obj) => {
+    const objStreet = normalizeStreet(obj.address);
+    const matchesStreet = streetClues.some((street) => ocrTextMatches(street, objStreet));
+    if (!matchesStreet) return false;
+    if (!houseNumber) return true;
+    return extractHouseNumber(normalizeAddress(obj.address)) === houseNumber;
+  });
+
+  // Für Kunden-/Objektnamen nur sinnvolle Namenshinweise verwenden. Straßen-
+  // tokens wie „Walterstraße" werden über streetMatches behandelt, nicht als
+  // zufälliger Teil eines Objektnamens.
+  const nameClues = [...allClues].filter(
+    (clue) => clue.length >= 3 && !isLikelyStreetClue(clue),
+  );
+  const nameMatches = objects.filter((obj) => {
+    const fields = [normalizeAddress(obj.name)];
+    if (obj.customer) fields.push(normalizeAddress(obj.customer));
+    return nameClues.some((clue) => fields.some((field) => ocrTextMatches(clue, field)));
+  });
+
+  // Bei erkannter Hausnummer ist ein Kunden-Fallback zu unsicher: dann zählt
+  // nur die passende Straße/Hausnummer (oder der bereits geprüfte exakte Name).
+  if (houseNumber) {
+    return streetMatches.map((obj) => ({
+      object_id: obj.id,
+      matched_by: "adresse" as const,
+    }));
+  }
+
+  // Sind Kunden-/Objekt- und Straßenhinweis vorhanden, müssen sie gemeinsam
+  // zutreffen. Dadurch werden bei „Johanniter + Walterstraße" genau Haus 4/5a
+  // gewählt, während ein bloßes „Johanniter" alle Kundenobjekte findet.
+  if (streetMatches.length > 0 && nameMatches.length > 0) {
+    const nameIds = new Set(nameMatches.map((obj) => obj.id));
+    const both = streetMatches.filter((obj) => nameIds.has(obj.id));
+    return both.map((obj) => ({
+      object_id: obj.id,
+      matched_by: "adresse" as const,
+    }));
+  }
+
+  const candidates = streetMatches.length > 0 ? streetMatches : nameMatches;
+  return candidates.map((obj) => ({
+    object_id: obj.id,
+    matched_by: streetMatches.length > 0 ? ("adresse" as const) : ("name" as const),
+  }));
 }
 
 /* ------------------------------------------------------------------ */
