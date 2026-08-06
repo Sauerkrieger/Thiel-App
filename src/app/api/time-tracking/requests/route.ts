@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse, lwwConflictResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { loadProfileRefs } from "@/lib/time-tracking";
 import { checkLww, parseClientUpdatedAt } from "@/lib/lww";
 import type { Database } from "@/types/database";
 import type { TimeOffStatus, TimeOffType } from "@/types/time-tracking";
@@ -29,12 +30,21 @@ export async function GET() {
     const supabase = getSupabaseAdmin();
     let query = supabase
       .from("time_off_requests")
-      .select("*, profiles:user_id(name, role)")
+      .select("*")
       .order("start_date", { ascending: false });
     if (!isAdmin(auth.user)) query = query.eq("user_id", auth.user.id);
     const { data, error } = await query;
     if (error) throw error;
-    return NextResponse.json({ requests: data ?? [] });
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const userIds = rows
+      .map((row) => row.user_id)
+      .filter((id): id is string => typeof id === "string");
+    const profileById = await loadProfileRefs(userIds);
+    const requests = rows.map((row) => ({
+      ...row,
+      profiles: profileById.get(String(row.user_id)) ?? null,
+    }));
+    return NextResponse.json({ requests });
   } catch (error) {
     return apiErrorResponse(error);
   }

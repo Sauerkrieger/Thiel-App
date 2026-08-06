@@ -155,6 +155,35 @@ function objectPayload(body: Record<string, unknown>): Record<string, unknown> {
   return pick(body, OBJECT_FIELDS as readonly string[]);
 }
 
+/**
+ * Entfernt eingebettete `profiles`-Referenzen aus API-Zeilen, bevor sie in
+ * den IndexedDB-Store geschrieben werden (die Namen werden beim Offline-Read
+ * aus dem profiles-Store rekonstruiert – keine verschachtelten Objekte cachen).
+ */
+function stripProfiles(
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return rows.map((row) => {
+    const { profiles: _profiles, ...rest } = row;
+    return rest;
+  });
+}
+
+/** Baut ein id → {name, role}-Mapping aus dem gecachten profiles-Store. */
+async function profileRefsFromCache(): Promise<
+  Map<string, { name?: string; role?: string }>
+> {
+  const profiles = await cacheRowsOf("profiles");
+  const map = new Map<string, { name?: string; role?: string }>();
+  for (const profile of profiles) {
+    map.set(String(profile.id), {
+      name: typeof profile.name === "string" ? profile.name : undefined,
+      role: typeof profile.role === "string" ? profile.role : undefined,
+    });
+  }
+  return map;
+}
+
 /* ------------------------------------------------------------------ */
 /* Cache-Logik                                                         */
 /* ------------------------------------------------------------------ */
@@ -331,14 +360,14 @@ async function cacheResponse(
   if (path === "/api/time-tracking/entries") {
     await cacheRows(
       "time_entries",
-      (Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>,
+      stripProfiles((Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>),
     );
     return;
   }
   if (path === "/api/time-tracking/requests") {
     await cacheRows(
       "time_off_requests",
-      (Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>,
+      stripProfiles((Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>),
     );
     return;
   }
@@ -347,8 +376,8 @@ async function cacheResponse(
       ? [body.profile as Record<string, unknown>]
       : (Array.isArray(body.employees) ? body.employees : []) as Array<Record<string, unknown>>;
     await cacheRows("profiles", profiles);
-    await cacheRows("time_entries", (Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>);
-    await cacheRows("time_off_requests", (Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>);
+    await cacheRows("time_entries", stripProfiles((Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>));
+    await cacheRows("time_off_requests", stripProfiles((Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>));
     return;
   }
   if (path === "/api/admin/time-tracking/status") {
@@ -568,13 +597,25 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   if (path === "/api/time-tracking/entries") {
     const userId = getCurrentUserId();
     const all = await cacheRowsOf("time_entries");
+    const rows = all.filter((row) => userId === null || row.user_id === userId);
+    const profileById = await profileRefsFromCache();
     return jsonResponse(200, {
-      entries: all.filter((row) => userId === null || row.user_id === userId),
+      entries: rows.map((row) => ({
+        ...row,
+        profiles: profileById.get(String(row.user_id)) ?? null,
+      })),
     });
   }
 
   if (path === "/api/time-tracking/requests") {
-    return jsonResponse(200, { requests: await cacheRowsOf("time_off_requests") });
+    const rows = await cacheRowsOf("time_off_requests");
+    const profileById = await profileRefsFromCache();
+    return jsonResponse(200, {
+      requests: rows.map((row) => ({
+        ...row,
+        profiles: profileById.get(String(row.user_id)) ?? null,
+      })),
+    });
   }
 
   if (path === "/api/time-tracking/summary") {
@@ -594,8 +635,15 @@ async function readOffline(req: OfflineRead): Promise<Response> {
       return roleMatches && searchMatches;
     });
     const selectedIds = new Set(profiles.map((profile) => profile.id));
-    const entries = (await cacheRowsOf("time_entries")).filter((entry) => selectedIds.has(entry.user_id as string));
-    const requests = (await cacheRowsOf("time_off_requests")).filter((request) => selectedIds.has(request.user_id as string));
+    const profileRefById = new Map(
+      profiles.map((profile) => [String(profile.id), { name: typeof profile.name === "string" ? profile.name : undefined, role: typeof profile.role === "string" ? profile.role : undefined }]),
+    );
+    const entries: Array<Record<string, unknown>> = (await cacheRowsOf("time_entries"))
+      .filter((entry) => selectedIds.has(entry.user_id as string))
+      .map((entry) => ({ ...entry, profiles: profileRefById.get(String(entry.user_id)) ?? null }));
+    const requests: Array<Record<string, unknown>> = (await cacheRowsOf("time_off_requests"))
+      .filter((request) => selectedIds.has(request.user_id as string))
+      .map((request) => ({ ...request, profiles: profileRefById.get(String(request.user_id)) ?? null }));
     const openByUser = new Map(entries.filter((entry) => entry.clock_out == null).map((entry) => [entry.user_id, entry]));
     // Aktive Tour + nächstes nicht beliefertes Objekt aus dem Cache rekonstruieren
     // (analog zur Online-Übersicht), damit der Status auch offline vollständig ist.

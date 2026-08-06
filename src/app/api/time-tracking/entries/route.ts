@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { loadProfileRefs } from "@/lib/time-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
     const supabase = getSupabaseAdmin();
     let query = supabase
       .from("time_entries")
-      .select("*, profiles:user_id(name, role)")
+      .select("*")
       .order("clock_in", { ascending: false });
     const requestedUserId = url.searchParams.get("user_id");
     if (!isAdmin(auth.user) || requestedUserId) {
@@ -39,7 +40,16 @@ export async function GET(request: Request) {
 
     const { data, error } = await query;
     if (error) throw error;
-    return NextResponse.json({ entries: data ?? [] });
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const userIds = rows
+      .map((row) => row.user_id)
+      .filter((id): id is string => typeof id === "string");
+    const profileById = await loadProfileRefs(userIds);
+    const entries = rows.map((row) => ({
+      ...row,
+      profiles: profileById.get(String(row.user_id)) ?? null,
+    }));
+    return NextResponse.json({ entries });
   } catch (error) {
     return apiErrorResponse(error);
   }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireUser, isAdmin } from "@/lib/auth";
 import { apiErrorResponse } from "@/lib/http";
+import { loadProfileRefs } from "@/lib/time-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     const supabase = getSupabaseAdmin();
     let query = supabase
       .from("time_entries")
-      .select("id, user_id, clock_in, clock_out, break_duration_minutes, note, is_approved, profiles:user_id(name, role)")
+      .select("id, user_id, clock_in, clock_out, break_duration_minutes, note, is_approved")
       .order("clock_in", { ascending: true });
     if (from) query = query.gte("clock_in", from);
     if (to) query = query.lte("clock_in", to);
@@ -36,14 +37,17 @@ export async function GET(request: Request) {
       break_duration_minutes: number;
       note: string | null;
       is_approved: boolean;
-      profiles: { name: string; role: string } | { name: string; role: string }[] | null;
     };
     const exportEntries = (data ?? []) as unknown as ExportEntry[];
+    const userIds = exportEntries
+      .map((entry) => entry.user_id)
+      .filter((id): id is string => typeof id === "string");
+    const profileById = await loadProfileRefs(userIds);
 
     const rows = [
       ["Mitarbeiter", "Rolle", "Von", "Bis", "Pause (Min)", "Arbeitszeit (h)", "Freigegeben", "Bemerkung"],
       ...exportEntries.map((entry) => {
-        const profile = Array.isArray(entry.profiles) ? entry.profiles[0] : entry.profiles;
+        const profile = profileById.get(entry.user_id);
         const start = new Date(entry.clock_in).getTime();
         const end = entry.clock_out ? new Date(entry.clock_out).getTime() : start;
         const hours = entry.clock_out

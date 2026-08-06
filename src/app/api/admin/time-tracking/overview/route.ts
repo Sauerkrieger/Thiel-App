@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
+import type { ProfileRef } from "@/lib/time-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,10 @@ export async function GET(request: Request) {
     const supabase = getSupabaseAdmin();
     const [{ data: profiles, error: profilesError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: tours, error: toursError }] = await Promise.all([
       supabase.from("profiles").select("id, name, role, email, vacation_days_total, vacation_days_used, overtime_hours").order("name"),
-      supabase.from("time_entries").select("*, profiles:user_id(name, role)").order("clock_in", { ascending: false }),
-      supabase.from("time_off_requests").select("*, profiles:user_id(name, role)").order("start_date", { ascending: false }),
+      // Kein `profiles:user_id(...)`-Embed: time_entries.user_id referenziert
+      // auth.users, nicht profiles – die Namen werden unten per JS-Join ergänzt.
+      supabase.from("time_entries").select("*").order("clock_in", { ascending: false }),
+      supabase.from("time_off_requests").select("*").order("start_date", { ascending: false }),
       supabase.from("active_tours").select("id, driver_id, date, status, tour_stops(object_id, stop_order, is_delivered, objects:object_id(id, name))").eq("status", "in_transit"),
     ]);
     if (profilesError) throw profilesError;
@@ -35,11 +38,21 @@ export async function GET(request: Request) {
       const nextStop = [...(tour.tour_stops ?? [])].filter((stop) => !stop.is_delivered).sort((a, b) => a.stop_order - b.stop_order)[0];
       assignmentByDriver.set(tour.driver_id, { tour_id: tour.id, tour_date: tour.date, object_name: nextStop?.objects?.name ?? null });
     }
-    type OverviewEntry = TimeEntryRow & { profiles?: { name?: string; role?: string } | { name?: string; role?: string }[] | null };
-    type OverviewRequest = { user_id: string; [key: string]: unknown };
     type TimeEntryRow = { user_id: string; clock_in: string; clock_out: string | null };
-    const overviewEntries = (entries ?? []) as unknown as OverviewEntry[];
-    const overviewRequests = (requests ?? []) as unknown as OverviewRequest[];
+    type OverviewEntry = TimeEntryRow & { profiles?: ProfileRef | null };
+    type OverviewRequest = { user_id: string; [key: string]: unknown; profiles?: ProfileRef | null };
+    // Mitarbeiternamen per JS-Join ergänzen (kein PostgREST-Embed nötig).
+    const profileById = new Map<string, ProfileRef>(
+      (profiles ?? []).map((profile) => [profile.id, { name: profile.name, role: profile.role }]),
+    );
+    const overviewEntries = ((entries ?? []) as OverviewEntry[]).map((entry) => ({
+      ...entry,
+      profiles: profileById.get(entry.user_id) ?? null,
+    }));
+    const overviewRequests = ((requests ?? []) as OverviewRequest[]).map((request) => ({
+      ...request,
+      profiles: profileById.get(String(request.user_id)) ?? null,
+    }));
 
     const selectedProfiles = (profiles ?? []).filter((profile) => {
       const matchesRole = !role || profile.role === role;
