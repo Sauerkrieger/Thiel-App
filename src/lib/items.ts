@@ -2,7 +2,7 @@
  * Helfer für strukturierte Items (Menge / Bezeichnung / Bemerkung).
  */
 
-import type { DeliveryItem } from "@/types/api";
+import type { DeliveredItem, DeliveryItem } from "@/types/api";
 
 export type ItemLike = {
   item_name: string;
@@ -73,6 +73,48 @@ function editDistanceAtMost(left: string, right: string, maxDistance: number): b
   return previous[right.length] <= maxDistance;
 }
 
+function normalizeInventoryName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/\\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Ersetzt einen OCR-Itemnamen durch den kanonischen Inventarnamen, wenn er
+ * exakt oder mit höchstens einem Zeichen Abweichung vorkommt. Bei mehreren
+ * gleich plausiblen Inventartreffern bleibt der OCR-Text unverändert.
+ */
+export function correctItemNameFromInventory(
+  itemName: string,
+  inventoryNames: readonly string[],
+): string {
+  const normalized = normalizeInventoryName(itemName);
+  if (normalized.length < 3) return itemName;
+
+  const names = [...new Set(
+    inventoryNames
+      .map((name) => name.trim())
+      .filter(Boolean),
+  )];
+  const exact = names.filter(
+    (name) => normalizeInventoryName(name) === normalized,
+  );
+  if (exact.length > 0) return exact[0];
+
+  const candidates = names.filter((name) => {
+    const candidate = normalizeInventoryName(name);
+    return (
+      candidate.length >= 3 &&
+      editDistanceAtMost(normalized, candidate, 1)
+    );
+  });
+  return candidates.length === 1 ? candidates[0] : itemName;
+}
+
 /** true für die sechs Foto-Import-Standardgruppen (inkl. OCR-Varianten). */
 export function isPhotoImportStandardItem(itemName: string): boolean {
   const words = itemName
@@ -116,6 +158,7 @@ export type ItemInput = {
   note: string | null;
   photo_path: string | null;
   is_always_required: boolean;
+  is_reserved: boolean;
 };
 
 const MAX_ITEM_NAME = 200;
@@ -164,6 +207,7 @@ export function parseItemInput(value: unknown): ItemInput | null {
     note,
     photo_path: photoPath,
     is_always_required: Boolean(raw.is_always_required),
+    is_reserved: Boolean(raw.is_reserved) && !Boolean(raw.is_always_required),
   };
 }
 
@@ -187,6 +231,31 @@ const MAX_DELIVERY_ITEMS = 500;
  * Akzeptiert sowohl die neue Objektform als auch Legacy-Einträge (reine Strings).
  * Ungültige Einträge werden verworfen.
  */
+/** Normalisiert den Snapshot der tatsächlich gelieferten Items. */
+export function parseDeliveredItems(value: unknown): DeliveredItem[] {
+  if (!Array.isArray(value)) return [];
+  const result: DeliveredItem[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.item_name !== "string") continue;
+    const itemName = raw.item_name.trim();
+    if (!itemName || itemName.length > MAX_ITEM_NAME || seen.has(itemName)) continue;
+    const quantity = Number(raw.quantity ?? 1);
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_QUANTITY) continue;
+    let note: string | null = null;
+    if (typeof raw.note === "string" && raw.note.trim()) {
+      const trimmed = raw.note.trim();
+      if (trimmed.length > MAX_DELIVERY_NOTE) continue;
+      note = trimmed;
+    }
+    seen.add(itemName);
+    result.push({ item_name: itemName, quantity, note });
+  }
+  return result.slice(0, MAX_DELIVERY_ITEMS);
+}
+
 export function parseDeliveryItems(value: unknown): DeliveryItem[] {
   if (!Array.isArray(value)) return [];
   const result: DeliveryItem[] = [];

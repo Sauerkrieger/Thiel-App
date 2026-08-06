@@ -43,6 +43,8 @@ const SYNC_ORDER: readonly SyncTable[] = [
   "active_tours",
   "inventory_items",
   "profiles",
+  "time_entries",
+  "time_off_requests",
   "weekly_default_routes",
   "object_items",
   "tour_stops",

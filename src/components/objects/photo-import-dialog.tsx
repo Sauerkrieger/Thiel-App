@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { hasHouseNumber } from "@/lib/utils";
-import { cleanAddressLabel } from "@/lib/address";
+import { addressCityIssue, cleanAddressLabel } from "@/lib/address";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ObjectCategory } from "@/types/database";
+import { normalizeImageForAnalysis } from "@/lib/image-upload";
 import type {
   ItemGroupImportPreview,
   ItemGroupImportResult,
@@ -45,7 +46,8 @@ import type {
   KeyImportResult,
 } from "@/types/api";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB nach Optimierung
+const MAX_INPUT_FILE_SIZE = 40 * 1024 * 1024; // Schutz vor extrem großen Rohfotos
 
 type Mode = "keys" | "items";
 
@@ -81,9 +83,9 @@ type ItemSelection = {
   address: string | null;
   items: ItemDraft[];
   selected: boolean;
-  /** true: das erkannte Objekt existiert nicht und wird neu angelegt. */
+  /** Jede Auswahl wird als neues Objekt angelegt. */
   is_new_object?: boolean;
-  /** Name des neuen Objekts (nur bei is_new_object). */
+  /** Name des neuen Objekts. */
   new_name?: string;
   /** Exakte Adresse des neuen Objekts (nur bei is_new_object). */
   new_address?: string;
@@ -96,8 +98,14 @@ type ItemSelection = {
   customer: string;
   customer_number: string;
   cleaning_interval: string;
-  /** Kategorie des neuen Objekts (nur bei is_new_object). */
+  /** Kategorie des neuen Objekts. */
   category?: ObjectCategory;
+  /** Ähnliches bestehendes Objekt; nur Warnung, niemals Zuordnung. */
+  similar_object?: {
+    name: string;
+    address: string;
+    matched_by: "adresse" | "name";
+  } | null;
 };
 
 /**
@@ -139,7 +147,7 @@ const MODE_OPTIONS: {
     mode: "items",
     icon: ListChecks,
     title: "Items",
-    description: "Packliste mit Objektnamen – Items zuordnen, unbekannte Objekte automatisch anlegen.",
+    description: "Packliste mit Objektangaben – nur neue Objekte anlegen und ähnliche bestehende Objekte warnen.",
   },
 ];
 
@@ -148,6 +156,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [normalizing, setNormalizing] = useState(false);
   const [applying, setApplying] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,6 +177,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     setFile(null);
     setPreview(null);
     setBusy(false);
+    setNormalizing(false);
     setApplying(false);
     setError(null);
     setKeyPreview(null);
@@ -201,24 +211,34 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
     setError(null);
   }
 
-  function handleFile(next: File | null) {
+  async function handleFile(next: File | null) {
     if (!next) return;
-    if (!next.type.startsWith("image/")) {
-      toast.error("Bitte ein Bild (JPG/PNG/HEIC) auswählen.");
+    if (!next.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif)$/i.test(next.name)) {
+      toast.error("Bitte ein Bild (JPG/PNG/WEBP/HEIC) auswählen.");
       return;
     }
-    if (next.size > MAX_FILE_SIZE) {
-      toast.error("Das Bild ist größer als 10 MB.");
+    if (next.size > MAX_INPUT_FILE_SIZE) {
+      toast.error("Das Rohfoto ist größer als 40 MB.");
       return;
     }
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(next);
-    setPreview(URL.createObjectURL(next));
-    setKeyPreview(null);
-    setKeyResult(null);
-    setItemPreview(null);
-    setItemResult(null);
-    setError(null);
+    setNormalizing(true);
+    try {
+      const normalized = await normalizeImageForAnalysis(next);
+      if (normalized.size > MAX_FILE_SIZE) {
+        toast.error("Das Bild ist auch nach der Optimierung größer als 10 MB.");
+        return;
+      }
+      if (preview) URL.revokeObjectURL(preview);
+      setFile(normalized);
+      setPreview(URL.createObjectURL(normalized));
+      setKeyPreview(null);
+      setKeyResult(null);
+      setItemPreview(null);
+      setItemResult(null);
+      setError(null);
+    } finally {
+      setNormalizing(false);
+    }
   }
 
   /** Schritt 1: Bild analysieren (Modus-abhängig) – schreibt noch nichts. */
@@ -265,7 +285,8 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           })),
         ]);
       } else {
-        // Items: Vorschau + automatisches Anlegen unbekannter Objekte.
+        // Items: Jede Gruppe wird als neues Objekt vorbereitet. Bestehende
+        // oder ähnliche Treffer erscheinen ausschließlich als Warnung.
         const res = await fetch("/api/objects/import/items/analyze", {
           method: "POST",
           body: formData,
@@ -277,25 +298,10 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
         }
         const previewData = body as ItemGroupImportPreview;
         setItemPreview(previewData);
-        // Treffer + nicht gefundene Objekte: Letztere werden automatisch als
-        // neue Objekte angelegt (Adresse wurde per Geocoding aufgelöst).
-        setItemSelections([
-          ...previewData.matches.map((m) => ({
-            object_id: m.object_id,
-            object_name: m.object_name,
-            address: m.address,
-            customer: m.customer ?? "",
-            customer_number: m.customer_number ?? "",
-            cleaning_interval: m.cleaning_interval ?? "",
-            items: m.items.map((i) => ({
-              item_name: i.item_name,
-              quantity: String(i.quantity),
-              note: i.note ?? "",
-              is_always_required: i.is_always_required,
-            })),
-            selected: true,
-          })),
-          ...previewData.unmatched.map((u) => ({
+        // Alle Gruppen werden als Neuanlagen übernommen; ein ähnliches
+        // Bestandsobjekt darf die Importart nicht mehr ändern.
+        setItemSelections(
+          previewData.unmatched.map((u) => ({
             object_id: "",
             object_name: u.name ?? "(ohne Name)",
             address: u.address,
@@ -309,15 +315,15 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
               is_always_required: i.is_always_required,
             })),
             selected: true,
-            is_new_object: true,
             new_name: u.name ?? "",
             new_address: u.address ?? "",
             latitude: u.latitude,
             longitude: u.longitude,
             geocoding_status: u.geocoding_status,
             category: u.category,
+            similar_object: u.similar_object,
           })),
-        ]);
+        );
       }
     } catch {
       setError("Analyse fehlgeschlagen. Bitte erneut versuchen.");
@@ -332,6 +338,18 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
       .filter((k) => k.selected && !k.already_has_key && k.key_number > 0)
       .filter((k) => k.object_id)
       .map((k) => ({ object_id: k.object_id, key_number: k.key_number }));
+
+    const seenAssignments = new Map<string, number>();
+    for (const assignment of assignments) {
+      const previous = seenAssignments.get(assignment.object_id);
+      if (previous !== undefined && previous !== assignment.key_number) {
+        toast.error(
+          "Einem Objekt wurden mehrere unterschiedliche Schlüsselnummern zugewiesen. Bitte die Zuordnung korrigieren.",
+        );
+        return;
+      }
+      seenAssignments.set(assignment.object_id, assignment.key_number);
+    }
 
     if (assignments.length === 0) {
       toast.info("Keine gültigen Schlüssel zum Übernehmen ausgewählt.");
@@ -362,28 +380,11 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
   /** Schritt 2: bestätigte Items-Gruppen übernehmen. */
   async function handleApplyItems() {
-    const groups = itemSelections
-      .filter((g) => g.selected && !g.is_new_object)
-      .map((g) => ({
-        object_id: g.object_id,
-        customer: g.customer.trim() || null,
-        customer_number: g.customer_number.trim() || null,
-        cleaning_interval: g.cleaning_interval.trim() || null,
-        items: g.items
-          .filter((i) => i.item_name.trim().length > 0)
-          .map((i) => ({
-            item_name: i.item_name.trim(),
-            quantity: Number.parseInt(i.quantity, 10) || 1,
-            note: i.note.trim() || null,
-            is_always_required: i.is_always_required,
-          })),
-      }))
-      .filter((g) => g.items.length > 0);
-
-    // Nicht gefundene Objekte werden neu angelegt – eine exakte Adresse
-    // (mit Hausnummer) ist dafür Pflicht.
+    // Es gibt bewusst keine Gruppen für bestehende Objekte mehr: jede
+    // bestätigte Karte wird ausschließlich als neues Objekt gesendet.
+      // Eine exakte Adresse (mit Hausnummer) ist für eine Neuanlage Pflicht.
     const newObjects = itemSelections
-      .filter((g) => g.selected && g.is_new_object)
+      .filter((g) => g.selected)
       .map((g) => ({
         name: (g.new_name ?? "").trim(),
         address: (g.new_address ?? "").trim(),
@@ -407,16 +408,15 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
           o.name.length > 0 && hasHouseNumber(o.address) && o.items.length > 0,
       );
     const skippedNew =
-      itemSelections.filter((g) => g.selected && g.is_new_object).length -
-      newObjects.length;
+      itemSelections.filter((g) => g.selected).length - newObjects.length;
 
-    if (groups.length === 0 && newObjects.length === 0) {
+    if (newObjects.length === 0) {
       if (skippedNew > 0) {
         toast.warning(
           `${skippedNew} neue${skippedNew === 1 ? "s" : ""} Objekt${skippedNew === 1 ? "" : "e"} übersprungen – exakte Adresse (mit Hausnummer) fehlt.`,
         );
       } else {
-        toast.info("Keine Items zum Übernehmen ausgewählt.");
+        toast.info("Keine neuen Objekte zum Übernehmen ausgewählt.");
       }
       return;
     }
@@ -432,7 +432,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
       const res = await fetch("/api/objects/import/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groups, new_objects: newObjects }),
+        body: JSON.stringify({ new_objects: newObjects }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -453,7 +453,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
       return "Fotografiere eine Schlüsselliste mit Objektnamen und -nummern. Die KI ordnet die Nummern bestehenden Objekten zu – du kannst die Zuordnung in der Vorschau anpassen. Schlüssel ohne passendes Objekt werden nicht übernommen. Du bestätigst vor dem Speichern.";
     }
     if (mode === "items") {
-      return "Fotografiere eine Packliste mit Objektname (oft mit Adresse oder Ort), Kunde/Kundennummer/Reinigungsturnus und Items. Die KI ordnet die Items dem passenden Objekt zu; unbekannte Objekte werden automatisch mit exakter Adresse angelegt. Du bestätigst vor dem Speichern.";
+      return "Fotografiere eine Packliste mit Objektname (oft mit Adresse oder Ort), Kunde/Kundennummer/Reinigungsturnus und Items. Jede erkannte Gruppe wird als neues Objekt angelegt; ähnliche bestehende Objekte werden nur gewarnt. Du bestätigst vor dem Speichern.";
     }
     return "Fotografiere eine Liste – die KI erkennt die Einträge, du bestätigst vor dem Speichern.";
   })();
@@ -523,7 +523,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragging(false);
-                  handleFile(e.dataTransfer.files?.[0] ?? null);
+                  void handleFile(e.dataTransfer.files?.[0] ?? null);
                 }}
                 className={[
                   "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors",
@@ -539,7 +539,7 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
                   Bild auswählen oder hierher ziehen
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  JPG, PNG oder HEIC · max. 10 MB
+                  JPG, PNG, WEBP oder HEIC · wird für die Analyse automatisch optimiert
                 </p>
                 <input
                   ref={inputRef}
@@ -547,7 +547,10 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
                   accept="image/*"
                   capture="environment"
                   className="hidden"
-                  onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    void handleFile(e.target.files?.[0] ?? null);
+                    e.target.value = "";
+                  }}
                 />
               </div>
 
@@ -684,9 +687,14 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
                 </Button>
                 <Button
                   onClick={() => void handleAnalyze()}
-                  disabled={!file || busy}
+                  disabled={!file || busy || normalizing}
                 >
-                  {busy ? (
+                  {normalizing ? (
+                    <>
+                      <LoaderCircle className="animate-spin" />
+                      Bild wird vorbereitet…
+                    </>
+                  ) : busy ? (
                     <>
                       <LoaderCircle className="animate-spin" />
                       Bild wird analysiert…
@@ -925,7 +933,7 @@ function ItemPreviewBody({
                 key={gi}
                 className={[
                   "rounded-md border bg-card p-2.5",
-                  g.is_new_object ? "border-dashed" : "",
+                  "border-dashed",
                 ].join(" ")}
               >
                 <label className="flex items-center gap-2">
@@ -940,20 +948,27 @@ function ItemPreviewBody({
                     <span className="block truncate text-sm font-medium">
                       {g.object_name}
                     </span>
-                    {!g.is_new_object && g.address && (
+                    {g.address && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3" />
                         {cleanAddressLabel(g.address)}
                       </span>
                     )}
                   </span>
-                  {g.is_new_object && (
-                    <Badge variant="secondary">Neu anlegen</Badge>
-                  )}
-                  {g.is_new_object && g.category === "treppenhaus" && (
+                  <Badge variant="secondary">Neu anlegen</Badge>
+                  {g.category === "treppenhaus" && (
                     <Badge variant="outline">Treppenhaus</Badge>
                   )}
                 </label>
+
+                {g.similar_object && (
+                  <div className="mt-2 rounded-md border border-amber-400/50 bg-amber-50/70 px-2.5 py-2 text-xs text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
+                    <strong>Warnung: </strong>
+                    Ähnliches Objekt existiert bereits: {g.similar_object.name}
+                    {g.similar_object.address ? ` · ${g.similar_object.address}` : ""}.
+                    Es wird trotzdem ein neues Objekt angelegt; der Bestand bleibt unverändert.
+                  </div>
+                )}
 
                 {/* Admin-Info: Kunde / Kundennummer / Reinigungsturnus */}
                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1001,8 +1016,7 @@ function ItemPreviewBody({
                   </div>
                 </div>
 
-                {g.is_new_object && (
-                  <div className="mt-2 space-y-2">
+                <div className="mt-2 space-y-2">
                     <div>
                       <Label className="text-xs text-muted-foreground">
                         Name (neues Objekt)
@@ -1019,6 +1033,25 @@ function ItemPreviewBody({
                         placeholder="Name des Objekts"
                         aria-label={`Name des neuen Objekts ${gi + 1}`}
                       />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">
+                        Kategorie
+                      </Label>
+                      <Select
+                        value={g.category ?? "objekt"}
+                        onValueChange={(value) =>
+                          updateGroup(gi, { category: value as ObjectCategory })
+                        }
+                      >
+                        <SelectTrigger className="mt-1 h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="objekt">Objekt</SelectItem>
+                          <SelectItem value="treppenhaus">Treppenhaus</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">
@@ -1078,9 +1111,22 @@ function ItemPreviewBody({
                           </a>
                         </span>
                       </div>
+                      {/* Live-Validierung nach jedem Zeichen/Pasten:
+                          Ortsangabe fehlt oder Stadt außerhalb von Würzburg */}
+                      {(() => {
+                        const issue = addressCityIssue(
+                          g.new_address ?? "",
+                          { wuerzburgOnly: true },
+                        );
+                        if (!issue) return null;
+                        return (
+                          <p className="mt-1 rounded-md border border-amber-400/50 bg-amber-50/70 px-2.5 py-1.5 text-xs text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
+                            {issue.message}
+                          </p>
+                        );
+                      })()}
                     </div>
                   </div>
-                )}
 
                 {g.items.length > 0 && (
                   <ul className="mt-2 space-y-1.5">
@@ -1237,13 +1283,13 @@ function KeyResultBody({ result }: { result: KeyImportResult }) {
 }
 
 function ItemResultBody({ result }: { result: ItemGroupImportResult }) {
-  const skipped = result.not_found + result.new_objects_skipped;
+  const skipped = result.new_objects_skipped;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
         <ResultStat
           value={result.assigned}
-          label="Objekte befüllt"
+          label="Objekte angelegt"
           tone="success"
         />
         <ResultStat
@@ -1259,10 +1305,10 @@ function ItemResultBody({ result }: { result: ItemGroupImportResult }) {
         <ResultStat value={skipped} label="übersprungen" tone="destructive" />
       </div>
       <p className="text-xs text-muted-foreground">
-        Nicht gefundene Objekte wurden automatisch mit exakter Adresse
-        angelegt. Als „Standard“ markierte Items sind bei jeder Belieferung
-        fest vorgesehen – alle übernommenen Items erscheinen in der nächsten
-        Tour.
+        Jede bestätigte Gruppe wurde als neues Objekt mit exakter Adresse
+        angelegt. Warnungen zu ähnlichen Bestandsobjekten ändern daran nichts;
+        bestehende Objekte werden nicht bearbeitet. Als „Standard“ markierte
+        Items sind bei jeder Belieferung fest vorgesehen.
       </p>
     </div>
   );

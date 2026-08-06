@@ -186,7 +186,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
           </DialogTitle>
           <DialogDescription>
             Je Item: Menge, Bezeichnung und optionale Bemerkung. „Standard“ ist
-            bei jeder Belieferung fest vorgesehen.
+            bei jeder Belieferung fest vorgesehen. „Vormerken" markiert ein Nicht-Standard-Item einmalig für die nächste Belieferung.
           </DialogDescription>
         </DialogHeader>
 
@@ -214,6 +214,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
                       onCheckedChange={() =>
                         void handleUpdate(item, {
                           is_always_required: !item.is_always_required,
+                          ...(item.is_always_required ? {} : { is_reserved: false }),
                         })
                       }
                       aria-label={
@@ -222,8 +223,27 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
                           : `${item.item_name} als Standard markieren`
                       }
                     />
-                    {item.is_always_required && (
+                    {item.is_always_required ? (
                       <Badge variant="success">Standard</Badge>
+                    ) : (
+                      <>
+                        <Checkbox
+                          checked={item.is_reserved}
+                          onCheckedChange={() =>
+                            void handleUpdate(item, {
+                              is_reserved: !item.is_reserved,
+                            })
+                          }
+                          aria-label={
+                            item.is_reserved
+                              ? `${item.item_name} Vormerkung aufheben`
+                              : `${item.item_name} für nächste Belieferung vormerken`
+                          }
+                        />
+                        {item.is_reserved && (
+                          <Badge variant="outline">vorgemerkt</Badge>
+                        )}
+                      </>
                     )}
                     <div className="flex-1" />
                     <Button

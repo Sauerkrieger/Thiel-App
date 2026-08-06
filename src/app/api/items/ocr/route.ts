@@ -5,6 +5,7 @@ import {
   extractItemsFromImage,
 } from "@/lib/ocr";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { resolveImageMimeType } from "@/lib/image-mime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,9 +39,10 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!file.type.startsWith("image/")) {
+    const mimeType = resolveImageMimeType(file.type, file.name);
+    if (!mimeType) {
       return NextResponse.json(
-        { error: "Die Datei ist kein Bild." },
+        { error: "Die Datei ist kein unterstütztes Bild. Bitte JPG, PNG, WEBP oder HEIC verwenden." },
         { status: 400 },
       );
     }
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const imageBase64 = buffer.toString("base64");
 
-    const items = await extractItemsFromImage(imageBase64, file.type);
+    const items = await extractItemsFromImage(imageBase64, mimeType);
 
     return NextResponse.json({ items });
   } catch (e) {

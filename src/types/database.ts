@@ -25,7 +25,12 @@ export type Json =
 /* Enums                                                               */
 /* ------------------------------------------------------------------ */
 
-export type UserRole = 'driver' | 'admin' | 'facility_manager';
+export type UserRole =
+  | 'driver'
+  | 'admin'
+  | 'facility_manager'
+  | 'cleaner'
+  | 'substitute';
 
 export type ObjectCategory = 'objekt' | 'treppenhaus';
 
@@ -38,6 +43,8 @@ export const USER_ROLES: readonly UserRole[] = [
   'driver',
   'admin',
   'facility_manager',
+  'cleaner',
+  'substitute',
 ];
 
 export const OBJECT_CATEGORIES: readonly ObjectCategory[] = [
@@ -65,6 +72,9 @@ export interface Database {
           client_updated_at: string | null;
           /** Serverzeit des letzten Syncs. */
           synced_at: string | null;
+          vacation_days_total: number;
+          vacation_days_used: number;
+          overtime_hours: number;
         };
         Insert: {
           id: string;
@@ -75,6 +85,9 @@ export interface Database {
           updated_at?: string;
           client_updated_at?: string | null;
           synced_at?: string | null;
+          vacation_days_total?: number;
+          vacation_days_used?: number;
+          overtime_hours?: number;
         };
         Update: {
           id?: string;
@@ -85,6 +98,9 @@ export interface Database {
           updated_at?: string;
           client_updated_at?: string | null;
           synced_at?: string | null;
+          vacation_days_total?: number;
+          vacation_days_used?: number;
+          overtime_hours?: number;
         };
         Relationships: [
           {
@@ -96,6 +112,93 @@ export interface Database {
             referencedSchema: 'auth';
           },
         ];
+      };
+      time_entries: {
+        Row: {
+          id: string;
+          user_id: string;
+          clock_in: string;
+          clock_out: string | null;
+          break_duration_minutes: number;
+          note: string | null;
+          is_approved: boolean;
+          created_at: string;
+          updated_at: string;
+          client_updated_at: string | null;
+          synced_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          clock_in: string;
+          clock_out?: string | null;
+          break_duration_minutes?: number;
+          note?: string | null;
+          is_approved?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          clock_in?: string;
+          clock_out?: string | null;
+          break_duration_minutes?: number;
+          note?: string | null;
+          is_approved?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
+        };
+        Relationships: [];
+      };
+      time_off_requests: {
+        Row: {
+          id: string;
+          user_id: string;
+          type: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
+          start_date: string;
+          end_date: string;
+          status: 'pending' | 'approved' | 'rejected';
+          reviewer_note: string | null;
+          employee_note: string | null;
+          created_at: string;
+          updated_at: string;
+          client_updated_at: string | null;
+          synced_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          type: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
+          start_date: string;
+          end_date: string;
+          status?: 'pending' | 'approved' | 'rejected';
+          reviewer_note?: string | null;
+          employee_note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          type?: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
+          start_date?: string;
+          end_date?: string;
+          status?: 'pending' | 'approved' | 'rejected';
+          reviewer_note?: string | null;
+          employee_note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          client_updated_at?: string | null;
+          synced_at?: string | null;
+        };
+        Relationships: [];
       };
       objects: {
         Row: {
@@ -121,6 +224,12 @@ export interface Database {
           cleaning_interval: string | null;
           /** Bemerkung zum Objekt – für alle sichtbar; nur Admins bearbeiten. */
           remark: string | null;
+          /** Zeitpunkt der letzten erfolgreichen Belieferung (Tour-Abschluss). */
+          last_delivery_at: string | null;
+          /** Name des Fahrers, der zuletzt beliefert hat. */
+          last_delivery_driver_name: string | null;
+          /** JSON-Array der tatsächlich gelieferten Items inklusive Menge und Bemerkung. */
+          last_delivery_items: Json | null;
           created_at: string;
           updated_at: string;
           /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
@@ -142,6 +251,9 @@ export interface Database {
           customer_number?: string | null;
           cleaning_interval?: string | null;
           remark?: string | null;
+          last_delivery_at?: string | null;
+          last_delivery_driver_name?: string | null;
+          last_delivery_items?: Json | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -161,6 +273,9 @@ export interface Database {
           customer_number?: string | null;
           cleaning_interval?: string | null;
           remark?: string | null;
+          last_delivery_at?: string | null;
+          last_delivery_driver_name?: string | null;
+          last_delivery_items?: Json | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -181,6 +296,8 @@ export interface Database {
           photo_path: string | null;
           /** true = Standard-Item, im Pack-/Tour-Modus fest angehakt & ausgegraut. */
           is_always_required: boolean;
+          /** Einmalig für die nächste Belieferung vormerken (wird nach Belieferung zurückgesetzt). */
+          is_reserved: boolean;
           created_at: string;
           updated_at: string;
           /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
@@ -196,6 +313,7 @@ export interface Database {
           note?: string | null;
           photo_path?: string | null;
           is_always_required?: boolean;
+          is_reserved?: boolean;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -209,6 +327,7 @@ export interface Database {
           note?: string | null;
           photo_path?: string | null;
           is_always_required?: boolean;
+          is_reserved?: boolean;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -312,6 +431,8 @@ export interface Database {
           key_number: number | null;
           /** JSON-Liste der wählbaren Items für die nächste Belieferung. */
           next_delivery_items: Json;
+          /** Snapshot der tatsächlich gelieferten Items dieses Stopps. */
+          delivered_items: Json;
           created_at: string;
           updated_at: string;
           /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
@@ -328,6 +449,7 @@ export interface Database {
           is_delivered?: boolean;
           key_number?: number | null;
           next_delivery_items?: Json;
+          delivered_items?: Json;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -342,6 +464,7 @@ export interface Database {
           is_delivered?: boolean;
           key_number?: number | null;
           next_delivery_items?: Json;
+          delivered_items?: Json;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -509,6 +632,8 @@ export interface Database {
     };
     Enums: {
       user_role: UserRole;
+      time_off_type: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
+      time_off_status: 'pending' | 'approved' | 'rejected';
       object_category: ObjectCategory;
       tour_status: TourStatus;
     };
@@ -524,6 +649,8 @@ export type Tables<T extends keyof Database['public']['Tables']> =
   Database['public']['Tables'][T]['Row'];
 
 export type Profile = Tables<'profiles'>;
+export type TimeEntryRecord = Tables<'time_entries'>;
+export type TimeOffRequestRecord = Tables<'time_off_requests'>;
 export type ObjectRecord = Tables<'objects'>;
 export type ObjectItem = Tables<'object_items'>;
 export type InventoryItem = Tables<'inventory_items'>;

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Building2, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import { ClockWidget } from "@/components/time-tracking/clock-widget";
 import { cn } from "@/lib/utils";
 import { initSync, useSyncState } from "@/lib/offline/sync";
 import type { UserRole } from "@/types/database";
@@ -32,6 +33,15 @@ const NAV_ITEMS: NavItem[] = [
     href: "/historie",
     label: "Historie",
     roles: ["driver", "admin"],
+  },
+  {
+    href: "/zeiterfassung",
+    label: "Zeiterfassung",
+  },
+  {
+    href: "/admin/zeiterfassung",
+    label: "Zeitadmin",
+    roles: ["admin"],
   },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings },
 ];
@@ -121,6 +131,7 @@ export function AppShell({
               );
             })}
           </nav>
+          {userRole && <ClockWidget userId={userId} />}
           <SyncBadge sync={sync} />
         </div>
       </header>

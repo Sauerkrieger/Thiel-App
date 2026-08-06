@@ -6,8 +6,8 @@ import {
   validLatitude,
   validLongitude,
 } from "@/lib/http";
-import { parseItemInputs, type ItemInput } from "@/lib/items";
-import { cleanAddressLabel } from "@/lib/address";
+import { parseItemInputs } from "@/lib/items";
+import { analyzeAddressCity, cleanAddressLabel, ensureAddressCity } from "@/lib/address";
 import { findDuplicate, normalizeAddress } from "@/lib/ocr";
 import {
   normalizeAddressForGeocoding,
@@ -61,44 +61,27 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const groups = Array.isArray(body.groups) ? (body.groups as unknown[]) : [];
+    // Dieser Import darf ausschließlich neue Objekte anlegen. Ein früheres
+    // Payload-Feld `groups` wird bewusst ignoriert, damit ältere Clients
+    // niemals wieder bestehende Objekte mit Items verändern können.
     const rawNewObjects = Array.isArray(body.new_objects)
       ? (body.new_objects as unknown[])
       : [];
 
-    if (groups.length === 0 && rawNewObjects.length === 0) {
+    if (rawNewObjects.length === 0) {
       return NextResponse.json(
         { error: "Keine Items-Gruppen übermittelt." },
         { status: 400 },
       );
     }
-    if (groups.length + rawNewObjects.length > MAX_GROUPS) {
+    if (rawNewObjects.length > MAX_GROUPS) {
       return NextResponse.json(
         { error: `Maximal ${MAX_GROUPS} Gruppen erlaubt.` },
         { status: 400 },
       );
     }
 
-    const parsed = groups
-      .map((g) => {
-        if (typeof g !== "object" || g === null) return null;
-        const raw = g as Record<string, unknown>;
-        const objectId = typeof raw.object_id === "string" ? raw.object_id : "";
-        const items = parseItemInputs(raw.items);
-        if (!objectId || !items || items.length === 0) return null;
-        return { object_id: objectId, items, ...parseAdminInfo(raw) };
-      })
-      .filter(
-        (g): g is {
-          object_id: string;
-          items: ItemInput[];
-          customer: string | null;
-          customer_number: string | null;
-          cleaning_interval: string | null;
-        } => g !== null,
-      );
-
-    // Neu anzulegende Objekte (aus „Objekt nicht gefunden“-Einträgen).
+    // Neu anzulegende Objekte aus der bestätigten Vorschau.
     // Eine exakte Adresse mit Hausnummer ist Pflicht – reine Straßen- oder
     // Ortsangaben werden abgelehnt.
     const newObjects: ItemGroupImportNewObject[] = [];
@@ -112,7 +95,10 @@ export async function POST(request: Request) {
       if (!hasHouseNumber(address)) continue;
       newObjects.push({
         name,
-        address,
+        // Würzburg-Regel: Ohne Ortsangabe wird „Würzburg“ ergänzt, damit die
+        // Adresse nie ohne Städtezusatz gespeichert wird (sonst landet sie
+        // beim Geocoding irgendwo in Deutschland).
+        address: ensureAddressCity(address),
         latitude: validLatitude(r.latitude),
         longitude: validLongitude(r.longitude),
         category: isObjectCategory(r.category) ? r.category : "objekt",
@@ -121,7 +107,7 @@ export async function POST(request: Request) {
       });
     }
 
-    if (parsed.length === 0 && newObjects.length === 0) {
+    if (newObjects.length === 0) {
       return NextResponse.json(
         { error: "Ungültige Items-Gruppen übermittelt." },
         { status: 400 },
@@ -130,33 +116,22 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdmin();
 
-    // Existierende Objekte laden: für die Zuordnungs-Validierung und den
-    // Duplikat-Check der neu anzulegenden Objekte.
-    const ids = parsed.map((p) => p.object_id);
-    const { data: existing, error: existingError } = await supabase
-      .from("objects")
-      .select("id")
-      .in("id", ids);
-    if (existingError) throw existingError;
-    const existingIds = new Set((existing ?? []).map((o) => o.id));
-
+    // Nur für die Warnstatistik laden. Die Treffer werden niemals als
+    // Zielobjekt für Items verwendet.
     const { data: allObjects, error: allObjectsError } = await supabase
       .from("objects")
-      .select("id, name, address");
+      .select("address");
     if (allObjectsError) throw allObjectsError;
     const existingAddresses = (allObjects ?? []).map((o) =>
       normalizeAddress(o.address),
     );
-    const objectByAddress = new Map(
-      (allObjects ?? []).map((o) => [normalizeAddress(o.address), o]),
-    );
-
     const result: ItemGroupImportResult = {
       assigned: 0,
       items_added: 0,
       not_found: 0,
       new_objects_created: 0,
       new_objects_skipped: 0,
+      duplicate_warnings: 0,
     };
 
     const toInsert: {
@@ -165,49 +140,17 @@ export async function POST(request: Request) {
       quantity: number;
       note: string | null;
       is_always_required: boolean;
+      is_reserved: boolean;
     }[] = [];
 
-    // 1) Bestehende Objekte
-    for (const p of parsed) {
-      if (!existingIds.has(p.object_id)) {
-        result.not_found += 1;
-        continue;
-      }
-      for (const item of p.items) {
-        toInsert.push({
-          object_id: p.object_id,
-          item_name: item.item_name,
-          quantity: item.quantity,
-          note: item.note,
-          is_always_required: item.is_always_required,
-        });
-      }
-      result.assigned += 1;
-    }
-
-    // 2) Neue Objekte anlegen (mit Duplikat-Erkennung über die Adresse)
+    // Neue Objekte anlegen. Ähnliche Bestandsobjekte werden nur gezählt
+    // und gemeldet; sie dürfen den Import niemals in eine Bestandsänderung
+    // oder Zuordnung umwandeln.
     for (const n of newObjects) {
-      const normalized = normalizeAddress(n.address);
-      const duplicate = findDuplicate(normalized, existingAddresses);
-      if (duplicate) {
-        // Adresse existiert bereits → Items dem vorhandenen Objekt zuordnen,
-        // statt ein Duplikat anzulegen.
-        const dupObj = objectByAddress.get(duplicate);
-        if (dupObj) {
-          for (const item of n.items) {
-            toInsert.push({
-              object_id: dupObj.id,
-              item_name: item.item_name,
-              quantity: item.quantity,
-              note: item.note,
-              is_always_required: item.is_always_required,
-            });
-          }
-          result.assigned += 1;
-        } else {
-          result.new_objects_skipped += 1;
-        }
-        continue;
+      const finalAddress = cleanAddressLabel(n.address);
+      const normalized = normalizeAddress(finalAddress);
+      if (findDuplicate(normalized, existingAddresses)) {
+        result.duplicate_warnings += 1;
       }
 
       // Koordinaten aus der Vorschau übernehmen; falls sie fehlen (kein ORS-
@@ -215,13 +158,15 @@ export async function POST(request: Request) {
       let latitude = n.latitude;
       let longitude = n.longitude;
       if (latitude === null || longitude === null) {
-        // Ohne PLZ/Ort im Zettel wird die Adresse in Würzburg vermutet –
-        // die Suche wird dann auf das Würzburger Stadtgebiet begrenzt.
-        const boundary = /\b\d{5}\b/.test(n.address)
-          ? undefined
-          : WUERZBURG_BOUNDARY;
+        // Würzburg-Regel: Nennt die Adresse explizit eine andere Stadt
+        // (z. B. Ochsenfurt), wird ohne Begrenzung gesucht. Sonst – inklusive
+        // fehlender Ortsangabe (wird als Würzburg behandelt) – wird die Suche
+        // auf das Würzburger Stadtgebiet begrenzt.
+        const city = analyzeAddressCity(finalAddress);
+        const boundary =
+          city.hasCity && !city.isWuerzburg ? undefined : WUERZBURG_BOUNDARY;
         const hit = await orsGeocodeSearch(
-          normalizeAddressForGeocoding(n.address),
+          normalizeAddressForGeocoding(finalAddress),
           { boundary },
         );
         if (hit) {
@@ -240,7 +185,7 @@ export async function POST(request: Request) {
         .from("objects")
         .insert({
           name: n.name,
-          address: cleanAddressLabel(n.address),
+          address: finalAddress,
           category: n.category,
           is_pedestrian_zone_until_11: isPedestrianZone,
           opens_at: null,
@@ -259,8 +204,6 @@ export async function POST(request: Request) {
 
       result.new_objects_created += 1;
       existingAddresses.push(normalized);
-      objectByAddress.set(normalized, created);
-
       for (const item of n.items) {
         toInsert.push({
           object_id: created.id,
@@ -268,6 +211,7 @@ export async function POST(request: Request) {
           quantity: item.quantity,
           note: item.note,
           is_always_required: item.is_always_required,
+          is_reserved: false,
         });
       }
       result.assigned += 1;
@@ -279,28 +223,6 @@ export async function POST(request: Request) {
       const { error } = await supabase.from("object_items").insert(batch);
       if (error) throw error;
       result.items_added += batch.length;
-    }
-
-    // 3) Erkannte Admin-Infos (Kunde, Kundennummer, Reinigungsturnus) an
-    //    bestehende Objekte schreiben – nur gesetzte Werte überschreiben.
-    for (const p of parsed) {
-      if (!existingIds.has(p.object_id)) continue;
-      const update: {
-        customer?: string;
-        customer_number?: string;
-        cleaning_interval?: string;
-      } = {};
-      if (p.customer !== null) update.customer = p.customer;
-      if (p.customer_number !== null)
-        update.customer_number = p.customer_number;
-      if (p.cleaning_interval !== null)
-        update.cleaning_interval = p.cleaning_interval;
-      if (Object.keys(update).length === 0) continue;
-      const { error } = await supabase
-        .from("objects")
-        .update(update)
-        .eq("id", p.object_id);
-      if (error) throw error;
     }
 
     return NextResponse.json(result);

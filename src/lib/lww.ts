@@ -82,6 +82,7 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "note",
     "photo_path",
     "is_always_required",
+    "is_reserved",
   ],
   inventory_items: ["name", "note"],
   weekly_default_routes: ["day_of_week", "object_id", "selection_order"],
@@ -100,6 +101,24 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "is_delivered",
     "key_number",
     "next_delivery_items",
+    "delivered_items",
+  ],
+  time_entries: [
+    "user_id",
+    "clock_in",
+    "clock_out",
+    "break_duration_minutes",
+    "note",
+    "is_approved",
+  ],
+  time_off_requests: [
+    "user_id",
+    "type",
+    "start_date",
+    "end_date",
+    "status",
+    "reviewer_note",
+    "employee_note",
   ],
 };
 
@@ -131,7 +150,10 @@ type FieldSpec =
 const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
   profiles: {
     name: { t: "text", max: 200 },
-    role: { t: "enum", values: ["driver", "admin", "facility_manager"] },
+    role: {
+      t: "enum",
+      values: ["driver", "admin", "facility_manager", "cleaner", "substitute"],
+    },
   },
   objects: {
     name: { t: "text", max: 200 },
@@ -154,6 +176,7 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     note: { t: "text", max: 500 },
     photo_path: { t: "text", max: 500 },
     is_always_required: { t: "bool" },
+    is_reserved: { t: "bool" },
   },
   inventory_items: {
     name: { t: "text", max: 200 },
@@ -179,6 +202,24 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     is_delivered: { t: "bool" },
     key_number: { t: "number", min: 1, max: 100000, int: true },
     next_delivery_items: { t: "json" },
+    delivered_items: { t: "json" },
+  },
+  time_entries: {
+    user_id: { t: "text", max: 64 },
+    clock_in: { t: "text", max: 64 },
+    clock_out: { t: "text", max: 64 },
+    break_duration_minutes: { t: "number", min: 0, max: 1440, int: true },
+    note: { t: "text", max: 500 },
+    is_approved: { t: "bool" },
+  },
+  time_off_requests: {
+    user_id: { t: "text", max: 64 },
+    type: { t: "enum", values: ["vacation", "sick_leave", "unpaid", "compensatory"] },
+    start_date: { t: "date" },
+    end_date: { t: "date" },
+    status: { t: "enum", values: ["pending", "approved", "rejected"] },
+    reviewer_note: { t: "text", max: 1000 },
+    employee_note: { t: "text", max: 1000 },
   },
 };
 
@@ -353,6 +394,25 @@ export function prepareSyncEntry(
   const data = sanitizeSyncData(table, filtered);
 
   // Serverseitig erzwungene Felder
+  if (table === "time_entries" || table === "time_off_requests") {
+    if (!admin) {
+      // Nutzerbezogene Zeit-/Abwesenheitsdaten dürfen auch beim
+      // serverseitigen Admin-Sync nur den eigenen user_id tragen.
+      data.user_id = user.id;
+      if (table === "time_entries") {
+        // Freigaben bleiben Admin-Sache. Bei neuen Mitarbeiter-Einträgen
+        // gilt der Datenbank-Default; ein manipuliertes Feld wird entfernt.
+        delete data.is_approved;
+      } else {
+        // Mitarbeiter können Anträge einreichen, aber nicht selbst genehmigen
+        // oder ablehnen.
+        data.status = "pending";
+        delete data.reviewer_note;
+        // Mitarbeiter dürfen nur ihre eigene Antragsnotiz synchronisieren.
+        if (typeof data.employee_note !== "string") delete data.employee_note;
+      }
+    }
+  }
   if (table === "weekly_default_routes") {
     data.user_id = user.id; // Vorauswahl ist immer an den Nutzer gebunden
   }
@@ -548,6 +608,29 @@ export async function applyLww(
     .single();
   if (created.error) throw created.error;
   return { applied: true, record: created.data ?? {} };
+}
+
+/** Prüft Eigentümer-IDs bei nutzerbezogenen Sync-Tabellen. */
+export async function ownsUserScopedRecord(
+  supabase: SupabaseClient<Database>,
+  user: CurrentUser,
+  table: "time_entries" | "time_off_requests",
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isAdmin(user)) return { ok: true };
+  const db = supabase as unknown as {
+    from(name: string): SyncQuery;
+  };
+  const existing = await db
+    .from(table)
+    .select("user_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data && existing.data.user_id !== user.id) {
+    return { ok: false, error: "Datensatz gehört nicht zum eigenen Benutzer." };
+  }
+  return { ok: true };
 }
 
 /** Prüft, ob eine tour_stops-Zeile zu einer Tour des Nutzers gehört (oder er Admin ist). */

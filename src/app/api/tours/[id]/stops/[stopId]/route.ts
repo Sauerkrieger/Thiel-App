@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
-import { parseDeliveryItems } from "@/lib/items";
+import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
@@ -49,6 +49,7 @@ export async function PATCH(request: Request, { params }: Context) {
     const update: {
       is_delivered?: boolean;
       next_delivery_items?: DeliveryItem[];
+      delivered_items?: ReturnType<typeof parseDeliveredItems>;
     } = {};
 
     if (typeof body.is_delivered === "boolean") {
@@ -74,6 +75,21 @@ export async function PATCH(request: Request, { params }: Context) {
         );
       }
       update.next_delivery_items = items;
+    }
+    // Der Liefer-Snapshot wird nur beim erstmaligen Beliefern gesetzt oder
+    // beim expliziten Zurücksetzen gelöscht. Änderungen an Vormerkungen
+    // dürfen die Historie nicht nachträglich verändern.
+    if (body.is_delivered === true && Array.isArray(body.delivered_items)) {
+      const deliveredItems = parseDeliveredItems(body.delivered_items);
+      if (deliveredItems.length > MAX_ITEMS) {
+        return NextResponse.json(
+          { error: `Maximal ${MAX_ITEMS} gelieferte Items erlaubt.` },
+          { status: 400 },
+        );
+      }
+      update.delivered_items = deliveredItems;
+    } else if (body.is_delivered === false) {
+      update.delivered_items = [];
     }
 
     if (Object.keys(update).length === 0) {

@@ -166,9 +166,11 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
 
   const standardItems = items.filter((item) => item.is_always_required);
   const previousNames = new Set(previousExtras.map((e) => e.item_name));
-  // Vorgemerkte Items aus der letzten Belieferung, die noch im Katalog sind -> fest vorgesehen
+  // Vorgemerkte Items aus der letzten Belieferung + reservierte Items, die noch im Katalog sind
   const markedItems = items.filter(
-    (item) => !item.is_always_required && previousNames.has(item.item_name),
+    (item) =>
+      !item.is_always_required &&
+      (previousNames.has(item.item_name) || item.is_reserved),
   );
   const staleExtras = previousExtras.filter(
     (e) => !items.some((item) => item.item_name === e.item_name),

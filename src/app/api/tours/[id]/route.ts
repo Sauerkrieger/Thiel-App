@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
-import { parseDeliveryItems } from "@/lib/items";
+import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
@@ -117,6 +117,7 @@ export async function GET(_request: Request, { params }: Context) {
       tour_stops: (raw.tour_stops ?? []).map((stop) => ({
         ...stop,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
+        delivered_items: parseDeliveredItems(stop.delivered_items),
       })),
     };
     return NextResponse.json({ tour: { ...tour, warehouse: await resolveWarehouse() } });
@@ -156,6 +157,11 @@ export async function PATCH(request: Request, { params }: Context) {
     }
 
     const supabase = getSupabaseAdmin();
+
+    // Die Last-Delivery-Aktualisierung und das Verbrauchen der Vormerkungen
+    // erfolgen per Datenbank-Trigger genau beim Statusübergang bzw. der
+    // erfolgreichen Belieferung. So funktioniert es auch über den Offline-Sync.
+
     const lww = await checkLww(
       supabase,
       "active_tours",

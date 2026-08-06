@@ -16,8 +16,8 @@
  */
 
 import type { SyncTable } from "@/lib/sync-tables";
-import { parseDeliveryItems } from "@/lib/items";
-import { getAllRecords, getRecord, putRecord } from "./db";
+import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
+import { deleteRecord, getAllRecords, getRecord, putRecord } from "./db";
 import {
   getCurrentUserId,
   getSyncState,
@@ -73,6 +73,12 @@ const CACHEABLE_GETS: ReadonlyArray<{
   { pattern: /^\/api\/tours$/, tables: ["active_tours"] },
   { pattern: /^\/api\/tours\/[^/]+$/, tables: ["active_tours", "tour_stops", "objects"] },
   { pattern: /^\/api\/auth\/users$/, tables: ["profiles"] },
+  { pattern: /^\/api\/time-tracking\/clock$/, tables: ["time_entries"] },
+  { pattern: /^\/api\/time-tracking\/entries$/, tables: ["time_entries"] },
+  { pattern: /^\/api\/time-tracking\/requests$/, tables: ["time_off_requests"] },
+  { pattern: /^\/api\/time-tracking\/summary$/, tables: ["profiles", "time_entries", "time_off_requests"] },
+  { pattern: /^\/api\/admin\/time-tracking\/overview$/, tables: ["profiles", "time_entries", "time_off_requests"] },
+  { pattern: /^\/api\/admin\/time-tracking\/status$/, tables: ["profiles", "time_entries"] },
 ];
 
 const OBJECT_FIELDS = [
@@ -97,9 +103,27 @@ const ITEM_FIELDS = [
   "note",
   "photo_path",
   "is_always_required",
+  "is_reserved",
 ] as const;
 
 const INVENTORY_FIELDS = ["name", "note"] as const;
+const TIME_ENTRY_FIELDS = [
+  "user_id",
+  "clock_in",
+  "clock_out",
+  "break_duration_minutes",
+  "note",
+  "is_approved",
+] as const;
+const TIME_OFF_FIELDS = [
+  "user_id",
+  "type",
+  "start_date",
+  "end_date",
+  "status",
+  "reviewer_note",
+  "employee_note",
+] as const;
 
 function pick(
   source: Record<string, unknown>,
@@ -287,6 +311,55 @@ async function cacheResponse(
       "profiles",
       (Array.isArray(body.users) ? body.users : []) as Array<Record<string, unknown>>,
     );
+    return;
+  }
+  if (path === "/api/time-tracking/clock") {
+    const entry = body.entry;
+    if (entry && typeof entry === "object") {
+      await cacheRows("time_entries", [entry as Record<string, unknown>]);
+    } else if (entry === null) {
+      const userId = getCurrentUserId();
+      const cached = await getAllRecords("time_entries");
+      for (const record of cached) {
+        if (record.data.user_id === userId && record.data.clock_out == null) {
+          await deleteRecord("time_entries", record.id);
+        }
+      }
+    }
+    return;
+  }
+  if (path === "/api/time-tracking/entries") {
+    await cacheRows(
+      "time_entries",
+      (Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>,
+    );
+    return;
+  }
+  if (path === "/api/time-tracking/requests") {
+    await cacheRows(
+      "time_off_requests",
+      (Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>,
+    );
+    return;
+  }
+  if (path === "/api/time-tracking/summary" || path === "/api/admin/time-tracking/overview") {
+    const profiles = body.profile && typeof body.profile === "object"
+      ? [body.profile as Record<string, unknown>]
+      : (Array.isArray(body.employees) ? body.employees : []) as Array<Record<string, unknown>>;
+    await cacheRows("profiles", profiles);
+    await cacheRows("time_entries", (Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>);
+    await cacheRows("time_off_requests", (Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>);
+    return;
+  }
+  if (path === "/api/admin/time-tracking/status") {
+    const employees = (Array.isArray(body.employees) ? body.employees : []) as Array<Record<string, unknown>>;
+    await cacheRows("profiles", employees);
+    await cacheRows(
+      "time_entries",
+      employees
+        .map((employee) => employee.current_entry)
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object")),
+    );
   }
 }
 
@@ -295,7 +368,7 @@ async function cacheResponse(
 /* ------------------------------------------------------------------ */
 
 async function readOffline(req: OfflineRead): Promise<Response> {
-  const { path, params } = req;
+  const { path, params, query } = req;
 
   if (path === "/api/objects") {
     const objects = await cacheRowsOf("objects");
@@ -462,6 +535,7 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         is_delivered: stop.is_delivered === true,
         key_number: typeof stop.key_number === "number" ? stop.key_number : null,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
+        delivered_items: parseDeliveredItems(stop.delivered_items),
         object: {
           id: stop.object_id,
           name: obj.name ?? "Unbekanntes Objekt",
@@ -481,6 +555,96 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   if (path === "/api/auth/users") {
     const users = await cacheRowsOf("profiles");
     return jsonResponse(200, { users });
+  }
+
+  if (path === "/api/time-tracking/clock") {
+    const userId = getCurrentUserId();
+    const entry = (await cacheRowsOf("time_entries"))
+      .filter((row) => row.user_id === userId && row.clock_out == null)
+      .sort((a, b) => String(b.clock_in ?? "").localeCompare(String(a.clock_in ?? "")))[0] ?? null;
+    return jsonResponse(200, { entry });
+  }
+
+  if (path === "/api/time-tracking/entries") {
+    const userId = getCurrentUserId();
+    const all = await cacheRowsOf("time_entries");
+    return jsonResponse(200, {
+      entries: all.filter((row) => userId === null || row.user_id === userId),
+    });
+  }
+
+  if (path === "/api/time-tracking/requests") {
+    return jsonResponse(200, { requests: await cacheRowsOf("time_off_requests") });
+  }
+
+  if (path === "/api/time-tracking/summary") {
+    const userId = getCurrentUserId();
+    const profile = (await cacheRowsOf("profiles")).find((row) => row.id === userId) ?? null;
+    const entries = (await cacheRowsOf("time_entries")).filter((row) => userId === null || row.user_id === userId);
+    const requests = (await cacheRowsOf("time_off_requests")).filter((row) => userId === null || row.user_id === userId);
+    return jsonResponse(200, { profile, entries, requests });
+  }
+
+  if (path === "/api/admin/time-tracking/overview") {
+    const role = query.get("role");
+    const search = (query.get("q") ?? "").trim().toLowerCase();
+    const profiles = (await cacheRowsOf("profiles")).filter((profile) => {
+      const roleMatches = !role || profile.role === role;
+      const searchMatches = !search || String(profile.name ?? "").toLowerCase().includes(search) || String(profile.email ?? "").toLowerCase().includes(search);
+      return roleMatches && searchMatches;
+    });
+    const selectedIds = new Set(profiles.map((profile) => profile.id));
+    const entries = (await cacheRowsOf("time_entries")).filter((entry) => selectedIds.has(entry.user_id as string));
+    const requests = (await cacheRowsOf("time_off_requests")).filter((request) => selectedIds.has(request.user_id as string));
+    const openByUser = new Map(entries.filter((entry) => entry.clock_out == null).map((entry) => [entry.user_id, entry]));
+    // Aktive Tour + nächstes nicht beliefertes Objekt aus dem Cache rekonstruieren
+    // (analog zur Online-Übersicht), damit der Status auch offline vollständig ist.
+    const tours = (await cacheRowsOf("active_tours")).filter((tour) => tour.status === "in_transit");
+    const stops = await cacheRowsOf("tour_stops");
+    const objects = await cacheRowsOf("objects");
+    const objectName = new Map<string, string>();
+    for (const object of objects) {
+      const objectId = typeof object.id === "string" ? object.id : "";
+      const objectLabel = typeof object.name === "string" ? object.name : "";
+      if (objectId) objectName.set(objectId, objectLabel);
+    }
+    const assignmentByDriver = new Map<string, { tour_id: string; tour_date: string; object_name: string | null }>();
+    for (const tour of tours) {
+      const driverId = typeof tour.driver_id === "string" ? tour.driver_id : null;
+      if (!driverId) continue;
+      const tourId = typeof tour.id === "string" ? tour.id : "";
+      const nextStop = stops
+        .filter((stop) => stop.tour_id === tourId && stop.is_delivered !== true)
+        .sort((a, b) => Number(a.stop_order) - Number(b.stop_order))[0];
+      const stopObjectId: string | null =
+        nextStop && typeof nextStop.object_id === "string" ? nextStop.object_id : null;
+      assignmentByDriver.set(driverId, {
+        tour_id: tourId,
+        tour_date: String(tour.date ?? ""),
+        object_name: stopObjectId ? objectName.get(stopObjectId) ?? null : null,
+      });
+    }
+    return jsonResponse(200, {
+      employees: profiles.map((profile) => {
+        const profileId = typeof profile.id === "string" ? profile.id : "";
+        return {
+          ...profile,
+          current_entry: openByUser.get(profileId) ?? null,
+          current_assignment: assignmentByDriver.get(profileId) ?? null,
+        };
+      }),
+      entries,
+      requests,
+    });
+  }
+
+  if (path === "/api/admin/time-tracking/status") {
+    const profiles = await cacheRowsOf("profiles");
+    const entries = await cacheRowsOf("time_entries");
+    const openByUser = new Map(entries.filter((entry) => entry.clock_out == null).map((entry) => [entry.user_id, entry]));
+    return jsonResponse(200, {
+      employees: profiles.map((profile) => ({ ...profile, current_entry: openByUser.get(profile.id) ?? null })),
+    });
   }
 
   return jsonResponse(503, { error: "Diese Seite ist offline nicht verfügbar." });
@@ -600,6 +764,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       "arrival_time",
       "is_delivered",
       "next_delivery_items",
+      "delivered_items",
     ]));
     return jsonResponse(200, { stop: { id: params.stopId } });
   }
@@ -627,6 +792,68 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     return jsonResponse(200, { user: { id: params.id } });
   }
 
+  // Zeiterfassung: Online bleibt die Clock-Route autoritativ; bei einem
+  // Netzwerkausfall werden Creates/Updates direkt im Sync-Store gehalten.
+  if (path === "/api/time-tracking/clock" && method === "POST") {
+    const action = body.action;
+    const entries = await cacheRowsOf("time_entries");
+    const currentUserId = getCurrentUserId();
+    const open = entries.find((entry) => entry.user_id === currentUserId && entry.clock_out == null);
+    const eventAt = typeof body.event_at === "string" ? body.event_at : nowServerAligned();
+    if (action === "clock_in") {
+      if (open) return jsonResponse(200, { entry: open });
+      const id = newRecordId();
+      await queueMutation("time_entries", id, {
+        user_id: currentUserId,
+        clock_in: eventAt,
+        clock_out: null,
+        break_duration_minutes: 0,
+        note: null,
+        is_approved: true,
+      });
+      return jsonResponse(201, { entry: { id, user_id: currentUserId, clock_in: eventAt, clock_out: null, break_duration_minutes: 0, note: null, is_approved: true } });
+    }
+    if (action === "clock_out" && open && typeof open.id === "string") {
+      const existing = await getRecord("time_entries", open.id);
+      await queueMutation("time_entries", open.id, {
+        ...(existing?.data ?? {}),
+        ...pick(open as Record<string, unknown>, TIME_ENTRY_FIELDS as readonly string[]),
+        clock_out: eventAt,
+        break_duration_minutes: Number(body.break_duration_minutes) || 0,
+      });
+      return jsonResponse(200, { entry: { ...open, clock_out: eventAt, break_duration_minutes: Number(body.break_duration_minutes) || 0 } });
+    }
+    return jsonResponse(409, { error: "Keine offene Stempelung vorhanden." });
+  }
+
+  if (/^\/api\/time-tracking\/requests\/[^/]+$/.test(path) && method === "PATCH") {
+    const existing = await getRecord("time_off_requests", params.id);
+    await queueMutation("time_off_requests", params.id, {
+      ...(existing?.data ?? {}),
+      ...pick(body, ["type", "start_date", "end_date", "status", "reviewer_note", "employee_note"]),
+    });
+    return jsonResponse(200, { request: { ...(existing?.data ?? {}), id: params.id, status: body.status } });
+  }
+
+  if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path) && method === "PATCH") {
+    const existing = await getRecord("time_entries", params.id);
+    await queueMutation("time_entries", params.id, {
+      ...(existing?.data ?? {}),
+      is_approved: body.is_approved,
+    });
+    return jsonResponse(200, { entry: { ...(existing?.data ?? {}), id: params.id, is_approved: body.is_approved } });
+  }
+
+  if (path === "/api/time-tracking/requests" && method === "POST") {
+    const id = newRecordId();
+    await queueMutation("time_off_requests", id, {
+      ...pick(body, TIME_OFF_FIELDS as readonly string[]),
+      user_id: getCurrentUserId(),
+      status: "pending",
+    });
+    return jsonResponse(201, { request: { id, ...pick(body, TIME_OFF_FIELDS as readonly string[]), status: "pending" } });
+  }
+
   return jsonResponse(503, { error: "Diese Aktion ist offline nicht verfügbar." });
 }
 
@@ -642,6 +869,14 @@ function stripQuery(url: string): { path: string; query: URLSearchParams } {
 function extractParams(path: string): Record<string, string> {
   const segments = path.split("/").filter(Boolean);
   const out: Record<string, string> = {};
+  if (segments[0] === "api" && segments[1] === "time-tracking" && segments[2] === "requests" && segments[3]) {
+    out.id = segments[3];
+    return out;
+  }
+  if (segments[0] === "api" && segments[1] === "admin" && segments[2] === "time-tracking" && segments[3] === "entries" && segments[4]) {
+    out.id = segments[4];
+    return out;
+  }
   if (segments[2]) out.id = segments[2];
   if (segments[4]) out.itemId = segments[4];
   if (segments[4]) out.stopId = segments[4];
@@ -662,7 +897,11 @@ function isQueueableMutation(path: string, method: string): boolean {
     /^\/api\/tours\/[^/]+$/.test(path) ||
     /^\/api\/tours\/[^/]+\/stops\/[^/]+$/.test(path) ||
     path === "/api/auth/me-profile" ||
-    /^\/api\/auth\/users\/[^/]+$/.test(path)
+    /^\/api\/auth\/users\/[^/]+$/.test(path) ||
+    path === "/api/time-tracking/clock" ||
+    path === "/api/time-tracking/requests" ||
+    /^\/api\/time-tracking\/requests\/[^/]+$/.test(path) ||
+    /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)
   );
 }
 
@@ -688,6 +927,9 @@ function serverKeyFor(path: string, method: string): string | null {
   if (path === "/api/tours") return "tour";
   if (/^\/api\/tours\/[^/]+$/.test(path)) return "tour";
   if (/^\/api\/tours\/[^/]+\/stops\/[^/]+$/.test(path)) return "stop";
+  if (path === "/api/time-tracking/clock") return "entry";
+  if (/^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "request";
+  if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   return null; // auth: me-profile/users → Antwort ist kein Tabellen-Row
 }
 
@@ -704,6 +946,8 @@ function tableFor(path: string, method: string): SyncTable | null {
   if (path === "/api/auth/me-profile" || /^\/api\/auth\/users\/[^/]+$/.test(path)) {
     return "profiles";
   }
+  if (path === "/api/time-tracking/clock" || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
+  if (path === "/api/time-tracking/requests" || /^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "time_off_requests";
   return null;
 }
 

@@ -24,6 +24,8 @@ export const VALID_USER_ROLES: readonly UserRole[] = [
   "driver",
   "admin",
   "facility_manager",
+  "cleaner",
+  "substitute",
 ];
 
 export function isUserRole(value: unknown): value is UserRole {

@@ -60,6 +60,9 @@ export async function PUT(request: Request, { params }: Context) {
     if (typeof body.is_always_required === "boolean") {
       update.is_always_required = body.is_always_required;
     }
+    if (typeof body.is_reserved === "boolean") {
+      update.is_reserved = body.is_reserved;
+    }
 
     const supabase = getSupabaseAdmin();
     const lww = await checkLww(supabase, "object_items", itemId, body.client_updated_at, [

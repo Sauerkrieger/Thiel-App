@@ -67,8 +67,32 @@ export async function POST(request: Request) {
       );
     }
 
+    // Gemini kann dasselbe Objekt mehrfach aus verschiedenen Zeilen erkennen.
+    // Eine identische Wiederholung ist harmlos und wird zusammengefasst. Zwei
+    // unterschiedliche Schlüssel für dasselbe Objekt sind dagegen unklar und
+    // müssen vor dem Upsert verständlich gemeldet werden. Dadurch kann ein
+    // einzelnes Objekt nicht zweimal in derselben ON-CONFLICT-Anweisung landen.
+    const uniqueByObject = new Map<string, { object_id: string; key_number: number }>();
+    for (const assignment of parsed) {
+      const previous = uniqueByObject.get(assignment.object_id);
+      if (!previous) {
+        uniqueByObject.set(assignment.object_id, assignment);
+        continue;
+      }
+      if (previous.key_number !== assignment.key_number) {
+        return NextResponse.json(
+          {
+            error:
+              "Einem Objekt wurden mehrere unterschiedliche Schlüsselnummern zugewiesen. Bitte die Zuordnung in der Vorschau korrigieren.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    const normalizedAssignments = [...uniqueByObject.values()];
     const supabase = getSupabaseAdmin();
-    const ids = parsed.map((p) => p.object_id);
+    const ids = normalizedAssignments.map((p) => p.object_id);
     const { data: existing, error: objectsError } = await supabase
       .from("objects")
       .select("id, name, address, key_number")
@@ -89,7 +113,7 @@ export async function POST(request: Request) {
       key_number: number;
     }[] = [];
 
-    for (const p of parsed) {
+    for (const p of normalizedAssignments) {
       const obj = existingById.get(p.object_id);
       if (!obj) {
         result.not_found += 1;

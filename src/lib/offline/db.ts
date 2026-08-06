@@ -12,7 +12,9 @@
 import { SYNC_TABLES, type SyncTable } from "@/lib/sync-tables";
 
 const DB_NAME = "thiel-offline";
-const DB_VERSION = 1;
+// Version erhöhen, damit bestehende Installationen die neuen
+// time_entries/time_off_requests-Stores beim nächsten Öffnen anlegen.
+const DB_VERSION = 2;
 
 export type SyncStatus = "synced" | "pending_upload";
 

@@ -14,7 +14,9 @@ export type SyncTable =
   | "inventory_items"
   | "weekly_default_routes"
   | "active_tours"
-  | "tour_stops";
+  | "tour_stops"
+  | "time_entries"
+  | "time_off_requests";
 
 export const SYNC_TABLES: readonly SyncTable[] = [
   "profiles",
@@ -24,6 +26,8 @@ export const SYNC_TABLES: readonly SyncTable[] = [
   "weekly_default_routes",
   "active_tours",
   "tour_stops",
+  "time_entries",
+  "time_off_requests",
 ];
 
 export function isSyncTable(value: unknown): value is SyncTable {

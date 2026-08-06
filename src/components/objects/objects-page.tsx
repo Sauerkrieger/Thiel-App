@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  Calendar,
   Camera,
   ChevronsUpDown,
   KeyRound,
@@ -14,6 +15,7 @@ import {
   Search,
   Store,
   Trash2,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -47,7 +49,7 @@ import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 
 /** Sortierbare Spalten der Objektliste (Klick auf Spaltenkopf). */
-type SortKey = "name" | "address" | "key" | "category" | "items" | "remark";
+type SortKey = "name" | "address" | "key" | "category" | "items" | "remark" | "lastDelivery";
 
 type SortState = {
   key: SortKey;
@@ -73,6 +75,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
   const [photoOpen, setPhotoOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ObjectWithItems | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [lastDeliveryDetail, setLastDeliveryDetail] = useState<ObjectWithItems | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,6 +138,12 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
           return (itemCount(a) - itemCount(b)) * dir;
         case "remark":
           return (a.remark ?? "").localeCompare(b.remark ?? "", "de") * dir;
+        case "lastDelivery":
+          // Objekte ohne Lieferdatum immer ans Ende
+          if (a.last_delivery_at == null && b.last_delivery_at == null) return 0;
+          if (a.last_delivery_at == null) return 1;
+          if (b.last_delivery_at == null) return -1;
+          return a.last_delivery_at.localeCompare(b.last_delivery_at) * dir;
         default:
           return a.name.localeCompare(b.name, "de") * dir;
       }
@@ -271,6 +280,12 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                     sort={sort}
                     onToggle={toggleSort}
                   />
+                  <SortableHeader
+                    label="Zuletzt am"
+                    sortKey="lastDelivery"
+                    sort={sort}
+                    onToggle={toggleSort}
+                  />
                   <TableHead className="pr-4 text-right">Aktionen</TableHead>
                 </TableRow>
               </TableHeader>
@@ -325,6 +340,25 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                         // Spalte schmal halten – volle Bemerkung per Tipp
                         className="max-w-52"
                       />
+                    </TableCell>
+                    <TableCell>
+                      {obj.last_delivery_at ? (
+                        <button
+                          type="button"
+                          onClick={() => setLastDeliveryDetail(obj)}
+                          className="inline-flex items-center gap-1.5 text-sm tabular-nums text-primary hover:underline"
+                          title="Details zur letzten Belieferung anzeigen"
+                        >
+                          <Calendar className="h-3.5 w-3.5 shrink-0" />
+                          {new Date(obj.last_delivery_at).toLocaleDateString("de-DE", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "2-digit",
+                          })}
+                        </button>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">–</span>
+                      )}
                     </TableCell>
                     <TableCell className="pr-4">
                       {isAdmin ? (
@@ -417,6 +451,68 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
               {deleting ? "Wird gelöscht…" : "Löschen"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Letzte-Belieferung-Detail */}
+      <Dialog
+        open={!!lastDeliveryDetail}
+        onOpenChange={(open) => {
+          if (!open) setLastDeliveryDetail(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Letzte Belieferung – {lastDeliveryDetail?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span>
+                {lastDeliveryDetail?.last_delivery_at
+                  ? new Date(lastDeliveryDetail.last_delivery_at).toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    }) +
+                    ", " +
+                    new Date(lastDeliveryDetail.last_delivery_at).toLocaleTimeString("de-DE", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }) +
+                    " Uhr"
+                  : "–"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <span>
+                {lastDeliveryDetail?.last_delivery_driver_name ?? "Unbekannter Fahrer"}
+              </span>
+            </div>
+            <div>
+              <p className="mb-1.5 font-medium">Gelieferte Items:</p>
+              {lastDeliveryDetail?.last_delivery_items &&
+              Array.isArray(lastDeliveryDetail.last_delivery_items) &&
+              lastDeliveryDetail.last_delivery_items.length > 0 ? (
+                <ul className="list-inside list-disc space-y-0.5 text-muted-foreground">
+                  {(lastDeliveryDetail.last_delivery_items as Array<{ item_name?: string; quantity?: number; note?: string | null }>).map(
+                    (item, i) => (
+                      <li key={i}>
+                        {item.quantity && item.quantity > 1 ? `${item.quantity}x ` : ""}
+                        {item.item_name ?? "Unbekanntes Item"}
+                        {item.note ? ` (${item.note})` : ""}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground">Keine Items erfasst.</p>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

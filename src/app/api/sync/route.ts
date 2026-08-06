@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import {
   applyLww,
   ownsTourStop,
+  ownsUserScopedRecord,
   prepareSyncEntry,
   type PreparedSyncEntry,
 } from "@/lib/lww";
@@ -92,6 +93,24 @@ export async function POST(request: Request) {
       const prepared: PreparedSyncEntry = preparedResult.prepared;
 
       try {
+        // Zeit-/Abwesenheitsdaten: bestehende Datensätze dürfen nur vom
+        // Eigentümer (oder Admin) synchronisiert werden.
+        if (
+          prepared.table === "time_entries" ||
+          prepared.table === "time_off_requests"
+        ) {
+          const ownership = await ownsUserScopedRecord(
+            supabase,
+            auth.user,
+            prepared.table,
+            prepared.id,
+          );
+          if (!ownership.ok) {
+            results.push({ table: prepared.table, id: prepared.id, error: ownership.error });
+            continue;
+          }
+        }
+
         // tour_stops: Zugehörigkeit zur eigenen Tour prüfen (außer Admin)
         if (prepared.table === "tour_stops") {
           const ownership = await ownsTourStop(supabase, auth.user, prepared.data);

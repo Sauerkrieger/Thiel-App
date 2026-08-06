@@ -56,6 +56,38 @@ type Props = {
  * Tabellen-Rahmen für die Item-Listen (Item (Bemerkung) | Anzahl) –
  * gleiche Darstellung wie im Pack-Modus.
  */
+function buildDeliveredSnapshot(
+  items: ObjectItem[],
+  previousExtras: DeliveryItem[],
+) {
+  const dueNames = new Set(previousExtras.map((item) => item.item_name));
+  const snapshot = items
+    .filter(
+      (item) =>
+        item.is_always_required ||
+        item.is_reserved ||
+        dueNames.has(item.item_name),
+    )
+    .map((item) => ({
+      item_name: item.item_name,
+      quantity: item.quantity ?? 1,
+      note: item.note ?? null,
+    }));
+
+  // Auch ein inzwischen aus dem Katalog entferntes, zuvor vorgemerktes Item
+  // gehört zur tatsächlichen Lieferung und bleibt in der Historie sichtbar.
+  for (const extra of previousExtras) {
+    if (!snapshot.some((item) => item.item_name === extra.item_name)) {
+      snapshot.push({
+        item_name: extra.item_name,
+        quantity: 1,
+        note: extra.note ?? null,
+      });
+    }
+  }
+  return snapshot;
+}
+
 function ItemsTable({ children }: { children: ReactNode }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-md border">
@@ -105,10 +137,20 @@ export function DeliveryDialog({
       setPreviousExtras(info.previous_extras ?? []);
 
       // Bereits vorgemerkte Items für die nächste Belieferung übernehmen
-      // (next_delivery_items). Vormerkungen gelten genau für die nächste
-      // Belieferung – Vormerkungen aus der letzten Belieferung werden nicht
-      // automatisch übernommen.
-      setExtras(stop.next_delivery_items ?? []);
+      // (next_delivery_items + reservierte Items aus dem Katalog).
+      const reservedNames = new Set(
+        (info.items ?? [])
+          .filter((item) => item.is_reserved && !item.is_always_required)
+          .map((item) => item.item_name),
+      );
+      const base = stop.next_delivery_items ?? [];
+      const merged = [...base];
+      for (const name of reservedNames) {
+        if (!merged.some((e) => e.item_name === name)) {
+          merged.push({ item_name: name, note: null });
+        }
+      }
+      setExtras(merged);
     } catch {
       toast.error("Items konnten nicht geladen werden.");
     } finally {
@@ -146,6 +188,9 @@ export function DeliveryDialog({
         body: JSON.stringify({
           is_delivered: true,
           next_delivery_items: extras,
+          ...(stop.is_delivered
+            ? {}
+            : { delivered_items: buildDeliveredSnapshot(items, previousExtras) }),
         }),
       });
       const body = await res.json();

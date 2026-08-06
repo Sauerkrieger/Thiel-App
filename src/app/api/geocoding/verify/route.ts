@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { normalizeAddressForGeocoding, orsGeocodeSearch } from "@/lib/ors";
+import { analyzeAddressCity } from "@/lib/address";
+import {
+  normalizeAddressForGeocoding,
+  orsGeocodeSearch,
+  WUERZBURG_BOUNDARY,
+} from "@/lib/ors";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +33,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const hit = await orsGeocodeSearch(normalizeAddressForGeocoding(address));
+  // Würzburg-Regel: Nennt die Adresse explizit eine andere Stadt, wird ohne
+  // Begrenzung gesucht. Ohne Ortsangabe (oder mit Würzburg) wird die Suche auf
+  // das Würzburger Stadtgebiet begrenzt – so landet eine getippte Adresse ohne
+  // Stadt nie irgendwo in Deutschland.
+  const city = analyzeAddressCity(address);
+  const boundary =
+    city.hasCity && !city.isWuerzburg ? undefined : WUERZBURG_BOUNDARY;
+  const hit = await orsGeocodeSearch(normalizeAddressForGeocoding(address), {
+    boundary,
+  });
   if (!hit) {
     return NextResponse.json({ verified: false });
   }

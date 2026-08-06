@@ -32,7 +32,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { itemPhotoUrl } from "@/lib/storage";
+import { normalizeImageForAnalysis } from "@/lib/image-upload";
 import { offlineFetch } from "@/lib/offline/fetch";
+import { addressCityIssue, ensureAddressCity } from "@/lib/address";
 import type { ObjectCategory } from "@/types/database";
 import type { ObjectWithItems } from "@/types/api";
 
@@ -50,9 +52,11 @@ type ItemDraft = {
   note: string;
   photo_path: string | null;
   is_always_required: boolean;
+  is_reserved: boolean;
 };
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB nach Optimierung
+const MAX_INPUT_FILE_SIZE = 40 * 1024 * 1024; // Schutz vor extrem großen Rohfotos
 
 export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props) {
   const isEdit = object !== null;
@@ -96,6 +100,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
         note: item.note ?? "",
         photo_path: item.photo_path ?? null,
         is_always_required: item.is_always_required,
+        is_reserved: item.is_reserved,
       })),
     );
     setFormError(null);
@@ -135,7 +140,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
   function addItemRow() {
     setItems((prev) => [
       ...prev,
-      { item_name: "", quantity: "1", note: "", photo_path: null, is_always_required: false },
+      { item_name: "", quantity: "1", note: "", photo_path: null, is_always_required: false, is_reserved: false },
     ]);
   }
 
@@ -176,18 +181,26 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
   /** Packlisten-Foto per KI in strukturierte Items umwandeln. */
   async function handleOcrImport(file: File | null) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
+    if (
+      !file.type.startsWith("image/") &&
+      !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)
+    ) {
       toast.error("Bitte ein Bild auswählen.");
       return;
     }
-    if (file.size > MAX_FILE_SIZE) {
-      toast.error("Das Bild ist größer als 10 MB.");
+    if (file.size > MAX_INPUT_FILE_SIZE) {
+      toast.error("Das Rohfoto ist größer als 40 MB.");
       return;
     }
     setOcrBusy(true);
     try {
+      const normalized = await normalizeImageForAnalysis(file);
+      if (normalized.size > MAX_FILE_SIZE) {
+        toast.error("Das Bild ist auch nach der Optimierung größer als 10 MB.");
+        return;
+      }
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", normalized);
       const res = await fetch("/api/items/ocr", {
         method: "POST",
         body: formData,
@@ -214,6 +227,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
             note: typeof item.note === "string" ? item.note : "",
             photo_path: null,
             is_always_required: false,
+            is_reserved: false,
           }),
         ),
       );
@@ -236,6 +250,10 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
       return;
     }
 
+    // Würzburg-Regel: Fehlt der Ortsangabe, wird beim Speichern automatisch
+    // „Würzburg“ ergänzt (die Live-Validierung hat vorher gewarnt).
+    const finalAddress = ensureAddressCity(address.trim());
+
     const keyParsed = Number(keyNumber.trim());
     const payloadItems = items
       .filter((item) => item.item_name.trim().length > 0)
@@ -245,13 +263,14 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
         note: item.note.trim() || null,
         photo_path: item.photo_path,
         is_always_required: item.is_always_required,
+        is_reserved: item.is_reserved,
       }));
 
     setSaving(true);
     try {
       const payload = {
         name: name.trim(),
-        address: address.trim(),
+        address: finalAddress,
         latitude,
         longitude,
         category,
@@ -328,8 +347,20 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               onSelect={handleAddressSelect}
               onVerified={handleAddressVerified}
               verified={latitude !== null && longitude !== null}
-              placeholder="z. B. Hauptstraße 12, 12345 Musterstadt"
+              placeholder="z. B. Hauptstraße 12, 97072 Würzburg"
             />
+            {/* Live-Validierung nach jedem Zeichen/Pasten */}
+            {(() => {
+              const issue = addressCityIssue(address, {
+                wuerzburgOnly: true,
+              });
+              if (!issue) return null;
+              return (
+                <p className="rounded-md border border-amber-400/50 bg-amber-50/70 px-2.5 py-1.5 text-xs text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
+                  {issue.message}
+                </p>
+              );
+            })()}
           </div>
 
           <div className="space-y-2">
@@ -473,12 +504,25 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                         onCheckedChange={(v) =>
                           updateItem(index, {
                             is_always_required: v === true,
+                            ...(v === true ? { is_reserved: false } : {}),
                           })
                         }
                         aria-label={`Item ${index + 1} als Standard markieren`}
                       />
                       Standard
                     </label>
+                    {!item.is_always_required && (
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Checkbox
+                          checked={item.is_reserved}
+                          onCheckedChange={(v) =>
+                            updateItem(index, { is_reserved: v === true })
+                          }
+                          aria-label={`Item ${index + 1} für nächste Belieferung vormerken`}
+                        />
+                        Vormerken
+                      </label>
+                    )}
                     <div className="flex-1" />
                     <Button
                       type="button"

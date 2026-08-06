@@ -1,18 +1,25 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
+import { ensureAddressCity } from "@/lib/address";
 import {
   GeminiApiNotConfiguredError,
   extractItemGroupsFromImage,
   findMatchingObjectId,
   findBestObjectByName,
+  findDuplicate,
+  normalizeAddress,
   type ExtractedItemGroup,
 } from "@/lib/ocr";
 import { orsGeocodeSearch, WUERZBURG_BOUNDARY } from "@/lib/ors";
 import { hasHouseNumber } from "@/lib/utils";
-import { isPhotoImportStandardItem } from "@/lib/items";
+import {
+  correctItemNameFromInventory,
+  isPhotoImportStandardItem,
+} from "@/lib/items";
 import { requireUser, isAdmin } from "@/lib/auth";
 import type { ItemGroupImportPreview } from "@/types/api";
+import { resolveImageMimeType } from "@/lib/image-mime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,10 +72,13 @@ async function resolveItemGroupAddress(
         geocoding_status: "ok",
       };
     }
-    // ORS hat nur Ort/Straße aufgelöst – die exakte Adresse steht ggf. auf dem Zettel.
+    // ORS hat nur Ort/Straße aufgelöst – die exakte Adresse steht ggf. auf
+    // dem Zettel. Ortsangabe ergänzen: explizite Stadt vom Zettel oder –
+    // Würzburg-Regel – standardmäßig „Würzburg“, damit die Adresse niemals
+    // ohne Städtezusatz übernommen wird (sonst landet sie irgendwo in DE).
     if (hasHouseNumber(group.address ?? "")) {
       return {
-        address: group.address,
+        address: ensureAddressCity(group.address ?? "", group.city),
         latitude: hit.latitude,
         longitude: hit.longitude,
         geocoding_status: "ok",
@@ -110,19 +120,32 @@ async function resolveItemGroupAddress(
 
   // Kein exakter Treffer: Adresse vom Zettel behalten; der Nutzer ergänzt ggf.
   const ocrAddress = group.address?.trim() || null;
-  // Ohne Ortsangabe auf dem Zettel ist die Adresse nicht als Würzburg-Adresse
-  // verifizierbar (kein Treffer, keine Koordinaten) – sie darf NICHT ungeprüft
-  // als „gefunden“ durchgehen, sondern wird als „Adresse fehlt“ markiert.
-  // Steht ein Ort auf dem Zettel, ist die Zettel-Adresse dagegen vertrauenswürdig.
-  const hasCityOnPaper = Boolean(group.city?.trim());
+  if (!ocrAddress) {
+    return {
+      address: null,
+      latitude: null,
+      longitude: null,
+      geocoding_status: "not_found",
+    };
+  }
+  // Ohne Hausnummer ist die Adresse nicht exakt – als „Adresse fehlt“ markieren.
+  if (!hasHouseNumber(ocrAddress)) {
+    return {
+      address: ocrAddress,
+      latitude: null,
+      longitude: null,
+      geocoding_status: "not_found",
+    };
+  }
+  // Würzburg-Regel: Steht auf dem Zettel kein Ort, gilt die Adresse als
+  // Würzburger Adresse und erhält automatisch den Städtezusatz. Steht ein
+  // expliziter Ort auf dem Zettel (z. B. Ochsenfurt), wird dieser übernommen.
+  // Die Koordinaten ermittelt dann die Import-Route (Würzburg-Boundary).
   return {
-    address: ocrAddress,
+    address: ensureAddressCity(ocrAddress, group.city),
     latitude: null,
     longitude: null,
-    geocoding_status:
-      ocrAddress !== null && hasHouseNumber(ocrAddress) && hasCityOnPaper
-        ? "ok"
-        : "not_found",
+    geocoding_status: "ok",
   };
 }
 
@@ -152,9 +175,10 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!file.type.startsWith("image/")) {
+    const mimeType = resolveImageMimeType(file.type, file.name);
+    if (!mimeType) {
       return NextResponse.json(
-        { error: "Die Datei ist kein Bild." },
+        { error: "Die Datei ist kein unterstütztes Bild. Bitte JPG, PNG, WEBP oder HEIC verwenden." },
         { status: 400 },
       );
     }
@@ -168,26 +192,49 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const imageBase64 = buffer.toString("base64");
 
-    const extracted = await extractItemGroupsFromImage(imageBase64, file.type);
+    const extracted = await extractItemGroupsFromImage(imageBase64, mimeType);
     if (extracted.length === 0) {
       return NextResponse.json({ matches: [], unmatched: [] });
     }
 
     const supabase = getSupabaseAdmin();
-    const { data: objects, error } = await supabase
-      .from("objects")
-      .select("id, name, address");
+    const [{ data: objects, error }, { data: inventoryItems, error: inventoryError }] =
+      await Promise.all([
+        supabase.from("objects").select("id, name, address"),
+        supabase.from("inventory_items").select("name"),
+      ]);
     if (error) throw error;
+    if (inventoryError) throw inventoryError;
     const targets = (objects ?? []).map((o) => ({
       id: o.id,
       name: o.name,
       address: o.address,
     }));
+    const inventoryNames = (inventoryItems ?? []).map((item) => item.name);
+    const existingAddresses = (objects ?? []).map((object) =>
+      normalizeAddress(object.address),
+    );
+    const objectByNormalizedAddress = new Map(
+      (objects ?? []).map((object) => [normalizeAddress(object.address), object]),
+    );
 
     const result: ItemGroupImportPreview = { matches: [], unmatched: [] };
-    const unmatchedGroups: ExtractedItemGroup[] = [];
+    const unmatchedGroups: {
+      group: ExtractedItemGroup;
+      similar_object: ItemGroupImportPreview["unmatched"][number]["similar_object"];
+    }[] = [];
 
-    for (const group of extracted) {
+    for (const rawGroup of extracted) {
+      const group: ExtractedItemGroup = {
+        ...rawGroup,
+        items: rawGroup.items.map((item) => ({
+          ...item,
+          item_name: correctItemNameFromInventory(
+            item.item_name,
+            inventoryNames,
+          ),
+        })),
+      };
       // 1) Adresse- oder Name-Match (exakt/Fuzzy) wie bei der Tourenliste.
       //    Adresse + Ort zusammenfügen, da das Modell beides getrennt liefern kann.
       const fullAddress = [group.address, group.city]
@@ -204,36 +251,45 @@ export async function POST(request: Request) {
         ? (objects ?? []).find((o) => o.id === match.object_id) ?? null
         : null;
 
-      if (match && obj) {
-        result.matches.push({
-          object_id: obj.id,
-          object_name: obj.name,
-          address: obj.address,
-          matched_by: match.matched_by,
-          customer: group.customer,
-          customer_number: group.customer_number,
-          cleaning_interval: group.cleaning_interval,
-          // Bekannte Standard-Items werden in der Vorschau automatisch
-          // angekreuzt; alle anderen bleiben unverändert abwählbar.
-          items: group.items.map((item) => ({
-            ...item,
-            is_always_required: isPhotoImportStandardItem(item.item_name),
-          })),
-        });
-      } else {
-        unmatchedGroups.push(group);
-      }
+      const similarObject = match && obj
+        ? {
+            name: obj.name,
+            address: obj.address,
+            matched_by: match.matched_by,
+          }
+        : null;
+      // Auch bei einem Treffer bleibt die Gruppe eine Neuanlage. Der Treffer
+      // wird ausschließlich als Duplikatwarnung angezeigt.
+      unmatchedGroups.push({ group, similar_object: similarObject });
     }
 
-    // Nicht gefundene Objekte: exakte Adresse per Geocoding auflösen, damit
-    // das neue Objekt immer mit Straße + Hausnummer angelegt werden kann.
+    // Jede erkannte Gruppe bleibt eine Neuanlage. Exakte/ähnliche Treffer
+    // werden nur als Warnung mitgegeben und niemals einem Bestand zugeordnet.
     result.unmatched = await Promise.all(
-      unmatchedGroups.map(async (group) => {
+      unmatchedGroups.map(async ({ group, similar_object: initialSimilarObject }) => {
         const resolved = await resolveItemGroupAddress(group);
+        let similar_object = initialSimilarObject;
+        if (!similar_object && resolved.address) {
+          const duplicateAddress = findDuplicate(
+            normalizeAddress(resolved.address),
+            existingAddresses,
+          );
+          const duplicateObject = duplicateAddress
+            ? objectByNormalizedAddress.get(duplicateAddress)
+            : null;
+          if (duplicateObject) {
+            similar_object = {
+              name: duplicateObject.name,
+              address: duplicateObject.address,
+              matched_by: "adresse",
+            };
+          }
+        }
         return {
           name: group.name,
           address: resolved.address,
           city: group.city,
+          similar_object,
           category: group.category,
           customer: group.customer,
           customer_number: group.customer_number,

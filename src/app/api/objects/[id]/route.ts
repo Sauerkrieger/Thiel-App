@@ -38,8 +38,8 @@ export async function GET(_request: Request, { params }: Context) {
     // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins;
     // die Bemerkung (remark) ist für alle sichtbar.
     const select = isAdmin(auth.user)
-      ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)"
-      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, created_at)";
+      ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
+      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, last_delivery_at, last_delivery_driver_name, last_delivery_items, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)";
     const { data, error } = await supabase
       .from("objects")
       .select(select)
@@ -174,6 +174,7 @@ export async function PUT(request: Request, { params }: Context) {
           note: item.note,
           photo_path: item.photo_path,
           is_always_required: item.is_always_required,
+          is_reserved: item.is_reserved,
         })),
       );
       if (insertError) throw insertError;

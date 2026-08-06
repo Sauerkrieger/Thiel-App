@@ -61,6 +61,8 @@ export async function POST(request: Request, { params }: Context) {
       quantity: item.quantity,
       note: item.note,
       photo_path: item.photo_path,
+      is_always_required: item.is_always_required,
+      is_reserved: item.is_reserved,
     };
     if (clientUpdatedAt) {
       insertPayload.created_at = clientUpdatedAt;

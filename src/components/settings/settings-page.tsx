@@ -63,6 +63,8 @@ const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
   driver: "Fahrer",
   facility_manager: "Objektbetreuer",
+  cleaner: "Reiniger",
+  substitute: "Springer",
 };
 
 export function SettingsPage({
@@ -573,6 +575,8 @@ function UsersSection({
                 <SelectContent>
                   <SelectItem value="driver">Fahrer</SelectItem>
                   <SelectItem value="facility_manager">Objektbetreuer</SelectItem>
+                  <SelectItem value="cleaner">Reiniger</SelectItem>
+                  <SelectItem value="substitute">Springer</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>

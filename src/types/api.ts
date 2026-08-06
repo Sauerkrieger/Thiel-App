@@ -6,6 +6,13 @@ import type {
   UserRole,
 } from "./database";
 
+/** Snapshot eines tatsächlich gelieferten Items. */
+export type DeliveredItem = {
+  item_name: string;
+  quantity: number;
+  note: string | null;
+};
+
 /** Objekt inkl. zugehöriger Items (für die Objektübersicht). */
 export type ObjectWithItems = ObjectRecord & {
   object_items: ObjectItem[];
@@ -134,6 +141,7 @@ export type TourStopWithObject = {
   is_delivered: boolean;
   key_number: number | null;
   next_delivery_items: DeliveryItem[];
+  delivered_items: DeliveredItem[];
   object: {
     id: string;
     name: string;
@@ -245,35 +253,21 @@ export type KeyImportResult = {
   not_found: number;
 };
 
-/** Items-Gruppe zugeordnet zu einem bestehenden Objekt (Vorauswahl). */
-export type ItemGroupImportMatch = {
-  object_id: string;
-  object_name: string;
-  address: string | null;
-  matched_by: "adresse" | "name";
-  /** Kunde aus dem Foto (Admin-Info, wird am Objekt gespeichert). */
-  customer: string | null;
-  customer_number: string | null;
-  cleaning_interval: string | null;
-  items: {
-    item_name: string;
-    quantity: number;
-    note: string | null;
-    /** true = Standard-Item (bei jeder Belieferung fest vorgesehen). */
-    is_always_required: boolean;
-  }[];
-};
-
 /**
- * Items-Gruppe, deren Objekt nicht existiert – wird als neues Objekt
- * angelegt. Die Adresse wird per Geocoding aufgelöst („Firma googeln“),
- * wenn auf dem Zettel nur Name und/oder Ort standen.
+ * Items-Gruppe, die immer als neues Objekt angelegt wird. Ein ähnlicher
+ * bestehender Datensatz wird nur als Warnung zurückgegeben und nie geändert.
  */
 export type ItemGroupImportUnmatched = {
   name: string | null;
   /** Beste bekannte Adresse (Geocoding-Treffer oder vom Zettel); null = keine. */
   address: string | null;
   city: string | null;
+  /** Optionaler ähnlicher Bestandstreffer – nur Hinweis, keine Zuordnung. */
+  similar_object: {
+    name: string;
+    address: string;
+    matched_by: "adresse" | "name";
+  } | null;
   /** Kategorie des neuen Objekts (Treppenhaus bei nur-Adresse-Objekt-Zelle). */
   category: ObjectCategory;
   customer: string | null;
@@ -295,11 +289,12 @@ export type ItemGroupImportUnmatched = {
 
 /** Antwort von POST /api/objects/import/items/analyze. */
 export type ItemGroupImportPreview = {
-  matches: ItemGroupImportMatch[];
+  /** Kept for response compatibility; item import never populates this. */
+  matches: never[];
   unmatched: ItemGroupImportUnmatched[];
 };
 
-/** Neu anzulegendes Objekt mit Items (aus „Objekt nicht gefunden“-Einträgen). */
+/** Neu anzulegendes Objekt mit Items. Bestehende Objekte werden nie editiert. */
 export type ItemGroupImportNewObject = {
   name: string;
   /** Exakte Adresse mit Hausnummer (Pflicht). */
@@ -310,6 +305,12 @@ export type ItemGroupImportNewObject = {
   customer: string | null;
   customer_number: string | null;
   cleaning_interval: string | null;
+  /** Nur zur Anzeige in der Vorschau; niemals eine bestehende Zuordnung. */
+  similar_object?: {
+    name: string;
+    address: string;
+    matched_by: "adresse" | "name";
+  } | null;
   items: {
     item_name: string;
     quantity: number;
@@ -321,15 +322,17 @@ export type ItemGroupImportNewObject = {
 
 /** Ergebnis nach dem Bestätigen von POST /api/objects/import/items. */
 export type ItemGroupImportResult = {
-  /** Objekte (bestehende + neu angelegte), denen Items zugeordnet wurden. */
+  /** Anzahl der neu angelegten Objekte mit erfolgreich eingefügten Items. */
   assigned: number;
   items_added: number;
-  /** Bestehende Objekt-IDs, die nicht existierten. */
+  /** Legacy-Feld; beim Neuanlagen-Import immer 0. */
   not_found: number;
   /** Anzahl neu angelegter Objekte. */
   new_objects_created: number;
-  /** Neue Objekte, die übersprungen wurden (keine exakte Adresse/Duplikat-Fehler). */
+  /** Neue Objekte, die wegen fehlender Pflichtdaten übersprungen wurden. */
   new_objects_skipped: number;
+  /** Objekte, bei denen ein ähnlicher Bestandstreffer erkannt wurde. */
+  duplicate_warnings: number;
 };
 
 /* ------------------------------------------------------------------ */
