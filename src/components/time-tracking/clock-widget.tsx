@@ -22,7 +22,11 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
   const [entry, setEntry] = useState<TimeEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // „now“ startet mit Date.now() – darf aber erst NACH dem Mount gerendert
+  // werden (siehe displayMinutes), sonst weichen Server- und Client-Render
+  // des Zeit-Badges um Sekunden ab → Hydration-Fehler bei offener Stempelung.
   const [now, setNow] = useState(() => Date.now());
+  const [mounted, setMounted] = useState(false);
   const [pausedAt, setPausedAt] = useState<number | null>(null);
   const [pauseMinutes, setPauseMinutes] = useState(0);
   // Reset-Schlüssel des Pausen-Presets, damit nach einer Auswahl wieder der
@@ -41,6 +45,7 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
 
   useEffect(() => {
     void load();
+    setMounted(true);
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [load]);
@@ -62,6 +67,9 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
   );
   const livePauseMinutes = pausedAt ? Math.max(0, (Date.now() - pausedAt) / 60000) : 0;
   const shownMinutes = Math.max(0, minutes - pauseMinutes - livePauseMinutes);
+  // Vor dem Mount 0:00 h anzeigen (identisch mit dem Server-Render) – erst
+  // danach die echte, laufende Zeit.
+  const displayMinutes = mounted ? shownMinutes : 0;
 
   async function clockIn() {
     setBusy(true);
@@ -196,7 +204,7 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
     <div className="flex items-center gap-1.5">
       <Badge variant="success" className="h-8 min-w-[4.75rem] shrink-0 justify-center gap-1.5 whitespace-nowrap px-3 font-mono text-xs">
         <Timer className="h-3.5 w-3.5" />
-        {minutesToLabel(shownMinutes)}
+        {minutesToLabel(displayMinutes)}
       </Badge>
       <Button variant="ghost" size="icon" onClick={togglePause} disabled={busy} className="h-8 w-10" title={pausedAt ? "Pause beenden" : "Pause starten"}>
         <Coffee className={pausedAt ? "h-4 w-4 text-amber-600" : "h-4 w-4"} />

@@ -217,7 +217,7 @@ export function AdminTimeTrackingPage() {
                   <div className="space-y-1.5"><Label htmlFor="edit-vacation">Resturlaub (Tage)</Label><Input id="edit-vacation" type="number" min={0} max={365} value={editVacation} onChange={(event) => setEditVacation(event.target.value)} /></div>
                   <div className="space-y-1.5"><Label htmlFor="edit-overtime">Korrektur Überstunden (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)} (aus Stempelungen &amp; Vertragsart {contractLabel(selectedEmployee)} – die Soll-Stunden werden bewusst nicht angezeigt). Das Konto ergibt sich aus automatischem Wert + Korrektur.</p>
+                <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)}</p>
                 <p className="mt-2 text-xs text-muted-foreground">Urlaubsanspruch gesamt: {selectedEmployee.vacation_days_total ?? 0} Tage ({selectedEmployee.vacation_days_used ?? 0} genutzt). Der neue Resturlaub wird in den Gesamtanspruch umgerechnet.</p>
                 <DialogFooter className="mt-4 sm:justify-end"><Button onClick={() => void saveAccount()} disabled={savingAccount}>{savingAccount ? "Wird gespeichert…" : "Speichern"}</Button></DialogFooter>
               </div>

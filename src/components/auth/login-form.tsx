@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Fingerprint, Loader2, Lock, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,14 @@ export function LoginForm({ next }: { next?: string }) {
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
 
-  const webauthnSupported =
-    typeof window !== "undefined" && browserSupportsWebAuthn();
+  // WebAuthn-Fähigkeit erst nach dem Mount prüfen: Beim SSR ist window
+  // undefined (→ false), im Browser kann sie true sein. Ein Render-Zeit-Check
+  // würde sonst das disabled-Attribut des Passkey-Buttons unterschiedlich
+  // rendern und einen React-Hydration-Fehler auslösen.
+  const [webauthnSupported, setWebauthnSupported] = useState(false);
+  useEffect(() => {
+    setWebauthnSupported(browserSupportsWebAuthn());
+  }, []);
 
   function goToNext() {
     const target = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";

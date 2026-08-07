@@ -54,8 +54,21 @@ const MAX_ENTRIES_PER_REQUEST = 100;
 
 let initialized = false;
 let listeners = new Set<() => void>();
+// Online-Status: Node ≥ 21 hat ein globales navigator-Objekt OHNE onLine-
+// Property (undefined) – das würde serverseitig fälschlich als „Offline“
+// gerendert und einen Hydration-Mismatch auslösen. Deshalb nur Browser-
+// navigator mit echtem onLine (boolean) werten, sonst true.
+function isBrowserOnline(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.onLine === "boolean"
+      ? navigator.onLine
+      : true
+  );
+}
+
 let state: SyncState = {
-  online: typeof navigator !== "undefined" ? navigator.onLine : true,
+  online: isBrowserOnline(),
   syncing: false,
   pendingCount: 0,
   lastSyncAt: null,

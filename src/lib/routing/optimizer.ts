@@ -634,6 +634,10 @@ type VariantResult = {
   trafficProvider: "tomtom" | null;
   /** true, wenn alle Zeitfenster der Variante eingehalten wurden. */
   feasible: boolean;
+  /** true, wenn ORS-Optimierung versucht wurde, aber keine Lösung lieferte. */
+  orsFailed: boolean;
+  /** true, wenn TomTom-Live-Verkehr versucht, aber nicht angewendet werden konnte. */
+  trafficFailed: boolean;
 };
 
 /**
@@ -655,6 +659,11 @@ async function solveVariant(
   let orsSolution: OrsSolution | null = null;
   const hasOrsKey = Boolean(process.env.ORS_API_KEY);
   const hasTomTomKey = Boolean(process.env.TOMTOM_API_KEY);
+  // ORS-/TomTom-Fehler erst beim gewählten Ergebnis melden (in optimizeRoute):
+  // Eine Variante darf keinen Warnhinweis erzeugen, wenn die andere Variante
+  // (und damit die tatsächlich verwendete Route) erfolgreich über ORS lief.
+  let orsFailed = false;
+  let trafficFailed = false;
 
   if (hasOrsKey && coords.length <= MAX_OPTIMIZATION_JOBS) {
     const first = await tryOrsWithTraffic(
@@ -670,14 +679,10 @@ async function solveVariant(
       if (first.trafficUsed) {
         trafficProvider = first.provider;
       } else if (hasTomTomKey) {
-        warnings.push(
-          "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
-        );
+        trafficFailed = true;
       }
     } else {
-      warnings.push(
-        "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
-      );
+      orsFailed = true;
     }
   } else if (hasOrsKey) {
     warnings.push(
@@ -695,6 +700,8 @@ async function solveVariant(
       mode: "ors-optimization",
       trafficProvider,
       feasible: true,
+      orsFailed,
+      trafficFailed,
     };
   }
 
@@ -737,6 +744,8 @@ async function solveVariant(
     mode: matrixMode,
     trafficProvider: null,
     feasible: solution.feasible,
+    orsFailed,
+    trafficFailed,
   };
 }
 
@@ -816,8 +825,12 @@ export async function optimizeRoute(
   }
 
   // Variante A: direkt zum Objekt fahren (Fußgängerzone: nur bis 11:00 Uhr).
+  // Fußgängerzonen-Objekte werden dabei über den befahrbaren Haltepunkt
+  // geroutet (ORS driving-car kann nicht in eine Fußgängerzone fahren),
+  // behalten aber ihr 11-Uhr-Zeitfenster – entspricht der direkten Anfahrt
+  // vor 11:00 Uhr, wenn sie zeitlich möglich ist.
   const variantA = await solveVariant(
-    { coords, deadline: deadlineDirect },
+    { coords: detourCoords ?? coords, deadline: deadlineDirect },
     earliest,
     start,
     serviceMinutes,
@@ -857,6 +870,18 @@ export async function optimizeRoute(
       "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß) – diese Variante war schneller als die direkte Anfahrt.",
     );
   }
+  // ORS-/Live-Verkehr-Fehler nur melden, wenn die GEWÄHLTE Variante tatsächlich
+  // darauf zurückgefallen ist (sonst wäre die Warnung irreführend, z. B. wenn
+  // die Fußgängerzonen-Variante A an ORS scheitert, Variante B aber ORS nutzt).
+  if (chosen.orsFailed) {
+    warnings.push(
+      "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
+    );
+  } else if (chosen.trafficFailed) {
+    warnings.push(
+      "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
+    );
+  }
   if (!chosen.feasible) {
     warnings.push(
       "Die Zeit-Restriktionen können mit der gewählten Startzeit nicht für alle Objekte erfüllt werden (z. B. Öffnungszeiten). Bitte Startzeit anpassen oder Objekte entfernen.",
@@ -869,15 +894,20 @@ export async function optimizeRoute(
   const stops: OptimizedStop[] = chosen.order.map((node, index) => {
     const obj = objects[node - 1];
     const arrival = chosen.times[index];
+    // Nur bei der Fußgängerzonen-Variante B wird der Restweg zu Fuß
+    // zurückgelegt (approach_by_foot + Fußweg-Meter). Variante A (direkt
+    // vor 11:00 Uhr) fährt bis zum Haltepunkt, ohne Fußweg.
+    const isWalkApproach = chosen === variantB && walkingDistances.has(node - 1);
     const walking = walkingDistances.get(node - 1);
     // Koordinaten, die für die Route tatsächlich verwendet wurden
     // (befahrbarer Punkt bei approach_by_foot, sonst Objekt-Adresse).
     const coord = chosen.coords[node];
     // Demo-Modus: Hash-Koordinaten sind erfunden -> auf der Karte ausblenden.
-    const fallbackCoord =
-      walking !== undefined
-        ? false
-        : (objectGeos[node - 1]?.fallback ?? true);
+    // Fußgängerzonen-Stopps zeigen aber immer den (echten) Overpass-
+    // Haltepunkt – unabhängig davon, ob Variante A oder B gewählt wurde.
+    const fallbackCoord = walkingDistances.has(node - 1)
+      ? false
+      : (objectGeos[node - 1]?.fallback ?? true);
     return {
       object_id: obj.id,
       name: obj.name,
@@ -888,8 +918,8 @@ export async function optimizeRoute(
       key_number: obj.key_number,
       opens_at: obj.opens_at,
       remark: obj.remark ?? null,
-      approach_by_foot: walking !== undefined,
-      walking_distance_m: walking ?? null,
+      approach_by_foot: isWalkApproach,
+      walking_distance_m: isWalkApproach ? (walking ?? null) : null,
       latitude: fallbackCoord || !coord ? null : coord.lat,
       longitude: fallbackCoord || !coord ? null : coord.lng,
     };

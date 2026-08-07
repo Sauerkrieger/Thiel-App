@@ -721,9 +721,6 @@ function UsersSection({
                   <SelectItem value="mini_job">Minijob</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                Bestimmt die Soll-Arbeitszeit für das Überstundenkonto.
-              </p>
             </div>
           </div>
 
