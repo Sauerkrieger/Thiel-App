@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   CalendarDays,
   Camera,
@@ -25,6 +26,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SetupHint } from "@/components/setup-hint";
 import { PhotoSelectDialog } from "./photo-select-dialog";
 import { PackView } from "./pack-view";
@@ -92,6 +101,9 @@ export function PlanningPage() {
   }>({ open: false, objectId: null, objectName: null });
   const [startingTour, setStartingTour] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
+  // Warnung „noch nicht eingestempelt“ vor der Routenberechnung
+  const [clockWarningOpen, setClockWarningOpen] = useState(false);
+  const [checkingClock, setCheckingClock] = useState(false);
 
   const todayLabel = useMemo(() => dateFormatter.format(new Date()), []);
 
@@ -163,8 +175,7 @@ export function PlanningPage() {
     }
   }
 
-  async function handleOptimize() {
-    if (selected.size === 0) return;
+  async function runOptimize() {
     setOptimizing(true);
     try {
       const res = await offlineFetch("/api/planning/optimize", {
@@ -197,6 +208,36 @@ export function PlanningPage() {
     } finally {
       setOptimizing(false);
     }
+  }
+
+  async function handleOptimize() {
+    if (selected.size === 0 || optimizing || checkingClock) return;
+    // Vor der Routenberechnung prüfen, ob bereits eingestempelt ist. Ist das
+    // nicht der Fall, muss der Nutzer erst bestätigen (weiter ohne Einstempeln
+    // oder erst zur Hauptseite zum Einstempeln).
+    setCheckingClock(true);
+    try {
+      const res = await offlineFetch("/api/time-tracking/clock", {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (!body.entry) {
+          setClockWarningOpen(true);
+          return;
+        }
+      }
+    } catch {
+      // Clock-Status nicht ermittelbar (z. B. offline ohne Cache) – nicht blockieren.
+    } finally {
+      setCheckingClock(false);
+    }
+    await runOptimize();
+  }
+
+  function handleContinueWithoutClockIn() {
+    setClockWarningOpen(false);
+    void runOptimize();
   }
 
   function handleApplyPhoto(matches: PhotoMatch[]) {
@@ -352,7 +393,7 @@ export function PlanningPage() {
           {!route && (
             <Button
               onClick={() => void handleOptimize()}
-              disabled={selected.size === 0 || optimizing || loading}
+              disabled={selected.size === 0 || optimizing || checkingClock || loading}
             >
               {optimizing ? (
                 <>
@@ -506,6 +547,32 @@ export function PlanningPage() {
           setPackDialog((prev) => ({ ...prev, open }))
         }
       />
+
+      {/* Warnung: nicht eingestempelt, bevor die Route berechnet wird */}
+      <Dialog open={clockWarningOpen} onOpenChange={setClockWarningOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+              Noch nicht eingestempelt
+            </DialogTitle>
+            <DialogDescription>
+              Du hast heute noch keine Arbeitszeit gestartet. Für die Tour wird
+              dann keine Arbeitszeit erfasst. Möchtest du zuerst einstempeln
+              oder trotzdem ohne Einstempeln fortfahren?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => router.push("/")}>
+              <Play className="h-4 w-4" />
+              Erst einstempeln
+            </Button>
+            <Button variant="outline" onClick={handleContinueWithoutClockIn}>
+              Ohne Einstempeln fortfahren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Sticky-Leiste */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">

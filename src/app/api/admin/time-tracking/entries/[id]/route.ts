@@ -41,3 +41,25 @@ export async function PATCH(request: Request, { params }: Context) {
     return apiErrorResponse(error);
   }
 }
+
+/** DELETE /api/admin/time-tracking/entries/[id] – nachgereichten Eintrag löschen (Ablehnung). */
+export async function DELETE(
+  _request: Request,
+  { params }: Context,
+) {
+  const auth = await requireUser();
+  if (!auth.user) return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+  if (!isAdmin(auth.user)) return NextResponse.json({ error: "Nur Admins dürfen Arbeitszeiten löschen." }, { status: 403 });
+
+  try {
+    const { id } = await params;
+    const { error } = await getSupabaseAdmin()
+      .from("time_entries")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}

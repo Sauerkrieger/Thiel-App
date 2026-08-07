@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
-  Clock3,
   Coffee,
   FileClock,
   LoaderCircle,
@@ -19,10 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { offlineFetch } from "@/lib/offline/fetch";
-import { getCurrentUserId } from "@/lib/offline/sync";
 import { nowServerAligned } from "@/lib/offline/clock";
+import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
 import type { TimeEntry, TimeOffRequest, TimeOffType } from "@/types/time-tracking";
-import { ClockWidget } from "./clock-widget";
 
 type ProfileSummary = {
   name: string;
@@ -43,15 +41,6 @@ const TYPE_LABELS: Record<TimeOffType, string> = {
   unpaid: "Unbezahlte Abwesenheit",
   compensatory: "Freizeitausgleich",
 };
-
-function formatHours(minutes: number): string {
-  return `${(Math.max(0, minutes) / 60).toFixed(2).replace(".", ",")} h`;
-}
-
-function workedMinutes(entry: TimeEntry): number {
-  if (!entry.clock_out) return 0;
-  return Math.max(0, (Date.parse(entry.clock_out) - Date.parse(entry.clock_in)) / 60000 - entry.break_duration_minutes);
-}
 
 function dateValue(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -74,6 +63,14 @@ export function TimeTrackingPage() {
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
 
+  // „Arbeitszeit nachreichen“ (vergessene Stempelung)
+  const [reDate, setReDate] = useState(dateValue(new Date()));
+  const [reStart, setReStart] = useState("08:00");
+  const [reEnd, setReEnd] = useState("17:00");
+  const [reBreak, setReBreak] = useState("30");
+  const [reNote, setReNote] = useState("");
+  const [submittingEntry, setSubmittingEntry] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -91,18 +88,25 @@ export function TimeTrackingPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Nur freigegebene, abgeschlossene Einträge zählen (nachgereichte Arbeitszeit
+  // zählt erst nach der Freigabe durch die Verwaltung).
   const weekMinutes = useMemo(() => {
     if (!summary) return 0;
     const start = startOfWeek(new Date()).getTime();
-    return summary.entries.filter((entry) => Date.parse(entry.clock_in) >= start).reduce((total, entry) => total + workedMinutes(entry), 0);
+    return summary.entries
+      .filter((entry) => entry.is_approved !== false && Date.parse(entry.clock_in) >= start)
+      .reduce((total, entry) => total + workedMinutesOf(entry), 0);
   }, [summary]);
   const monthMinutes = useMemo(() => {
     if (!summary) return 0;
     const month = new Date();
-    return summary.entries.filter((entry) => {
-      const date = new Date(entry.clock_in);
-      return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth();
-    }).reduce((total, entry) => total + workedMinutes(entry), 0);
+    return summary.entries
+      .filter((entry) => {
+        if (entry.is_approved === false) return false;
+        const date = new Date(entry.clock_in);
+        return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth();
+      })
+      .reduce((total, entry) => total + workedMinutesOf(entry), 0);
   }, [summary]);
   const vacationRemaining = summary ? Math.max(0, summary.profile.vacation_days_total - summary.profile.vacation_days_used) : 0;
 
@@ -132,19 +136,57 @@ export function TimeTrackingPage() {
     }
   }
 
+  async function submitEntry(event: React.FormEvent) {
+    event.preventDefault();
+    const start = new Date(`${reDate}T${reStart}:00`);
+    // Liegt die Endzeit vor/auf der Startzeit, ist eine Übernacht-Stempelung
+    // gemeint (z. B. 22:00 → 06:00 am Folgetag).
+    let end = new Date(`${reDate}T${reEnd}:00`);
+    // Übernacht-Stempelung: Datum um einen Tag erhöhen (setDate statt +24h,
+    // damit die Uhrzeit auch an DST-Wechseltagen erhalten bleibt).
+    if (end <= start) end.setDate(end.getDate() + 1);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      toast.error("Die Endzeit muss nach der Startzeit liegen.");
+      return;
+    }
+    const breakMinutes = Number(reBreak);
+    if (!Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 24 * 60) {
+      toast.error("Bitte eine gültige Pausenzeit in Minuten angeben (0–1440).");
+      return;
+    }
+    setSubmittingEntry(true);
+    try {
+      const timestamp = nowServerAligned();
+      const res = await offlineFetch("/api/time-tracking/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clock_in: start.toISOString(),
+          clock_out: end.toISOString(),
+          break_duration_minutes: breakMinutes,
+          note: reNote.trim() || null,
+          client_updated_at: timestamp,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Arbeitszeit konnte nicht nachgereicht werden.");
+      toast.success("Arbeitszeit nachgereicht – wartet auf Freigabe.");
+      setReDate(dateValue(new Date()));
+      setReNote("");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht nachgereicht werden.");
+    } finally {
+      setSubmittingEntry(false);
+    }
+  }
+
   return (
     <div className="container py-6 sm:py-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-2 text-sm font-medium text-primary">Mein Arbeitskonto</p>
-          <h1 className="text-3xl font-bold tracking-tight">Zeiterfassung</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick.</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-sm">
-          <Clock3 className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">Stempeluhr</span>
-          <ClockWidget compact={false} userId={getCurrentUserId()} />
-        </div>
+      <div>
+        <p className="mb-2 text-sm font-medium text-primary">Mein Arbeitskonto</p>
+        <h1 className="text-3xl font-bold tracking-tight">Zeiterfassung</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick. Die Stempeluhr findest du oben in der Leiste (am Handy unten).</p>
       </div>
 
       {loading && !summary ? (
@@ -153,19 +195,19 @@ export function TimeTrackingPage() {
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard icon={<CalendarDays />} label="Resturlaub" value={`${vacationRemaining} Tage`} detail={`${summary.profile.vacation_days_used} von ${summary.profile.vacation_days_total} Tagen genutzt`} />
-            <MetricCard icon={<Coffee />} label="Diese Woche" value={formatHours(weekMinutes)} detail="Abgeschlossene Stempelungen" />
-            <MetricCard icon={<TimerReset />} label="Dieser Monat" value={formatHours(monthMinutes)} detail="Abgeschlossene Stempelungen" />
-            <MetricCard icon={<FileClock />} label="Überstundenkonto" value={`${Number(summary.profile.overtime_hours ?? 0).toFixed(2).replace(".", ",")} h`} detail="Von der Verwaltung gepflegt" />
+            <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} detail="Freigegebene Stempelungen" />
+            <MetricCard icon={<TimerReset />} label="Dieser Monat" value={minutesToLabel(monthMinutes)} detail="Freigegebene Stempelungen" />
+            <MetricCard icon={<FileClock />} label="Überstundenkonto" value={hoursToLabel(Number(summary.profile.overtime_hours ?? 0))} detail="Von der Verwaltung gepflegt" />
           </div>
 
-          <div className="mt-8 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="mt-8 grid gap-6 lg:grid-cols-3">
             <Card>
               <CardHeader><CardTitle>Meine Stempelungen</CardTitle><CardDescription>Aktuelle Woche und vergangene Arbeitszeiten.</CardDescription></CardHeader>
               <CardContent>
                 {summary.entries.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Stempelungen vorhanden.</p> : <div className="space-y-2">
                   {summary.entries.slice(0, 14).map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3">
-                    <div><p className="text-sm font-medium">{new Date(entry.clock_in).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}</p><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} – {entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "läuft gerade"} · Pause {entry.break_duration_minutes} Min.</p></div>
-                    <div className="flex items-center gap-2"><Badge variant={entry.clock_out ? "secondary" : "success"}>{entry.clock_out ? formatHours(workedMinutes(entry)) : "offen"}</Badge>{entry.is_approved && <CheckCircle2 className="h-4 w-4 text-success" aria-label="Freigegeben" />}</div>
+                    <div><p className="text-sm font-medium">{new Date(entry.clock_in).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}</p><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} – {entry.clock_out ? new Date(entry.clock_out).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "läuft gerade"} · Pause {entry.break_duration_minutes} Min.</p>{entry.note && <p className="mt-0.5 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div>
+                    <div className="flex items-center gap-2"><Badge variant={entry.clock_out ? "secondary" : "success"}>{entry.clock_out ? minutesToLabel(workedMinutesOf(entry)) : "offen"}</Badge>{entry.is_approved ? <CheckCircle2 className="h-4 w-4 text-success" aria-label="Freigegeben" /> : <Badge variant="warning">Wartet auf Freigabe</Badge>}</div>
                   </div>)}
                 </div>}
               </CardContent>
@@ -178,6 +220,17 @@ export function TimeTrackingPage() {
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="absence-start">Von</Label><Input id="absence-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="absence-end">Bis</Label><Input id="absence-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} required /></div></div>
                 <div className="space-y-2"><Label htmlFor="absence-note">Notiz (optional)</Label><Input id="absence-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Zusätzliche Information" maxLength={1000} /></div>
                 <Button type="submit" disabled={sending} className="w-full"><Send />{sending ? "Wird gesendet…" : "Antrag einreichen"}</Button>
+              </form></CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle>Arbeitszeit nachreichen</CardTitle><CardDescription>Vergessene Stempelung eintragen – wartet danach auf Freigabe durch die Verwaltung.</CardDescription></CardHeader>
+              <CardContent><form className="space-y-4" onSubmit={submitEntry}>
+                <div className="space-y-2"><Label htmlFor="entry-date">Datum</Label><Input id="entry-date" type="date" value={reDate} onChange={(event) => setReDate(event.target.value)} required /></div>
+                <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="entry-start">Von</Label><Input id="entry-start" type="time" value={reStart} onChange={(event) => setReStart(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="entry-end">Bis</Label><Input id="entry-end" type="time" value={reEnd} onChange={(event) => setReEnd(event.target.value)} required /></div></div>
+                <div className="space-y-2"><Label htmlFor="entry-break">Pause (Minuten)</Label><Input id="entry-break" type="number" min={0} max={1440} value={reBreak} onChange={(event) => setReBreak(event.target.value)} /></div>
+                <div className="space-y-2"><Label htmlFor="entry-note">Notiz (optional)</Label><Input id="entry-note" value={reNote} onChange={(event) => setReNote(event.target.value)} placeholder="z. B. vergessen einzustempeln" maxLength={500} /></div>
+                <Button type="submit" disabled={submittingEntry} className="w-full"><Send />{submittingEntry ? "Wird gesendet…" : "Arbeitszeit nachreichen"}</Button>
               </form></CardContent>
             </Card>
           </div>

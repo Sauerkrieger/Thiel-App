@@ -31,7 +31,37 @@ export async function PATCH(
     const name = typeof body.name === "string" ? body.name.trim() : null;
     const role = isUserRole(body.role) ? body.role : null;
 
-    if (!name && !role) {
+    // Kontokorrektur (Zeitadmin): Urlaubsanspruch & Überstunden
+    const vacationDaysTotal =
+      typeof body.vacation_days_total === "number"
+        ? body.vacation_days_total
+        : undefined;
+    const overtimeHours =
+      typeof body.overtime_hours === "number" ? body.overtime_hours : undefined;
+    if (
+      vacationDaysTotal !== undefined &&
+      (!Number.isInteger(vacationDaysTotal) ||
+        vacationDaysTotal < 0 ||
+        vacationDaysTotal > 365)
+    ) {
+      return NextResponse.json(
+        { error: "Ungültiger Urlaubsanspruch (0–365 Tage)." },
+        { status: 400 },
+      );
+    }
+    if (
+      overtimeHours !== undefined &&
+      (!Number.isFinite(overtimeHours) ||
+        overtimeHours < -1000 ||
+        overtimeHours > 1000)
+    ) {
+      return NextResponse.json(
+        { error: "Ungültiger Überstundenwert (-1000 bis 1000 h)." },
+        { status: 400 },
+      );
+    }
+
+    if (!name && !role && vacationDaysTotal === undefined && overtimeHours === undefined) {
       return NextResponse.json(
         { error: "Keine Änderungen übermittelt." },
         { status: 400 },
@@ -57,9 +87,13 @@ export async function PATCH(
     const update: {
       name?: string;
       role?: UserRole;
+      vacation_days_total?: number;
+      overtime_hours?: number;
     } = {};
     if (name) update.name = name;
     if (role) update.role = role;
+    if (vacationDaysTotal !== undefined) update.vacation_days_total = vacationDaysTotal;
+    if (overtimeHours !== undefined) update.overtime_hours = Math.round(overtimeHours * 100) / 100;
 
     // Last-Write-Wins auf dem Profil (Offline-Sync-Schutz)
     const lww = await checkLww(admin, "profiles", id, body.client_updated_at);
@@ -79,7 +113,7 @@ export async function PATCH(
       .from("profiles")
       .update(updatePayload)
       .eq("id", id)
-      .select("id, name, role, email, created_at")
+      .select("id, name, role, email, created_at, vacation_days_total, vacation_days_used, overtime_hours")
       .single();
     if (error) throw error;
 

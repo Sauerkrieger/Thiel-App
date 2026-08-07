@@ -834,10 +834,26 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     return jsonResponse(200, { user: { id: userId } });
   }
 
-  // PATCH /api/auth/users/[id] (Admin)
+  // PATCH /api/auth/users/[id] (Admin) – inkl. Kontokorrektur (Urlaub/Überstunden)
   if (/^\/api\/auth\/users\/[^/]+$/.test(path) && method === "PATCH") {
-    await queueMutation("profiles", params.id, pick(body, ["name", "role"]));
+    await queueMutation("profiles", params.id, pick(body, [
+      "name",
+      "role",
+      "vacation_days_total",
+      "overtime_hours",
+    ]));
     return jsonResponse(200, { user: { id: params.id } });
+  }
+
+  // POST /api/time-tracking/entries – „Arbeitszeit nachreichen“ (offline queuen)
+  if (path === "/api/time-tracking/entries" && method === "POST") {
+    const id = newRecordId();
+    await queueMutation("time_entries", id, {
+      ...pick(body, TIME_ENTRY_FIELDS as readonly string[]),
+      user_id: getCurrentUserId(),
+      is_approved: false,
+    });
+    return jsonResponse(201, { entry: { id } });
   }
 
   // Zeiterfassung: Online bleibt die Clock-Route autoritativ; bei einem
@@ -947,6 +963,7 @@ function isQueueableMutation(path: string, method: string): boolean {
     path === "/api/auth/me-profile" ||
     /^\/api\/auth\/users\/[^/]+$/.test(path) ||
     path === "/api/time-tracking/clock" ||
+    path === "/api/time-tracking/entries" ||
     path === "/api/time-tracking/requests" ||
     /^\/api\/time-tracking\/requests\/[^/]+$/.test(path) ||
     /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)
@@ -976,6 +993,7 @@ function serverKeyFor(path: string, method: string): string | null {
   if (/^\/api\/tours\/[^/]+$/.test(path)) return "tour";
   if (/^\/api\/tours\/[^/]+\/stops\/[^/]+$/.test(path)) return "stop";
   if (path === "/api/time-tracking/clock") return "entry";
+  if (path === "/api/time-tracking/entries") return "entry";
   if (/^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "request";
   if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   return null; // auth: me-profile/users → Antwort ist kein Tabellen-Row
@@ -994,7 +1012,7 @@ function tableFor(path: string, method: string): SyncTable | null {
   if (path === "/api/auth/me-profile" || /^\/api\/auth\/users\/[^/]+$/.test(path)) {
     return "profiles";
   }
-  if (path === "/api/time-tracking/clock" || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
+  if (path === "/api/time-tracking/clock" || path === "/api/time-tracking/entries" || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
   if (path === "/api/time-tracking/requests" || /^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "time_off_requests";
   return null;
 }

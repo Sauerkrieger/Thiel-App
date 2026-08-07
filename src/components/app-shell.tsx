@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import { Building2, Clock3, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
 import { ClockWidget } from "@/components/time-tracking/clock-widget";
 import { cn } from "@/lib/utils";
 import { initSync, useSyncState } from "@/lib/offline/sync";
@@ -57,6 +57,12 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const sync = useSyncState();
+
+  // Seiten mit eigener fester Bottom-Leiste (z. B. Speichern/Tour starten):
+  // dort wird die mobile Stempeluhr-Leiste ausgeblendet, damit sich zwei
+  // feste Leisten nicht überlagern.
+  const hasOwnBottomBar =
+    pathname === "/planung" || pathname.startsWith("/tour/");
 
   // Sync-Engine initialisieren (Offline-Erkennung, Zeit-Offset, Reconnect-Sync)
   useEffect(() => {
@@ -131,12 +137,33 @@ export function AppShell({
               );
             })}
           </nav>
-          {userRole && <ClockWidget userId={userId} />}
+          {userRole && (
+            // Am Desktop bleibt die Stempeluhr oben im Header. Am Handy wird
+            // sie in die untere Leiste verschoben (siehe unten) – oben wird es
+            // sonst mit Logo, Navigation und Sync-Status zu eng.
+            <div className="hidden items-center sm:flex">
+              <ClockWidget userId={userId} />
+            </div>
+          )}
           <SyncBadge sync={sync} />
         </div>
       </header>
       <main className="flex-1">{children}</main>
-      <footer className="border-t py-3 text-center text-xs text-muted-foreground">
+      {/* Mobile Stempeluhr: feste Leiste am unteren Rand (nur Handy). Seiten mit
+          eigener Bottom-Bar (Tourenplanung, Tour) haben dort schon Aktionen und
+          zeigen diese Leiste nicht zusätzlich. */}
+      {userRole && !hasOwnBottomBar && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:hidden">
+          <div className="container flex h-14 items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Clock3 className="h-4 w-4 text-primary" />
+              Stempeluhr
+            </span>
+            <ClockWidget userId={userId} />
+          </div>
+        </div>
+      )}
+      <footer className="border-t py-3 pb-20 text-center text-xs text-muted-foreground sm:pb-3">
         Thiel Dienstleistungen · Liefer- &amp; Tourenplanung
       </footer>
     </div>
