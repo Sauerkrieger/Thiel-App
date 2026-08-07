@@ -597,6 +597,45 @@ export async function extractItemGroupsFromImage(
   return parseItemGroupsResult(content);
 }
 
+/**
+ * Erkennt mehrere Hausnummern derselben Straße in einer Adresse (typisch
+ * für Treppenhäuser, z. B. „Josefplatz 1,2,3" oder „Musterweg 5-9") und
+ * zerlegt sie in:
+ *   - `full`:  komplette Adresse mit allen Nummern („Josefplatz 1,2,3")
+ *   - `first`: Straße + erste Hausnummer („Josefplatz 1")
+ *
+ * Gibt null zurück, wenn keine oder nur eine Hausnummer vorhanden ist.
+ * Zweck: Die Adresse wird nur mit der ERSTEN Hausnummer geocodiert – ein
+ * String wie „Josefplatz 1,2,3, Würzburg" führt bei ORS sonst zu einem
+ * falschen Treffer (z. B. Düsseldorf statt Würzburg). Die vollständige
+ * Adressliste bleibt im Objektnamen sichtbar (siehe parseItemGroupsResult).
+ */
+export function splitMultiHouseNumberAddress(address: string): {
+  full: string;
+  first: string;
+} | null {
+  const trimmed = address.trim();
+  // Straße + mindestens zwei Hausnummern (Komma-Liste wie „1,2,3" oder
+  // Bereich wie „5-9"). Hausnummern sind maximal 4-stellig (ggf. mit Buch-
+  // stabe wie „12a") – eine 5-stellige Zahl ist eine PLZ und gehört nicht
+  // zur Nummernliste. Nach der Liste darf nur noch ein Ortszusatz folgen
+  // (z. B. ", 97072 Würzburg"), sonst zählt die Adresse nicht als Mehrfach-
+  // adresse (z. B. „Hauptstraße 12, 97072 Würzburg" = nur eine Hausnummer).
+  const match = trimmed.match(
+    /^(\D+?)\s+(\d{1,4}[a-z]?(?:\s*[,–-]\s*\d{1,4}[a-z]?)+)(?:\s*,\s*(?:\d{5}\s+)?[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß .'-]*)?$/iu,
+  );
+  if (!match) return null;
+  const street = match[1].trim();
+  // `match[2]` ist die komplette Nummernliste ("1,2,3", "1, 2, 3" oder
+  // "5-9") – wird unverändert übernommen, damit Bereiche erhalten bleiben.
+  // Die erste Hausnummer steht garantiert am Anfang der Liste (Regex-Start).
+  const first = match[2].split(/[,–-]\s*/)[0];
+  return {
+    full: `${street} ${match[2]}`,
+    first: `${street} ${first}`,
+  };
+}
+
 /** JSON aus der Antwort extrahieren, validieren und bereinigen. */
 export function parseItemGroupsResult(content: string): ExtractedItemGroup[] {
   const start = content.indexOf("{");
@@ -644,7 +683,7 @@ export function parseItemGroupsResult(content: string): ExtractedItemGroup[] {
           typeof entry.name === "string" && entry.name.trim()
             ? entry.name.trim().slice(0, 200)
             : null;
-        const address =
+        let address =
           typeof entry.address === "string" && entry.address.trim()
             ? entry.address.trim()
             : null;
@@ -660,6 +699,28 @@ export function parseItemGroupsResult(content: string): ExtractedItemGroup[] {
         }
         if (!name && !address && customer) {
           name = customer;
+        }
+
+        // Mehrfach-Hausnummern derselben Straße (Treppenhaus-Fall): Im Namen
+        // alle Adressen zeigen („Josefplatz 1,2,3"), in der Adresse nur die
+        // erste („Josefplatz 1"). Sonst geocodiert ORS den Gesamtstring
+        // („Josefplatz 1,2,3, Würzburg") falsch – die Karte landet dann
+        // z. B. in Düsseldorf statt Würzburg.
+        if (address) {
+          const split = splitMultiHouseNumberAddress(address);
+          if (split) {
+            // Name wird durch die volle Adressliste ersetzt, wenn er direkt
+            // aus der Adresse abgeleitet wurde (Treppenhaus ohne eigenen
+            // Namen, z. B. name === address) ODER ein Treppenhaus ist, dessen
+            // Name bereits adressartig aussieht (enthält eine Ziffer – z. B.
+            // Gemini lieferte nur die Straße "Josefplatz" als Namen). Echte
+            // Namen wie "Treppenhaus Josef" (ohne Ziffer) bleiben erhalten.
+            const nameIsAddress =
+              name === address ||
+              (category === "treppenhaus" && /\d/.test(name ?? ""));
+            address = split.first;
+            if (nameIsAddress) name = split.full;
+          }
         }
 
         return {

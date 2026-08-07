@@ -8,7 +8,11 @@ import {
 } from "@/lib/http";
 import { parseItemInputs } from "@/lib/items";
 import { analyzeAddressCity, cleanAddressLabel, ensureAddressCity } from "@/lib/address";
-import { findDuplicate, normalizeAddress } from "@/lib/ocr";
+import {
+  findDuplicate,
+  normalizeAddress,
+  splitMultiHouseNumberAddress,
+} from "@/lib/ocr";
 import {
   normalizeAddressForGeocoding,
   orsGeocodeSearch,
@@ -93,12 +97,19 @@ export async function POST(request: Request) {
       const items = parseItemInputs(r.items);
       if (!name || !items || items.length === 0) continue;
       if (!hasHouseNumber(address)) continue;
+      // Mehrfach-Hausnummern derselben Straße (Treppenhaus-Fall, z. B.
+      // „Josefplatz 1,2,3“): Nur die ERSTE Hausnummer wird als Adresse
+      // gespeichert/geocodiert – der Gesamtstring („Josefplatz 1,2,3,
+      // Würzburg“) führt bei ORS sonst zu einem falschen Treffer (z. B.
+      // Düsseldorf). Der Name behält die vollständige Adressliste.
+      const split = splitMultiHouseNumberAddress(address);
+      const geoAddress = split ? split.first : address;
       newObjects.push({
         name,
         // Würzburg-Regel: Ohne Ortsangabe wird „Würzburg“ ergänzt, damit die
         // Adresse nie ohne Städtezusatz gespeichert wird (sonst landet sie
         // beim Geocoding irgendwo in Deutschland).
-        address: ensureAddressCity(address),
+        address: ensureAddressCity(geoAddress),
         latitude: validLatitude(r.latitude),
         longitude: validLongitude(r.longitude),
         category: isObjectCategory(r.category) ? r.category : "objekt",
