@@ -63,6 +63,12 @@ export type OrsGeocodeHit = {
  * den besten Treffer mit Label + Koordinaten. null bei Fehler/kein Key.
  * Über `options.boundary` kann die Suche auf ein Rechteck begrenzt werden
  * (z. B. Würzburg, wenn die Adresse geraten werden muss).
+ *
+ * Wichtig: `boundary.rect` priorisiert bei ORS nur Treffer im Rechteck,
+ * kann aber trotzdem Ergebnisse außerhalb liefern (z. B. existiert der
+ * „Josefplatz“ nur in Würzburg UND Düsseldorf – Düsseldorf steht dann an
+ * Platz 1). Deshalb werden bei gesetztem Boundary alle Treffer auf
+ * Lage innerhalb des Rechtecks geprüft und der erste passende genommen.
  */
 export async function orsGeocodeSearch(
   query: string,
@@ -73,17 +79,19 @@ export async function orsGeocodeSearch(
   try {
     const url = new URL("https://api.openrouteservice.org/geocode/search");
     url.searchParams.set("text", query);
-    url.searchParams.set("size", "1");
+    // Mehr Treffer anfordern, damit auch bei einem stärker gewichteten
+    // Treffer außerhalb des Rechtecks noch ein passender gefunden wird.
+    url.searchParams.set("size", "5");
     url.searchParams.set("lang", "de");
-    if (options?.boundary) {
+    const boundary = options?.boundary;
+    if (boundary) {
       // Bei Rechteck-Begrenzung KEIN boundary.country setzen: Beides
       // kombiniert kann von ORS/Pelias abgelehnt oder ignoriert werden.
       // Da das Würzburg-Rechteck ohnehin in Deutschland liegt, ist der
       // Länder-Filter hier redundant.
-      const b = options.boundary;
       url.searchParams.set(
         "boundary.rect",
-        `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}`,
+        `${boundary.minLon},${boundary.minLat},${boundary.maxLon},${boundary.maxLat}`,
       );
     } else {
       url.searchParams.set("boundary.country", "DEU");
@@ -99,26 +107,36 @@ export async function orsGeocodeSearch(
         properties?: { label?: string; name?: string };
       }>;
     } = await res.json();
-    const feature = json.features?.[0];
-    const coords = feature?.geometry?.coordinates;
-    const [lng, lat] = Array.isArray(coords) ? coords : [];
-    const label = feature?.properties?.label?.trim();
-    if (
-      !label ||
-      typeof lat !== "number" ||
-      typeof lng !== "number" ||
-      !Number.isFinite(lat) ||
-      !Number.isFinite(lng)
-    ) {
-      return null;
+    for (const feature of json.features ?? []) {
+      const coords = feature?.geometry?.coordinates;
+      const [lng, lat] = Array.isArray(coords) ? coords : [];
+      const label = feature?.properties?.label?.trim();
+      if (
+        !label ||
+        typeof lat !== "number" ||
+        typeof lng !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        continue;
+      }
+      if (boundary) {
+        const inside =
+          lng >= boundary.minLon &&
+          lng <= boundary.maxLon &&
+          lat >= boundary.minLat &&
+          lat <= boundary.maxLat;
+        if (!inside) continue;
+      }
+      return {
+        // Redundante Teile (z. B. "By, Deutschland") aus dem Label entfernen
+        label: cleanAddressLabel(label),
+        name: feature?.properties?.name?.trim() ?? "",
+        latitude: lat,
+        longitude: lng,
+      };
     }
-    return {
-      // Redundante Teile (z. B. "By, Deutschland") aus dem Label entfernen
-      label: cleanAddressLabel(label),
-      name: feature?.properties?.name?.trim() ?? "",
-      latitude: lat,
-      longitude: lng,
-    };
+    return null;
   } catch {
     return null;
   }
