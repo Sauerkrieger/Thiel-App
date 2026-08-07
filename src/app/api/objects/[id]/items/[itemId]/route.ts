@@ -9,7 +9,7 @@ import type { Database } from "@/types/database";
 type Context = { params: Promise<{ id: string; itemId: string }> };
 
 // Items bearbeiten (PUT) dürfen inzwischen alle angemeldeten Nutzer außer
-// Objektbetreuern (nur Lesen) – das Löschen (DELETE) bleibt Admins vorbehalten.
+// Reinigungskräften (nur Lesen) – das Löschen (DELETE) bleibt Admins vorbehalten.
 export async function PUT(request: Request, { params }: Context) {
   const auth = await requireUser();
   if (!auth.user) {
@@ -18,10 +18,10 @@ export async function PUT(request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
-  // Objektbetreuer dürfen Items nur ansehen, nicht ändern.
+  // Reinigungskräfte dürfen Items nur ansehen, nicht ändern.
   if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Objektbetreuer dürfen Items nicht bearbeiten." },
+      { error: "Reinigungskräfte dürfen Items nicht bearbeiten." },
       { status: 403 },
     );
   }

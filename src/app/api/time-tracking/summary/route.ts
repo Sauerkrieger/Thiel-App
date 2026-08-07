@@ -20,7 +20,7 @@ export async function GET() {
     const [{ data: profile, error: profileError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, name, role, vacation_days_total, vacation_days_used, overtime_hours")
+        .select("id, name, role, vacation_days_total, vacation_days_used, overtime_hours, contract_type")
         .eq("id", auth.user.id)
         .single(),
       supabase

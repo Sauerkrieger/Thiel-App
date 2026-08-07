@@ -204,7 +204,7 @@ export type PasskeyInfo = {
 /** Nutzerzeile in der Benutzerverwaltung (Admin). */
 export type UserListItem = AuthUser & {
   created_at: string;
-  /** Zugewiesene Objekte (nur bei Objektbetreuern gefüllt). */
+  /** Zugewiesene Objekte (nur bei Reinigungskräften gefüllt). */
   object_ids: string[];
 };
 

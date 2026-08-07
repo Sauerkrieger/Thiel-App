@@ -11,7 +11,7 @@ export default async function ObjectsRoute() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  // Nur Admins dürfen Objekte anlegen/bearbeiten/löschen. Objektbetreuer
+  // Nur Admins dürfen Objekte anlegen/bearbeiten/löschen. Reinigungskräfte
   // (facility_manager) sehen nur ihre zugewiesenen Objekte mit reduzierter
   // Spaltenansicht und dürfen Items nicht ändern.
   return <ObjectsPage userRole={user.role} />;

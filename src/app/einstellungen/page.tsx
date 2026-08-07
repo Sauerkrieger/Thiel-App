@@ -22,7 +22,7 @@ export default async function EinstellungenPage() {
     .order("created_at", { ascending: false });
 
   // Nutzerliste (nur für Admins) + Objektliste für die Zuweisung an
-  // Objektbetreuer.
+  // Reinigungskräfte.
   let users: {
     id: string;
     name: string;
@@ -30,13 +30,14 @@ export default async function EinstellungenPage() {
     email: string | null;
     username: string;
     created_at: string;
+    contract_type: string;
     object_ids: string[];
   }[] = [];
   let objects: { id: string; name: string }[] = [];
   if (isAdmin(user)) {
     const [{ data: profileData }, { data: objectData }, { data: assignmentData }] =
       await Promise.all([
-        admin.from("profiles").select("id, name, role, email, created_at").order("name"),
+        admin.from("profiles").select("id, name, role, email, created_at, contract_type").order("name"),
         admin.from("objects").select("id, name").order("name"),
         admin.from("object_assignments").select("user_id, object_id"),
       ]);
@@ -53,6 +54,7 @@ export default async function EinstellungenPage() {
       email: p.email,
       username: p.email?.split("@")[0] ?? "",
       created_at: p.created_at,
+      contract_type: p.contract_type ?? "full_time",
       object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
     objects = (objectData ?? []).map((o) => ({ id: o.id, name: o.name }));

@@ -5,10 +5,11 @@ import {
   emailToUsername,
   isUserRole,
 } from "@/lib/auth";
+import { isContractType } from "@/lib/contract";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
-import type { Database, UserRole } from "@/types/database";
+import type { ContractType, Database, UserRole } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ export async function PATCH(
     const body = await request.json().catch(() => ({}));
     const name = typeof body.name === "string" ? body.name.trim() : null;
     const role = isUserRole(body.role) ? body.role : null;
+    const contractType = isContractType(body.contract_type)
+      ? body.contract_type
+      : undefined;
     const rawObjectIds: unknown = Array.isArray(body.object_ids) ? body.object_ids : undefined;
     const objectIds = Array.isArray(rawObjectIds)
       ? rawObjectIds.filter((oid: unknown): oid is string => typeof oid === "string" && oid.length > 0)
@@ -67,12 +71,12 @@ export async function PATCH(
 
     const admin = getSupabaseAdmin();
 
-    // Objektbetreuer müssen mindestens einem Objekt zugeteilt werden
-    // (gilt beim Anlegen und wenn die Rolle auf Objektbetreuer wechselt).
+    // Reinigungskräfte müssen mindestens einem Objekt zugeteilt werden
+    // (gilt beim Anlegen und wenn die Rolle auf Reinigungskraft wechselt).
     if (role === "facility_manager") {
       if (objectIds !== undefined && objectIds.length === 0) {
         return NextResponse.json(
-          { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+          { error: "Reinigungskräfte müssen mindestens einem Objekt zugeteilt werden." },
           { status: 400 },
         );
       }
@@ -85,14 +89,14 @@ export async function PATCH(
         if (countError) throw countError;
         if ((count ?? 0) === 0) {
           return NextResponse.json(
-            { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+            { error: "Reinigungskräfte müssen mindestens einem Objekt zugeteilt werden." },
             { status: 400 },
           );
         }
       }
     }
 
-    if (!name && !role && vacationDaysTotal === undefined && overtimeHours === undefined && objectIds === undefined) {
+    if (!name && !role && contractType === undefined && vacationDaysTotal === undefined && overtimeHours === undefined && objectIds === undefined) {
       return NextResponse.json(
         { error: "Keine Änderungen übermittelt." },
         { status: 400 },
@@ -131,11 +135,13 @@ export async function PATCH(
     const update: {
       name?: string;
       role?: UserRole;
+      contract_type?: ContractType;
       vacation_days_total?: number;
       overtime_hours?: number;
     } = {};
     if (name) update.name = name;
     if (role) update.role = role;
+    if (contractType !== undefined) update.contract_type = contractType;
     if (vacationDaysTotal !== undefined) update.vacation_days_total = vacationDaysTotal;
     if (overtimeHours !== undefined) update.overtime_hours = Math.round(overtimeHours * 100) / 100;
 
@@ -157,13 +163,13 @@ export async function PATCH(
       .from("profiles")
       .update(updatePayload)
       .eq("id", id)
-      .select("id, name, role, email, created_at, vacation_days_total, vacation_days_used, overtime_hours")
+      .select("id, name, role, email, created_at, vacation_days_total, vacation_days_used, overtime_hours, contract_type")
       .single();
     if (error) throw error;
 
-    // Objektzuweisungen eines Objektbetreuers: ersetzt werden sie, wenn der
+    // Objektzuweisungen einer Reinigungskraft: ersetzt werden sie, wenn der
     // Admin Objekte übermittelt (Rolle = facility_manager). Wechselt die Rolle
-    // von Objektbetreuer auf etwas anderes, werden alle Zuweisungen entfernt.
+    // von Reinigungskraft auf etwas anderes, werden alle Zuweisungen entfernt.
     // Reine Namens-/Kontokorrekturen lassen die Zuweisungen unangetastet.
     let resultObjectIds: string[] = [];
     if (objectIds !== undefined) {
@@ -182,7 +188,7 @@ export async function PATCH(
       }
       resultObjectIds = nextObjectIds;
     } else if (role !== null && role !== "facility_manager") {
-      // Wechsel weg vom Objektbetreuer: Zuweisungen löschen.
+      // Wechsel weg von der Reinigungskraft: Zuweisungen löschen.
       const { error: deleteError } = await admin
         .from("object_assignments")
         .delete()
@@ -205,6 +211,7 @@ export async function PATCH(
         role: data.role,
         username: emailToUsername(data.email),
         created_at: data.created_at,
+        contract_type: data.contract_type,
         object_ids: resultObjectIds,
       },
     });

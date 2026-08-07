@@ -33,10 +33,10 @@ export async function POST(request: Request) {
       { status: auth.status },
     );
   }
-  // Objektbetreuer dürfen Items nicht verändern – auch keine Fotos hochladen.
+  // Reinigungskräfte dürfen Items nicht verändern – auch keine Fotos hochladen.
   if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Objektbetreuer dürfen Item-Fotos nicht hochladen." },
+      { error: "Reinigungskräfte dürfen Item-Fotos nicht hochladen." },
       { status: 403 },
     );
   }

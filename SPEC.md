@@ -36,17 +36,18 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
-**Enums:** `user_role` (`driver` | `admin` | `facility_manager` | `cleaner` | `substitute`),
-`object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
+**Enums:** `user_role` (`driver` | `admin` | `facility_manager` | `substitute`),
+`contract_type` (`full_time` | `part_time` | `mini_job`), `object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
 
 ### `profiles` – Benutzerprofile (1:1 zu `auth.users`)
 - `id` (PK → auth.users, cascade), `name`, `role` (user_role, default `driver`), `email`, `created_at`, `updated_at`
+- `contract_type` (`full_time` | `part_time` | `mini_job`, default `full_time`) – Vertragsart, steuert das Soll im Überstundenkonto (40/20/10 h pro Woche, bewusst nicht angezeigt)
 - Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an
 - **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
 
 ### `objects` – Ziele/Treppenhäuser
 - `id`, `name`, `address`, `category`
-- `is_pedestrian_zone_until_11` – Fußgängerzone: **MUSS vor 11:00 angefahren werden** (wird per Overpass automatisch erkannt, keine manuelle Checkbox)
+- `is_pedestrian_zone_until_11` – Fußgängerzone (wird per Overpass automatisch erkannt, keine manuelle Checkbox): direktes Anfahren nur bis 11:00 Uhr möglich, sonst über den nächsten befahrbaren Haltepunkt + Fußweg
 - `opens_at` (time, nullable) – Öffnungszeit: **DARF erst ab dieser Uhrzeit angefahren werden**
 - `latitude`, `longitude` (ORS-verifizierte Koordinaten, nullable)
 - `key_number` (integer, nullable)
@@ -54,9 +55,9 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 ### `object_assignments` – Objektzuweisungen (m:n Benutzer ↔ Objekt)
 - `user_id` (FK auth.users, cascade), `object_id` (FK objects, cascade), `created_at`
 - Primary Key `(user_id, object_id)`
-- Steuert die Sichtbarkeit für **Objektbetreuer** (`facility_manager`): Sie sehen nur die
-  hier zugewiesenen Objekte (und deren Items) – online wie offline. Beim Anlegen eines
-  Objektbetreuers ist mindestens eine Zuweisung Pflicht.
+- Steuert die Sichtbarkeit für **Reinigungskräfte** (`facility_manager`): Sie sehen nur die
+  hier zugewiesenen Objekte (und deren Items) – online wie offline. Beim Anlegen einer
+  Reinigungskraft ist mindestens eine Zuweisung Pflicht.
 
 ### `object_items` – Items eines Objekts
 - `id`, `object_id` (FK cascade), `item_name`
@@ -94,18 +95,17 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 | Rolle | Rechte |
 | :--- | :--- |
 | `admin` | Alles: Objekte, Foto-Import, OCR, Benutzerverwaltung, Planung, Touren, Item-Fotos |
-| `facility_manager` | **Objektbetreuer**: sieht NUR zugewiesene Objekte (Spalten Name, Adresse, Schlüssel, Kategorie, Items) mit Items in Nur-Lese-Ansicht. Keine Planung, keine Benutzerverwaltung, kein Anlegen/Bearbeiten/Löschen. Zuweisung erfolgt über die Benutzerverwaltung (mind. 1 Objekt). |
+| `facility_manager` | **Reinigungskraft** (ehem. Objektbetreuer): sieht NUR zugewiesene Objekte (Spalten Name, Adresse, Schlüssel, Kategorie, Items) mit Items in Nur-Lese-Ansicht. Keine Planung, keine Benutzerverwaltung, kein Anlegen/Bearbeiten/Löschen. Zuweisung erfolgt über die Benutzerverwaltung (mind. 1 Objekt). |
 | `driver` | Tourenplanung, Pack-Modus, Tour-Modus, Historie (eigene Touren) |
-| `cleaner` | Reiniger – Basis-Zugriff (Zeiterfassung, Einstellungen) |
-| `substitute` | **Springer**: sieht wie Fahrer alles (Objekte inkl. Zuletzt-beliefert/Info, Planung, Historie) – keine Objektzuweisung nötig, von der Objektbetreuer-Einschränkung unberührt |
+| `substitute` | **Springer**: sieht wie Fahrer alles (Objekte inkl. Zuletzt-beliefert/Info, Planung, Historie) – keine Objektzuweisung nötig, von der Reinigungskraft-Einschränkung unberührt |
 
 **Keine öffentliche Registrierung** – Benutzer werden ausschließlich von Admins über
 die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „Leon".
 
 **Dreifache Absicherung:**
 1. **Middleware** (`src/middleware.ts`): schützt alle Routen außer `/login` + Passkey-Login-APIs. Seiten → Redirect auf `/login?next=…`; API-Routen → `401 UNAUTHENTICATED`
-2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`/`isFacilityManager`), zusätzlich Tour-Owner-Check. **Objektbetreuer:** `/api/objects*` liefert nur zugewiesene Objekte (ohne Letzte-Belieferung-Felder), Item-/Foto-/Pack-Info-Endpunkte sind auf zugewiesene Objekte begrenzt und schreibgeschützt (403)
-3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer; `objects`/`object_items` rollenbewusst (Objektbetreuer nur zugewiesene Zeilen, Schreiben nur Admins); `object_assignments` Admin-verwaltet mit Eigen-Lese-Recht
+2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`/`isFacilityManager`), zusätzlich Tour-Owner-Check. **Reinigungskraft:** `/api/objects*` liefert nur zugewiesene Objekte (ohne Letzte-Belieferung-Felder), Item-/Foto-/Pack-Info-Endpunkte sind auf zugewiesene Objekte begrenzt und schreibgeschützt (403)
+3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer; `objects`/`object_items` rollenbewusst (Reinigungskräfte nur zugewiesene Zeilen, Schreiben nur Admins); `object_assignments` Admin-verwaltet mit Eigen-Lese-Recht
 
 ## 5. Kernfunktionen & Workflows
 
@@ -115,7 +115,7 @@ die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „
 - **Adress-Autocomplete** per ORS (`/api/geocoding/autocomplete`) + **Verifizierung** beim Speichern (`/api/geocoding/verify`), Stadtteil-Suffixe werden fürs Geocoding normalisiert
 - **Fußgängerzone wird beim Speichern automatisch per Overpass erkannt** (keine Checkbox)
 - Items je Objekt: Name, Menge, Bemerkung, **Foto-Upload** (`/api/items/photo`, 10 MB)
-- **Objektbetreuer (`facility_manager`):** sehen nur ihre zugewiesenen Objekte. Tabellenspalten auf Name, Adresse, Schlüssel, Kategorie, Items reduziert (kein „Zuletzt am"/„Info"). Der Items-Dialog ist eine reine Lesensicht (keine Bearbeitung, kein Foto-Upload).
+- **Reinigungskräfte (`facility_manager`):** sehen nur ihre zugewiesenen Objekte. Tabellenspalten auf Name, Adresse, Schlüssel, Kategorie, Items reduziert (kein „Zuletzt am"/„Info"). Der Items-Dialog ist eine reine Lesensicht (keine Bearbeitung, kein Foto-Upload).
 
 ### 5.2 Foto-Import (KI, Admin)
 Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
@@ -135,10 +135,10 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
    - **Live-Verkehr:** Ist `TOMTOM_API_KEY` gesetzt, wird vorab die **TomTom Routing Matrix** (Custom Matrix) für alle Koordinaten abgefragt und als `matrix`-Feld direkt an VROOM übergeben (Reihenfolge der Koordinaten exakt passend zur Job-/Depot-ID-Zuordnung). Ergebnis: `traffic_matrix_provider: "tomtom"`
    - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`
 2. **Fallback:** ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
-3. **Zeitfenster (Hard-Restriktionen):**
-   - Fußgängerzone bis 11:00 → **Deadline 11:00** (Ankunft MUSS davor)
+3. **Zeitfenster:**
    - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
-4. **Fußgängerzonen-Umweg:** Ist die Deadline nicht erreichbar, wird per Overpass der **nächstgelegene befahrbare Haltepunkt** gesucht (`findNearestDrivablePoint`); der Stopp wird dort angefahren, der Rest wird **zu Fuß** gelaufen (Badge „x m zu Fuß", `approach_by_foot`)
+   - Fußgängerzone → **zwei Varianten werden berechnet**: (A) direkt zum Objekt, nur bis 11:00 Uhr möglich (Deadline 11:00); (B) über den per Overpass gesuchten **nächstgelegenen befahrbaren Haltepunkt** (`findNearestDrivablePoint`) + Restweg **zu Fuß** (keine Deadline)
+4. **Die schnellere Variante gewinnt:** Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
 5. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
 6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 3 Min, Objekt 5 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
 7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
@@ -162,7 +162,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 
 ### 5.8 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
-- **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Objekte zuweisen** – beim Anlegen eines Objektbetreuers erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Objektbetreuer haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
+- **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob – bestimmt das Soll im Überstundenkonto) und **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
 ## 6. Karten (Leaflet)
 - `src/components/map/route-map.tsx` – imperatives Leaflet (nur im `useEffect`, SSR-sicher), OSM-Kacheln (kostenlos)
@@ -178,9 +178,9 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Objekte (Admin; Facility lesend):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
 **Inventar (Admin):** `GET/POST /api/inventory` · `PUT/DELETE /api/inventory/[id]`
 **Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
-**Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Objektbetreuer)
+**Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Reinigungskräfte)
 
-**Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Objektbetreuern)
+**Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH)
 **Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
 **Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
 

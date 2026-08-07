@@ -43,8 +43,9 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { CONTRACT_LABELS } from "@/lib/contract";
 import { offlineFetch } from "@/lib/offline/fetch";
-import type { UserRole } from "@/types/database";
+import type { ContractType, UserRole } from "@/types/database";
 
 type CurrentUser = {
   id: string;
@@ -67,6 +68,7 @@ type UserListItem = {
   email: string | null;
   username: string;
   created_at: string;
+  contract_type: string;
   object_ids: string[];
 };
 
@@ -78,8 +80,7 @@ type ObjectOption = {
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
   driver: "Fahrer",
-  facility_manager: "Objektbetreuer",
-  cleaner: "Reiniger",
+  facility_manager: "Reinigungskraft",
   substitute: "Springer",
 };
 
@@ -471,6 +472,7 @@ function UsersSection({
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("driver");
+  const [contractType, setContractType] = useState<ContractType>("full_time");
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -502,9 +504,9 @@ function UsersSection({
       toast.error("Das Passwort muss mindestens 8 Zeichen lang sein.");
       return;
     }
-    // Objektbetreuer müssen beim Anlegen mindestens einem Objekt zugeteilt werden.
+    // Reinigungskräfte müssen beim Anlegen mindestens einem Objekt zugeteilt werden.
     if (role === "facility_manager" && selectedObjectIds.length === 0) {
-      toast.error("Bitte mindestens ein Objekt für den Objektbetreuer auswählen.");
+      toast.error("Bitte mindestens ein Objekt für die Reinigungskraft auswählen.");
       return;
     }
     setCreating(true);
@@ -517,6 +519,7 @@ function UsersSection({
           name: name.trim(),
           password,
           role,
+          contract_type: contractType,
           ...(role === "facility_manager" ? { object_ids: selectedObjectIds } : {}),
         }),
       });
@@ -530,6 +533,7 @@ function UsersSection({
       setName("");
       setPassword("");
       setRole("driver");
+      setContractType("full_time");
       setSelectedObjectIds([]);
       onChanged();
     } catch {
@@ -539,7 +543,7 @@ function UsersSection({
     }
   }
 
-  /** Rolle ändern – für Objektbetreuer öffnet sich zuerst der Zuweisungs-Dialog. */
+  /** Rolle ändern – für Reinigungskräfte öffnet sich zuerst der Zuweisungs-Dialog. */
   function handleRoleSelect(id: string, newRole: string) {
     const user = users.find((u) => u.id === id);
     if (!user) return;
@@ -573,11 +577,11 @@ function UsersSection({
     }
   }
 
-  /** Objektzuweisungen eines Objektbetreuers speichern (Rolle + Objekte). */
+  /** Objektzuweisungen einer Reinigungskraft speichern (Rolle + Objekte). */
   async function handleEditSave() {
     if (!editTarget) return;
     if (editObjectIds.length === 0) {
-      toast.error("Bitte mindestens ein Objekt für den Objektbetreuer auswählen.");
+      toast.error("Bitte mindestens ein Objekt für die Reinigungskraft auswählen.");
       return;
     }
     setEditSaving(true);
@@ -599,6 +603,29 @@ function UsersSection({
       toast.error("Objektzuweisung konnte nicht gespeichert werden.");
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  /** Vertragsart eines bestehenden Nutzers ändern (PATCH). */
+  async function handleContractChange(id: string, contractType: ContractType) {
+    setSavingId(id);
+    try {
+      const res = await offlineFetch(`/api/auth/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contract_type: contractType }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Vertragsart konnte nicht geändert werden.");
+        return;
+      }
+      toast.success("Vertragsart geändert.");
+      onChanged();
+    } catch {
+      toast.error("Vertragsart konnte nicht geändert werden.");
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -671,16 +698,36 @@ function UsersSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="driver">Fahrer</SelectItem>
-                  <SelectItem value="facility_manager">Objektbetreuer</SelectItem>
-                  <SelectItem value="cleaner">Reiniger</SelectItem>
+                  <SelectItem value="facility_manager">Reinigungskraft</SelectItem>
                   <SelectItem value="substitute">Springer</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Vertragsart</Label>
+              <Select
+                value={contractType}
+                onValueChange={(v) => setContractType(v as ContractType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full_time">Vollzeit</SelectItem>
+                  <SelectItem value="part_time">Teilzeit</SelectItem>
+                  <SelectItem value="mini_job">Minijob</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Bestimmt die Soll-Arbeitszeit für das Überstundenkonto.
+              </p>
+            </div>
+          </div>
 
-          {/* Objektbetreuer: Objektzuweisung (mindestens 1) beim Anlegen */}
+          {/* Reinigungskraft: Objektzuweisung (mindestens 1) beim Anlegen */}
           {role === "facility_manager" && (
             <div className="space-y-1.5">
               <Label>
@@ -708,8 +755,8 @@ function UsersSection({
                     ))}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {selectedObjectIds.length} ausgewählt – der Betreuer sieht nur diese
-                    Objekte.
+                    {selectedObjectIds.length} ausgewählt – die Reinigungskraft sieht nur
+                    diese Objekte.
                   </p>
                 </>
               )}
@@ -753,8 +800,24 @@ function UsersSection({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="driver">Fahrer</SelectItem>
-                      <SelectItem value="facility_manager">Objektbetreuer</SelectItem>
+                      <SelectItem value="facility_manager">Reinigungskraft</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={u.contract_type ?? "full_time"}
+                    onValueChange={(v) => handleContractChange(u.id, v as ContractType)}
+                    disabled={savingId === u.id}
+                  >
+                    <SelectTrigger className="h-8 w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(CONTRACT_LABELS).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   {u.role === "facility_manager" && (
@@ -787,13 +850,13 @@ function UsersSection({
         )}
       </CardContent>
 
-      {/* Objektzuweisungs-Dialog (Objektbetreuer) */}
+      {/* Objektzuweisungs-Dialog (Reinigungskraft) */}
       <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Objekte zuweisen</DialogTitle>
             <DialogDescription>
-              {editTarget?.name} (Objektbetreuer) sieht nur die hier zugewiesenen
+              {editTarget?.name} (Reinigungskraft) sieht nur die hier zugewiesenen
               Objekte – mindestens eines ist Pflicht.
             </DialogDescription>
           </DialogHeader>

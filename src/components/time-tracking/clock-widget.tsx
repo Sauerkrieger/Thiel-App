@@ -141,6 +141,43 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
     toast.success(`${additional} Min. Pause ergänzt.`);
   }
 
+  // Erinnerung „Vergessen auszustempeln?“: Wenn die gewöhnliche Arbeitszeit
+  // (8 h) überschritten ist ODER nach 17:00 Uhr noch eingestempelt ist, wird
+  // einmalig je offener Stempelung ein Hinweis angezeigt – als echte
+  // Browser-Benachrichtigung, falls erlaubt, sonst als Toast-Popup.
+  useEffect(() => {
+    if (!entry) return;
+    const key = `thiel-clock-remind:${userId ?? "anonymous"}:${entry.id}`;
+    if (window.localStorage.getItem(key)) return;
+    const elapsed = elapsedMinutes(entry, now);
+    const after17 = new Date().getHours() >= 17;
+    // Nach 17 Uhr nur warnen, wenn schon mindestens eine Stunde gearbeitet
+    // wurde (sonst Fehlalarm bei Schichtbeginn am Abend).
+    if (elapsed >= 8 * 60 || (after17 && elapsed >= 60)) {
+      window.localStorage.setItem(key, new Date().toISOString());
+      const body = `Du bist seit ${minutesToLabel(Math.max(0, elapsed))} eingestempelt.`;
+      if (
+        typeof window !== "undefined" &&
+        "Notification" in window &&
+        Notification.permission === "granted"
+      ) {
+        try {
+          new Notification("Vergessen auszustempeln?", { body });
+          return;
+        } catch {
+          /* Fallback: Toast unten */
+        }
+      }
+      toast.warning("Vergessen auszustempeln?", {
+        description: body,
+        action: {
+          label: "Ausstempeln",
+          onClick: () => void clockOut(),
+        },
+      });
+    }
+  }, [entry, now, userId, clockOut]);
+
   // Spinner immer sichtbar: Am Desktop steht das Widget im Header, am Handy in
   // der unteren Stempeluhr-Leiste (AppShell) – in beiden Fällen soll beim
   // Laden ein Indikator erscheinen.

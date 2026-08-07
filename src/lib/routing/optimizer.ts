@@ -57,8 +57,17 @@ export { WAREHOUSE_NAME, WAREHOUSE_ADDRESS };
 /* ------------------------------------------------------------------ */
 
 
-/** Fußgängerzonen-Objekte MÜSSEN vor 11:00 Uhr angefahren werden. */
+/**
+ * Fußgängerzonen-Objekte dürfen bis 11:00 Uhr direkt angefahren werden.
+ * Ist das nicht möglich (oder langsamer), werden sie über den
+ * nächstgelegenen befahrbaren Haltepunkt angefahren und der Restweg wird
+ * zu Fuß zurückgelegt. Der Optimierer berechnet beide Varianten und
+ * wählt die schnellere.
+ */
 export const PEDESTRIAN_LIMIT_MINUTES = 11 * 60;
+
+/** Gehgeschwindigkeit für den Fußweg-Vergleich (m/min ≈ 5 km/h). */
+const WALKING_SPEED_MPM = 83.33;
 
 export const AVERAGE_SPEED_KMH = 30;
 
@@ -609,6 +618,128 @@ async function tryOrsWithTraffic(
 /* Hauptfunktion                                                       */
 /* ------------------------------------------------------------------ */
 
+type VariantInput = {
+  coords: Coordinate[];
+  deadline: number[];
+};
+
+type VariantResult = {
+  /** Koordinaten, die für diese Variante geroutet wurden (Umweg-Punkte möglich). */
+  coords: Coordinate[];
+  order: number[];
+  times: number[];
+  totalMinutes: number;
+  departureMinutes: number;
+  mode: RoutingMode;
+  trafficProvider: "tomtom" | null;
+  /** true, wenn alle Zeitfenster der Variante eingehalten wurden. */
+  feasible: boolean;
+};
+
+/**
+ * Löst EINE Variante der Rundtour (direkt zum Objekt ODER über den
+ * befahrbaren Haltepunkt): zuerst ORS-Optimization-API (mit Live-Verkehr),
+ * bei Fehlschlag Fahrzeit-Matrix + lokaler TSP-Solver. Wird für den
+ * Fußgängerzonen-Vergleich zweimal aufgerufen (direkt vs. Umweg).
+ */
+async function solveVariant(
+  input: VariantInput,
+  earliest: number[],
+  startMinutes: number,
+  serviceMinutes: number[],
+  warnings: string[],
+): Promise<VariantResult> {
+  const { coords, deadline } = input;
+  const startSec = startMinutes * 60;
+  let trafficProvider: "tomtom" | null = null;
+  let orsSolution: OrsSolution | null = null;
+  const hasOrsKey = Boolean(process.env.ORS_API_KEY);
+  const hasTomTomKey = Boolean(process.env.TOMTOM_API_KEY);
+
+  if (hasOrsKey && coords.length <= MAX_OPTIMIZATION_JOBS) {
+    const first = await tryOrsWithTraffic(
+      coords,
+      earliest,
+      deadline,
+      startSec,
+      serviceMinutes,
+      hasTomTomKey,
+    );
+    if (first.solution) {
+      orsSolution = first.solution;
+      if (first.trafficUsed) {
+        trafficProvider = first.provider;
+      } else if (hasTomTomKey) {
+        warnings.push(
+          "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
+        );
+      }
+    } else {
+      warnings.push(
+        "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
+      );
+    }
+  } else if (hasOrsKey) {
+    warnings.push(
+      `Mehr als ${MAX_OPTIMIZATION_JOBS} Ziele – ORS-Optimierung übersprungen, nutze Matrix + lokalen Solver.`,
+    );
+  }
+
+  if (orsSolution) {
+    return {
+      coords,
+      order: orsSolution.order,
+      times: orsSolution.times,
+      totalMinutes: orsSolution.totalMinutes,
+      departureMinutes: orsSolution.departureMinutes,
+      mode: "ors-optimization",
+      trafficProvider,
+      feasible: true,
+    };
+  }
+
+  const { matrix, mode: matrixMode } = await resolveMatrix(coords, warnings);
+  const solution = solveTspWithWindows(
+    matrix,
+    earliest,
+    deadline,
+    startMinutes,
+    serviceMinutes,
+  );
+  const times =
+    scheduleTimes(
+      solution.order,
+      matrix,
+      earliest,
+      deadline,
+      startMinutes,
+      serviceMinutes,
+      true,
+    ) ??
+    scheduleTimes(
+      solution.order,
+      matrix,
+      earliest,
+      deadline,
+      startMinutes,
+      serviceMinutes,
+      false,
+    ) ??
+    [];
+  return {
+    coords,
+    order: solution.order,
+    times,
+    totalMinutes: Number.isFinite(solution.totalMinutes)
+      ? solution.totalMinutes
+      : 0,
+    departureMinutes: startMinutes,
+    mode: matrixMode,
+    trafficProvider: null,
+    feasible: solution.feasible,
+  };
+}
+
 export async function optimizeRoute(
   objects: RouteObject[],
   startTime?: string,
@@ -625,7 +756,6 @@ export async function optimizeRoute(
   // Die gewählte Startzeit ist die frühestmögliche Abfahrt.
   const resolvedStartTime = startTime ?? defaultStartTime(prepMinutes);
   const start = toMinutes(resolvedStartTime);
-  const startSec = start * 60;
 
   const warehouseGeo = await geocodeAddress(WAREHOUSE_ADDRESS);
   const warehouseCoord = warehouseGeo.coord;
@@ -634,12 +764,12 @@ export async function optimizeRoute(
   );
   const objectCoords = objectGeos.map((g) => g.coord);
   const coords: Coordinate[] = [warehouseCoord, ...objectCoords];
-  // Koordinaten, die tatsächlich für die Routing-Lösung verwendet wurden
-  // (werden beim Fußgängerzonen-Umweg auf die befahrbaren Punkte ersetzt).
-  let routingCoords: Coordinate[] = coords;
 
   // Zeitfenster (Node 0 = Lager)
-  const earliest = [0, ...objects.map((o) => (o.opens_at ? toMinutes(o.opens_at) : 0))];
+  const earliest = [
+    0,
+    ...objects.map((o) => (o.opens_at ? toMinutes(o.opens_at) : 0)),
+  ];
   const deadlineDirect = [
     Number.POSITIVE_INFINITY,
     ...objects.map((o) =>
@@ -653,211 +783,101 @@ export async function optimizeRoute(
     .map((obj, index) => (obj.is_pedestrian_zone_until_11 ? index : -1))
     .filter((index) => index >= 0);
 
-  // Objekt-Index -> Fußweg in Metern (nur bei approach_by_foot)
+  // Fußgängerzonen-Umweg: befahrbare Haltepunkte vorab ermitteln (für die
+  // zweite Variante). Objekt-Index -> Fußweg in Metern.
   const walkingDistances = new Map<number, number>();
-
-  /* ---- Phase 1: ORS-Optimization-API (Primärweg) ---------------------- */
-  let orsSolution: OrsSolution | null = null;
-  // Live-Verkehrsanbieter, dessen Matrix tatsächlich verwendet wurde
-  let trafficMatrixProvider: "tomtom" | null = null;
-  const hasOrsKey = Boolean(process.env.ORS_API_KEY);
-  const hasTomTomKey = Boolean(process.env.TOMTOM_API_KEY);
-  if (hasOrsKey && coords.length <= MAX_OPTIMIZATION_JOBS) {
-    const first = await tryOrsWithTraffic(
-      coords,
-      earliest,
-      deadlineDirect,
-      startSec,
-      serviceMinutes,
-      hasTomTomKey,
+  let detourCoords: Coordinate[] | null = null;
+  let deadlineDetour: number[] | null = null;
+  if (pedestrianIndexes.length > 0) {
+    const drivable = await Promise.all(
+      pedestrianIndexes.map(async (objIndex) => {
+        const point = await findNearestDrivablePoint(objectCoords[objIndex]);
+        return { objIndex, point };
+      }),
     );
-    if (first.solution) {
-      orsSolution = first.solution;
-      if (first.trafficUsed) {
-        trafficMatrixProvider = first.provider;
-      } else if (hasTomTomKey) {
-        warnings.push(
-          "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
-        );
-      }
-    }
-
-    // Umweg-Routing bei nicht erfüllbaren Zeitfenstern (Fußgängerzone)
-    if (!orsSolution && pedestrianIndexes.length > 0) {
-      const drivable = await Promise.all(
-        pedestrianIndexes.map(async (objIndex) => {
-          const point = await findNearestDrivablePoint(objectCoords[objIndex]);
-          return { objIndex, point };
-        }),
-      );
-      const usable = drivable.filter(
-        (entry): entry is { objIndex: number; point: DrivablePoint } =>
-          entry.point !== null,
-      );
-      if (usable.length > 0) {
-        const detourCoords = coords.map((coord, index) => {
-          const hit = usable.find((u) => u.objIndex + 1 === index);
-          return hit ? hit.point : coord;
-        });
-        const deadlineDetour = deadlineDirect.map((d, index) =>
-          usable.some((u) => u.objIndex + 1 === index)
-            ? Number.POSITIVE_INFINITY
-            : d,
-        );
-        // Frische Matrix für die geänderten Koordinaten abfragen
-        const detour = await tryOrsWithTraffic(
-          detourCoords,
-          earliest,
-          deadlineDetour,
-          startSec,
-          serviceMinutes,
-          hasTomTomKey,
-        );
-        if (detour.solution) {
-          orsSolution = detour.solution;
-          routingCoords = detourCoords;
-          if (detour.trafficUsed) {
-            trafficMatrixProvider = detour.provider;
-          } else if (hasTomTomKey) {
-            warnings.push(
-              "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
-            );
-          }
-          usable.forEach((u) =>
-            walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
-          );
-          warnings.push(
-            "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß, Zeitfenster „vor 11:00“ entfällt für diese Stopps).",
-          );
-        }
-      }
-    }
-
-    if (!orsSolution) {
-      warnings.push(
-        "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
-      );
-    }
-  } else if (hasOrsKey) {
-    warnings.push(
-      `Mehr als ${MAX_OPTIMIZATION_JOBS} Ziele – ORS-Optimierung übersprungen, nutze Matrix + lokalen Solver.`,
+    const usable = drivable.filter(
+      (entry): entry is { objIndex: number; point: DrivablePoint } =>
+        entry.point !== null,
     );
+    if (usable.length > 0) {
+      detourCoords = coords.map((coord, index) => {
+        const hit = usable.find((u) => u.objIndex + 1 === index);
+        return hit ? hit.point : coord;
+      });
+      deadlineDetour = deadlineDirect.map((d, index) =>
+        usable.some((u) => u.objIndex + 1 === index)
+          ? Number.POSITIVE_INFINITY
+          : d,
+      );
+      usable.forEach((u) =>
+        walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
+      );
+    }
   }
 
-  let order: number[];
-  let times: number[];
-  let total: number;
-  let departureMinutes: number;
-  let mode: RoutingMode;
-
-  if (orsSolution) {
-    mode = "ors-optimization";
-    order = orsSolution.order;
-    times = orsSolution.times;
-    total = orsSolution.totalMinutes;
-    departureMinutes = orsSolution.departureMinutes;
-  } else {
-    /* ---- Phase 2: Matrix + TSP (Fallback) ------------------------------ */
-    let { matrix, mode: matrixMode } = await resolveMatrix(coords, warnings);
-    mode = matrixMode;
-    let solution = solveTspWithWindows(
-      matrix,
-      earliest,
-      deadlineDirect,
-      start,
-      serviceMinutes,
-    );
-    let finalMatrix = matrix;
-    let finalDeadline = deadlineDirect;
-
-    // Umweg-Routing bei nicht erfüllbaren Zeitfenstern (Fußgängerzone)
-    if (!solution.feasible && pedestrianIndexes.length > 0) {
-      const drivable = await Promise.all(
-        pedestrianIndexes.map(async (objIndex) => {
-          const point = await findNearestDrivablePoint(objectCoords[objIndex]);
-          return { objIndex, point };
-        }),
-      );
-      const usable = drivable.filter(
-        (entry): entry is { objIndex: number; point: DrivablePoint } =>
-          entry.point !== null,
-      );
-      if (usable.length > 0) {
-        const detourCoords = coords.map((coord, index) => {
-          const hit = usable.find((u) => u.objIndex + 1 === index);
-          return hit ? hit.point : coord;
-        });
-        const detour = await resolveMatrix(detourCoords, warnings);
-        const deadlineDetour = deadlineDirect.map((d, index) =>
-          usable.some((u) => u.objIndex + 1 === index)
-            ? Number.POSITIVE_INFINITY
-            : d,
-        );
-        const solutionDetour = solveTspWithWindows(
-          detour.matrix,
+  // Variante A: direkt zum Objekt fahren (Fußgängerzone: nur bis 11:00 Uhr).
+  const variantA = await solveVariant(
+    { coords, deadline: deadlineDirect },
+    earliest,
+    start,
+    serviceMinutes,
+    warnings,
+  );
+  // Variante B: über den befahrbaren Haltepunkt von außen anfahren + Restweg
+  // zu Fuß (kein Zeitfenster). Nur wenn für mindestens ein Fußgängerzonen-
+  // Objekt ein Haltepunkt gefunden wurde.
+  const variantB =
+    detourCoords && deadlineDetour
+      ? await solveVariant(
+          { coords: detourCoords, deadline: deadlineDetour },
           earliest,
-          deadlineDetour,
           start,
           serviceMinutes,
-        );
-        if (solutionDetour.feasible) {
-          finalMatrix = detour.matrix;
-          finalDeadline = deadlineDetour;
-          solution = solutionDetour;
-          mode = detour.mode;
-          routingCoords = detourCoords;
-          usable.forEach((u) =>
-            walkingDistances.set(u.objIndex, Math.round(u.point.distance_meters)),
-          );
-          warnings.push(
-            "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß, Zeitfenster „vor 11:00“ entfällt für diese Stopps).",
-          );
-        }
-      }
-    }
+          warnings,
+        )
+      : null;
 
-    order = solution.order;
-    times = scheduleTimes(
-      order,
-      finalMatrix,
-      earliest,
-      finalDeadline,
-      start,
-      serviceMinutes,
-      true,
-    ) ?? scheduleTimes(
-      order,
-      finalMatrix,
-      earliest,
-      finalDeadline,
-      start,
-      serviceMinutes,
-      false,
-    ) ?? [];
-    total = Number.isFinite(solution.totalMinutes) ? solution.totalMinutes : 0;
-    departureMinutes = start;
-
-    if (!solution.feasible) {
-      warnings.push(
-        "Die Zeit-Restriktionen können mit der gewählten Startzeit nicht für alle Objekte erfüllt werden (z. B. Fußgängerzone vor 11:00 Uhr). Bitte Startzeit anpassen oder Objekte entfernen.",
-      );
+  // Die schnellere Variante gewinnt: Die Fußweg-Zeit (≈ 5 km/h) wird beim
+  // Vergleich von Variante B berücksichtigt. Ist A nicht machbar, gewinnt B
+  // automatisch (sofern vorhanden).
+  let chosen = variantA;
+  if (variantB && (variantB.feasible || !variantA.feasible)) {
+    const walkMinutes = [...walkingDistances.values()].reduce(
+      (sum, meters) => sum + meters / WALKING_SPEED_MPM,
+      0,
+    );
+    const bTotal = variantB.totalMinutes + walkMinutes;
+    if (!variantA.feasible || bTotal < variantA.totalMinutes) {
+      chosen = variantB;
     }
   }
 
-  // Doppelte Warnungen (z. B. aus Phase 1 + Phase 2) entfernen
+  if (chosen === variantB && walkingDistances.size > 0) {
+    warnings.push(
+      "Fußgängerzonen-Objekte werden über den nächstgelegenen befahrbaren Haltepunkt angefahren (Restweg zu Fuß) – diese Variante war schneller als die direkte Anfahrt.",
+    );
+  }
+  if (!chosen.feasible) {
+    warnings.push(
+      "Die Zeit-Restriktionen können mit der gewählten Startzeit nicht für alle Objekte erfüllt werden (z. B. Öffnungszeiten). Bitte Startzeit anpassen oder Objekte entfernen.",
+    );
+  }
+
+  // Doppelte Warnungen (z. B. aus beiden Varianten) entfernen
   const uniqueWarnings = [...new Set(warnings)];
 
-  const stops: OptimizedStop[] = order.map((node, index) => {
+  const stops: OptimizedStop[] = chosen.order.map((node, index) => {
     const obj = objects[node - 1];
-    const arrival = times[index];
+    const arrival = chosen.times[index];
     const walking = walkingDistances.get(node - 1);
     // Koordinaten, die für die Route tatsächlich verwendet wurden
     // (befahrbarer Punkt bei approach_by_foot, sonst Objekt-Adresse).
-    const coord = routingCoords[node];
+    const coord = chosen.coords[node];
     // Demo-Modus: Hash-Koordinaten sind erfunden -> auf der Karte ausblenden.
-    const fallbackCoord = walking !== undefined
-      ? false
-      : (objectGeos[node - 1]?.fallback ?? true);
+    const fallbackCoord =
+      walking !== undefined
+        ? false
+        : (objectGeos[node - 1]?.fallback ?? true);
     return {
       object_id: obj.id,
       name: obj.name,
@@ -875,19 +895,23 @@ export async function optimizeRoute(
     };
   });
 
-  const warehouseArrival = formatMinutes(departureMinutes + total);
+  const warehouseArrival = formatMinutes(
+    chosen.departureMinutes + chosen.totalMinutes,
+  );
 
   return {
-    mode,
-    start_time: formatMinutes(departureMinutes),
+    mode: chosen.mode,
+    start_time: formatMinutes(chosen.departureMinutes),
     prep_duration_minutes: prepMinutes,
-    prep_begin: formatMinutes(Math.max(0, departureMinutes - prepMinutes)),
-    departure_time: formatMinutes(departureMinutes),
+    prep_begin: formatMinutes(
+      Math.max(0, chosen.departureMinutes - prepMinutes),
+    ),
+    departure_time: formatMinutes(chosen.departureMinutes),
     stops,
-    total_duration_minutes: Math.round(total),
+    total_duration_minutes: Math.round(chosen.totalMinutes),
     warehouse_arrival: warehouseArrival,
     warnings: uniqueWarnings,
-    traffic_matrix_provider: trafficMatrixProvider,
+    traffic_matrix_provider: chosen.trafficProvider,
     warehouse: warehouseGeo.fallback
       ? null
       : {

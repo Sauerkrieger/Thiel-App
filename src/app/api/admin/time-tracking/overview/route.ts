@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const query = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
     const supabase = getSupabaseAdmin();
     const [{ data: profiles, error: profilesError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: tours, error: toursError }] = await Promise.all([
-      supabase.from("profiles").select("id, name, role, email, vacation_days_total, vacation_days_used, overtime_hours").order("name"),
+      supabase.from("profiles").select("id, name, role, email, vacation_days_total, vacation_days_used, overtime_hours, contract_type").order("name"),
       // Kein `profiles:user_id(...)`-Embed: time_entries.user_id referenziert
       // auth.users, nicht profiles – die Namen werden unten per JS-Join ergänzt.
       supabase.from("time_entries").select("*").order("clock_in", { ascending: false }),

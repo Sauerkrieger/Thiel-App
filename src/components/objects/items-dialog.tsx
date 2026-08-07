@@ -28,7 +28,7 @@ type Props = {
   onChanged: () => void;
   /** Löschen ist Admins vorbehalten – ohne diese Rechte wird der Button ausgeblendet. */
   canDelete?: boolean;
-  /** Reine Lesansicht (Objektbetreuer): keine Bearbeitung/Änderung möglich. */
+  /** Reine Lesansicht (Reinigungskraft): keine Bearbeitung/Änderung möglich. */
   readOnly?: boolean;
 };
 
@@ -241,24 +241,39 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
                   ) : (
                     <>
                       <div className="flex items-center gap-2">
-                        <Checkbox
-                          checked={item.is_always_required}
-                          onCheckedChange={() =>
-                            void handleUpdate(item, {
-                              is_always_required: !item.is_always_required,
-                              ...(item.is_always_required ? {} : { is_reserved: false }),
-                            })
-                          }
-                          aria-label={
+                        <label
+                          className={[
+                            "flex cursor-pointer items-center gap-1.5 text-xs font-medium transition-colors",
                             item.is_always_required
-                              ? `${item.item_name} als Standard entfernen`
-                              : `${item.item_name} als Standard markieren`
-                          }
-                        />
-                        {item.is_always_required ? (
-                          <Badge variant="success">Standard</Badge>
-                        ) : (
-                          <>
+                              ? "text-primary"
+                              : "text-muted-foreground hover:text-foreground",
+                          ].join(" ")}
+                        >
+                          <Checkbox
+                            checked={item.is_always_required}
+                            onCheckedChange={() =>
+                              void handleUpdate(item, {
+                                is_always_required: !item.is_always_required,
+                                ...(item.is_always_required ? {} : { is_reserved: false }),
+                              })
+                            }
+                            aria-label={
+                              item.is_always_required
+                                ? `${item.item_name} als Standard entfernen`
+                                : `${item.item_name} als Standard markieren`
+                            }
+                          />
+                          Standard
+                        </label>
+                        {!item.is_always_required && (
+                          <label
+                            className={[
+                              "flex cursor-pointer items-center gap-1.5 text-xs font-medium transition-colors",
+                              item.is_reserved
+                                ? "text-primary"
+                                : "text-muted-foreground hover:text-foreground",
+                            ].join(" ")}
+                          >
                             <Checkbox
                               checked={item.is_reserved}
                               onCheckedChange={() =>
@@ -272,10 +287,8 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
                                   : `${item.item_name} für nächste Belieferung vormerken`
                               }
                             />
-                            {item.is_reserved && (
-                              <Badge variant="outline">vorgemerkt</Badge>
-                            )}
-                          </>
+                            Vormerken
+                          </label>
                         )}
                         <div className="flex-1" />
                         {canDelete && (

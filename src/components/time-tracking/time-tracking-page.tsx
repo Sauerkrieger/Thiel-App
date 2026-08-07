@@ -17,9 +17,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch } from "@/lib/offline/fetch";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
+import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeOffRequest, TimeOffType } from "@/types/time-tracking";
 
 type ProfileSummary = {
@@ -27,6 +29,7 @@ type ProfileSummary = {
   vacation_days_total: number;
   vacation_days_used: number;
   overtime_hours: number;
+  contract_type: ContractType | null;
 };
 
 type Summary = {
@@ -109,6 +112,18 @@ export function TimeTrackingPage() {
       .reduce((total, entry) => total + workedMinutesOf(entry), 0);
   }, [summary]);
   const vacationRemaining = summary ? Math.max(0, summary.profile.vacation_days_total - summary.profile.vacation_days_used) : 0;
+  // Soll/Ist-Vergleich: Das Überstundenkonto rechnet automatisch die Plus-
+  // oder Minusstunden aus den Stempelungen im Vergleich zur Soll-Arbeitszeit
+  // der Vertragsart (Vollzeit/Teilzeit/Minijob) – die genauen Soll-Stunden
+  // werden bewusst nicht angezeigt.
+  const contractLabel = summary
+    ? (CONTRACT_LABELS[summary.profile.contract_type ?? "full_time"] ?? "Vollzeit")
+    : "";
+  // Automatisch berechnet + manuelle Korrektur der Verwaltung (overtime_hours).
+  const overtimeBalance = summary
+    ? overtimeBalanceHours(summary.entries, summary.profile.contract_type) +
+      Number(summary.profile.overtime_hours ?? 0)
+    : 0;
 
   async function submitRequest(event: React.FormEvent) {
     event.preventDefault();
@@ -195,9 +210,9 @@ export function TimeTrackingPage() {
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard icon={<CalendarDays />} label="Resturlaub" value={`${vacationRemaining} Tage`} detail={`${summary.profile.vacation_days_used} von ${summary.profile.vacation_days_total} Tagen genutzt`} />
-            <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} detail="Freigegebene Stempelungen" />
+            <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} detail={`Freigegebene Stempelungen · ${contractLabel}`} />
             <MetricCard icon={<TimerReset />} label="Dieser Monat" value={minutesToLabel(monthMinutes)} detail="Freigegebene Stempelungen" />
-            <MetricCard icon={<FileClock />} label="Überstundenkonto" value={hoursToLabel(Number(summary.profile.overtime_hours ?? 0))} detail="Von der Verwaltung gepflegt" />
+            <MetricCard icon={<FileClock />} label="Überstundenkonto (Soll/Ist)" value={hoursToLabel(overtimeBalance)} detail={`Automatisch aus Stempelungen & Vertragsart (${contractLabel}) · inkl. Korrektur`} />
           </div>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-3">

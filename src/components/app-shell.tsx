@@ -64,15 +64,9 @@ export function AppShell({
   const sync = useSyncState();
 
   // Rolle synchron setzen (vor Kind-Effekten), damit die Offline-Layer-Filter
-  // für Objektbetreuer schon beim ersten Seitenaufruf greifen.
+  // für Reinigungskräfte schon beim ersten Seitenaufruf greifen.
   setCurrentUserRole(userRole);
   if (userId) setCurrentUserId(userId);
-
-  // Seiten mit eigener fester Bottom-Leiste (z. B. Speichern/Tour starten):
-  // dort wird die mobile Stempeluhr-Leiste ausgeblendet, damit sich zwei
-  // feste Leisten nicht überlagern.
-  const hasOwnBottomBar =
-    pathname === "/planung" || pathname.startsWith("/tour/");
 
   // Sync-Engine initialisieren (Offline-Erkennung, Zeit-Offset, Reconnect-Sync)
   useEffect(() => {
@@ -159,10 +153,10 @@ export function AppShell({
         </div>
       </header>
       <main className="flex-1">{children}</main>
-      {/* Mobile Stempeluhr: feste Leiste am unteren Rand (nur Handy). Seiten mit
-          eigener Bottom-Bar (Tourenplanung, Tour) haben dort schon Aktionen und
-          zeigen diese Leiste nicht zusätzlich. */}
-      {userRole && !hasOwnBottomBar && (
+      {/* Mobile Stempeluhr: feste Leiste am unteren Rand (nur Handy). Sie ist
+          auf JEDER Seite sichtbar – Seiten mit eigener Bottom-Leiste
+          (Tourenplanung, Tour) stapeln ihre Leiste darüber (bottom-14). */}
+      {userRole && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:hidden">
           <div className="container flex h-14 items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">

@@ -21,7 +21,7 @@ export async function GET(_request: Request, { params }: Context) {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
 
-    // Objektbetreuer: Items nur zugewiesener Objekte lesen.
+    // Reinigungskraft: Items nur zugewiesener Objekte lesen.
     if (isFacilityManager(auth.user)) {
       const { data: assignment } = await supabase
         .from("object_assignments")
@@ -59,10 +59,10 @@ export async function POST(request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
-  // Objektbetreuer dürfen Items nur ansehen, nicht ändern.
+  // Reinigungskräfte dürfen Items nur ansehen, nicht ändern.
   if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Objektbetreuer dürfen Items nicht bearbeiten." },
+      { error: "Reinigungskräfte dürfen Items nicht bearbeiten." },
       { status: 403 },
     );
   }

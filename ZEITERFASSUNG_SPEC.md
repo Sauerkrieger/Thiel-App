@@ -1,7 +1,7 @@
 # Thiel Dienstleistungen – Implementierungsplan: Zeiterfassung & Urlaubsverwaltung
 
 ## 🛠️ Architektur & Design-Entscheidungen (Bestehende Offline-Infrastruktur)
-- **Rollenübergreifend & Admin-Übersicht:** Skalierbare Tabellen für alle Mitarbeiter (Fahrer, Springer, Reiniger, Objektbetreuer, Admins) mit Filter nach Rolle/Status, Freigabe-Feed und Lohn-CSV-Export.
+- **Rollenübergreifend & Admin-Übersicht:** Skalierbare Tabellen für alle Mitarbeiter (Fahrer, Springer, Reinigungskräfte, Admins) mit Filter nach Rolle/Status, Freigabe-Feed und Lohn-CSV-Export.
 - **Offline-First Stempeluhr via IndexedDB & LWW:** Stempel-Events werden über die bestehende `src/lib/offline/db.ts` in IndexedDB gespeichert (`pending_upload`). Mit `nowServerAligned()` aus `src/lib/offline/clock.ts` werden `client_updated_at`-Zeitstempel gesetzt. Der Sync läuft nahtlos über die bestehende Sync-Engine (`src/lib/offline/sync.ts` & `/api/sync`).
 - **Nahtlose Integration:** Subtiler Stempel-Live-Badge im Header der AppShell (`🟢 04:12 h`).
 
@@ -22,6 +22,7 @@
 - [x] Wochen- & Monatsübersicht gestempelter Zeiten (mittels `offlineFetch` aus IndexedDB/Cache)
 - [x] Formular für Urlaubs- & Krankheitsanträge
 - [x] Anzeige Resturlaub & Überstundenkonto
+- [x] **Soll/Ist-Vergleich & automatisches Überstundenkonto:** Vertragsart (Vollzeit/Teilzeit/Minijob) je Konto; das Überstundenkonto rechnet automatisch die Plus-/Minusstunden aus den freigegebenen Stempelungen (Soll 40/20/10 h pro Woche, bewusst nicht angezeigt); manuelle Korrektur durch die Verwaltung bleibt möglich
 
 ### Phase 4: Admin-Zentrale (`/admin/zeiterfassung`) (Schritt 4)
 - [x] Mitarbeiter-Status-Grid (aktiver Stempelstatus, Tour und nächstes Objekt sowie Konten)
@@ -34,3 +35,4 @@
 - [x] Urlaubskonto-Buchung bei Genehmigung/Widerruf per Datenbanktrigger
 - [x] Mitarbeiter- und Admin-Routen serverseitig geschützt
 - [x] Bestehende Tour-/Objekt-Kopplung bleibt optional und unverändert
+- [x] Erinnerung „Vergessen auszustempeln?" im Stempeluhr-Widget (nach 8 h Arbeitszeit oder nach 17:00 Uhr bei laufender Stempelung, einmalig je Stempelung)

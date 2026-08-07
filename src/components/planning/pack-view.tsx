@@ -180,7 +180,7 @@ export function PackView({ route, onOpenStop }: Props) {
                         : "zu Fuß"}
                     </Badge>
                   ) : stop.is_pedestrian_zone_until_11 ? (
-                    <Badge variant="warning">vor 11:00</Badge>
+                    <Badge variant="warning">Fußgängerzone</Badge>
                   ) : null}
                   {stop.opens_at && (
                     <Badge variant="outline">ab {stop.opens_at.slice(0, 5)}</Badge>

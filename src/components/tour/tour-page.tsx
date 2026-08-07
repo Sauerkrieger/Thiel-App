@@ -127,7 +127,7 @@ export function TourPage({ tourId }: Props) {
   }
 
   return (
-    <div className="container pb-28 pt-6 sm:pt-10">
+    <div className="container pb-44 pt-6 sm:pb-28 sm:pt-10">
       {/* Kopfbereich */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -326,8 +326,9 @@ export function TourPage({ tourId }: Props) {
         onDelivered={() => void load()}
       />
 
-      {/* Sticky-Leiste */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      {/* Sticky-Leiste: auf dem Handy über der festen Stempeluhr-Leiste
+          (bottom-14), am Desktop am unteren Rand. */}
+      <div className="fixed inset-x-0 bottom-14 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:bottom-0">
         <div className="container flex h-16 items-center justify-between gap-3">
           {completed ? (
             <>

@@ -219,7 +219,7 @@ async function cacheRowsOf(table: SyncTable): Promise<Record<string, unknown>[]>
 }
 
 /**
- * Zugewiesene Objekt-IDs des aktuellen Objektbetreuers aus localStorage
+ * Zugewiesene Objekt-IDs der aktuellen Reinigungskraft aus localStorage
  * (leer, wenn keine gespeichert sind – dann darf nichts offline gelesen
  * werden, siehe Filter in readOffline).
  */
@@ -239,7 +239,7 @@ function cachedAssignedObjectIds(): string[] {
   }
 }
 
-/** Prüft, ob der aktuelle Objektbetreuer ein Objekt offline sehen darf. */
+/** Prüft, ob die aktuelle Reinigungskraft ein Objekt offline sehen darf. */
 function mayReadObjectOffline(objectId: string): boolean {
   if (getCurrentUserRole() !== "facility_manager") return true;
   const assigned = cachedAssignedObjectIds();
@@ -255,7 +255,7 @@ async function cacheResponse(
   const userId = getCurrentUserId();
   if (path === "/api/objects") {
     const objects = Array.isArray(body.objects) ? body.objects : [];
-    // Objektbetreuer: Zuweisungsliste merken, damit der Offline-Read-Assembler
+    // Reinigungskraft: Zuweisungsliste merken, damit der Offline-Read-Assembler
     // nur zugewiesene Objekte liefert (auch wenn im Cache fremde Objekte
     // liegen, z. B. vom Admin-Konto auf demselben Gerät).
     if (
@@ -447,7 +447,7 @@ async function readOffline(req: OfflineRead): Promise<Response> {
 
   if (path === "/api/objects") {
     let objects = await cacheRowsOf("objects");
-    // Objektbetreuer: offline nur zugewiesene Objekte ausliefern.
+    // Reinigungskraft: offline nur zugewiesene Objekte ausliefern.
     if (getCurrentUserRole() === "facility_manager") {
       const assignedIds = cachedAssignedObjectIds();
       if (assignedIds.length > 0) {
@@ -899,11 +899,12 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     return jsonResponse(200, { user: { id: userId } });
   }
 
-  // PATCH /api/auth/users/[id] (Admin) – inkl. Kontokorrektur (Urlaub/Überstunden)
+  // PATCH /api/auth/users/[id] (Admin) – inkl. Vertragsart & Kontokorrektur
   if (/^\/api\/auth\/users\/[^/]+$/.test(path) && method === "PATCH") {
     await queueMutation("profiles", params.id, pick(body, [
       "name",
       "role",
+      "contract_type",
       "vacation_days_total",
       "overtime_hours",
     ]));

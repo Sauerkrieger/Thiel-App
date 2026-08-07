@@ -36,7 +36,7 @@ export async function GET(_request: Request, { params }: Context) {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
 
-    // Objektbetreuer: Zugriff nur auf zugewiesene Objekte.
+    // Reinigungskraft: Zugriff nur auf zugewiesene Objekte.
     if (isFacilityManager(auth.user)) {
       const { data: assignment } = await supabase
         .from("object_assignments")

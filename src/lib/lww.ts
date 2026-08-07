@@ -60,7 +60,7 @@ type SyncInsert = {
 
 /** Feld-Whitelists je Tabelle: Der Client darf NUR diese Felder über den Sync setzen. */
 const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
-  profiles: ["name", "role"],
+  profiles: ["name", "role", "contract_type"],
   objects: [
     "name",
     "address",
@@ -152,7 +152,11 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     name: { t: "text", max: 200 },
     role: {
       t: "enum",
-      values: ["driver", "admin", "facility_manager", "cleaner", "substitute"],
+      values: ["driver", "admin", "facility_manager", "substitute"],
+    },
+    contract_type: {
+      t: "enum",
+      values: ["full_time", "part_time", "mini_job"],
     },
   },
   objects: {
@@ -363,13 +367,13 @@ export function prepareSyncEntry(
       }
       break;
     // object_items: Items dürfen inzwischen alle angemeldeten Nutzer außer
-    // Objektbetreuern bearbeiten (siehe /api/objects/[id]/items) –
-    // Objektbetreuer sind reine Betrachter.
+    // Reinigungskräften bearbeiten (siehe /api/objects/[id]/items) –
+    // Reinigungskräfte sind reine Betrachter.
     case "object_items":
       if (isFacilityManager(user)) {
         return {
           ok: false,
-          error: "Objektbetreuer dürfen Items nicht bearbeiten.",
+          error: "Reinigungskräfte dürfen Items nicht bearbeiten.",
         };
       }
       break;
@@ -431,6 +435,9 @@ export function prepareSyncEntry(
   }
   if (table === "profiles" && !admin) {
     delete data.role; // Rolle nur durch Admins änderbar
+    // Auch die Vertragsart steuert das Soll im Überstundenkonto –
+    // nur Admins dürfen sie ändern.
+    delete data.contract_type;
   }
 
   return {

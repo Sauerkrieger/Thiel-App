@@ -23,7 +23,7 @@ export async function GET(request: Request, { params }: Context) {
     const excludeTour = new URL(request.url).searchParams.get("exclude_tour");
     const supabase = getSupabaseAdmin();
 
-    // Objektbetreuer: Pack-Infos nur zugewiesener Objekte.
+    // Reinigungskraft: Pack-Infos nur zugewiesener Objekte.
     if (isFacilityManager(auth.user)) {
       const { data: assignment } = await supabase
         .from("object_assignments")

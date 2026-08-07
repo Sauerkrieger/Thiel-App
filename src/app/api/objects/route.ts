@@ -34,7 +34,7 @@ export async function GET() {
   try {
     const supabase = getSupabaseAdmin();
 
-    // Objektbetreuer: nur zugewiesene Objekte, ohne Letzte-Belieferung-/Info-
+    // Reinigungskraft: nur zugewiesene Objekte, ohne Letzte-Belieferung-/Info-
     // Felder (diese Spalten sind für die Rolle ausgeblendet).
     let assignedObjectIds: string[] | null = null;
     if (isFacilityManager(auth.user)) {
@@ -53,7 +53,7 @@ export async function GET() {
         ? "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
         : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, last_delivery_at, last_delivery_driver_name, last_delivery_items, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)";
 
-    // Objektbetreuer ohne Zuweisungen sehen eine leere Liste.
+    // Reinigungskräfte ohne Zuweisungen sehen eine leere Liste.
     if (assignedObjectIds !== null && assignedObjectIds.length === 0) {
       return NextResponse.json({ objects: [], assigned_object_ids: [] });
     }

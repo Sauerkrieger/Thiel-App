@@ -58,7 +58,7 @@ type SortState = {
 
 export function ObjectsPage({ userRole }: { userRole: UserRole }) {
   const isAdmin = userRole === "admin";
-  // Objektbetreuer: reduzierte Spaltenansicht (ohne „Zuletzt am“/„Info“) und
+  // Reinigungskraft: reduzierte Spaltenansicht (ohne „Zuletzt am“/„Info“) und
   // Items nur lesbar – Springer & Co. sehen weiterhin alles.
   const isFacilityManager = userRole === "facility_manager";
 

@@ -11,14 +11,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch } from "@/lib/offline/fetch";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
+import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeOffRequest } from "@/types/time-tracking";
 
-type Employee = { id: string; name: string; role: string; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
+type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
 type Overview = { employees: Employee[]; entries: (TimeEntry & { profiles?: { name?: string; role?: string } | null })[]; requests: (TimeOffRequest & { profiles?: { name?: string; role?: string } | null })[] };
 
-const ROLE_LABELS: Record<string, string> = { admin: "Admin", driver: "Fahrer", facility_manager: "Objektbetreuer", cleaner: "Reiniger", substitute: "Springer" };
+const ROLE_LABELS: Record<string, string> = { admin: "Admin", driver: "Fahrer", facility_manager: "Reinigungskraft", substitute: "Springer" };
 const REQUEST_TYPE: Record<string, string> = { vacation: "Urlaub", sick_leave: "Krankheit", unpaid: "Unbezahlt", compensatory: "Freizeitausgleich" };
 
 function currentMonth(): string {
@@ -145,6 +147,19 @@ export function AdminTimeTrackingPage() {
   const pendingRequests = overview?.requests.filter((request) => request.status === "pending") ?? [];
   const pendingEntries = overview?.entries.filter((entry) => !entry.is_approved) ?? [];
 
+  /** Überstunden eines Mitarbeiters: automatisch (Stempelungen & Vertragsart) + Korrektur. */
+  function overtimeOf(employee: Employee): { auto: number; correction: number; total: number } {
+    if (!overview) return { auto: 0, correction: 0, total: 0 };
+    const entries = overview.entries.filter((entry) => entry.user_id === employee.id);
+    const auto = overtimeBalanceHours(entries, employee.contract_type);
+    const correction = Number(employee.overtime_hours ?? 0);
+    return { auto, correction, total: auto + correction };
+  }
+
+  function contractLabel(employee: Employee): string {
+    return CONTRACT_LABELS[employee.contract_type ?? "full_time"] ?? "Vollzeit";
+  }
+
   // Monatsübersicht: freigegebene, abgeschlossene Einträge pro Mitarbeiter.
   const monthRows = useMemo(() => {
     if (!overview) return [];
@@ -176,7 +191,7 @@ export function AdminTimeTrackingPage() {
       <Card className="mt-6"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mitarbeiter suchen…" /></div><Select value={role} onValueChange={setRole}><SelectTrigger className="sm:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle Rollen</SelectItem>{Object.entries(ROLE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></CardContent></Card>
 
       {loading && !overview ? <div className="mt-8 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" /> Übersicht wird geladen…</div> : overview ? <>
-        <Card className="mt-6"><CardHeader><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? Klicke auf eine Karte für Stempelhistorie und Kontokorrektur.</CardDescription></CardHeader><CardContent><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5"><Badge variant={employee.current_entry ? "success" : "secondary"}>{employee.current_entry ? "Aktiv" : "Nicht aktiv"}</Badge><ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${Math.max(0, (employee.vacation_days_total ?? 0) - (employee.vacation_days_used ?? 0))} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(Number(employee.overtime_hours ?? 0))}</p></button>)}</div></CardContent></Card>
+        <Card className="mt-6"><CardHeader><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? Klicke auf eine Karte für Stempelhistorie und Kontokorrektur.</CardDescription></CardHeader><CardContent><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5"><Badge variant={employee.current_entry ? "success" : "secondary"}>{employee.current_entry ? "Aktiv" : "Nicht aktiv"}</Badge><ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${Math.max(0, (employee.vacation_days_total ?? 0) - (employee.vacation_days_used ?? 0))} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div></CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-3"><span>Monatsübersicht</span><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="h-9 w-44" aria-label="Monat wählen" /></CardTitle><CardDescription>Gesamtarbeitszeit aller Mitarbeiter im gewählten Monat (freigegebene, abgeschlossene Einträge).</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Mitarbeiter</TableHead><TableHead>Rolle</TableHead><TableHead className="text-right">Tage</TableHead><TableHead className="text-right">Arbeitszeit</TableHead></TableRow></TableHeader><TableBody>{monthRows.map((row) => <TableRow key={row.employee.id}><TableCell className="font-medium">{row.employee.name}</TableCell><TableCell className="text-muted-foreground">{ROLE_LABELS[row.employee.role] ?? row.employee.role}</TableCell><TableCell className="text-right">{row.days}</TableCell><TableCell className="text-right font-mono">{minutesToLabel(row.total)}</TableCell></TableRow>)}</TableBody><TableFooter><TableRow><TableCell colSpan={3}>Gesamt ({monthRows.length} Mitarbeiter)</TableCell><TableCell className="text-right font-mono">{minutesToLabel(monthTotal)}</TableCell></TableRow></TableFooter></Table></CardContent></Card>
 
@@ -187,7 +202,7 @@ export function AdminTimeTrackingPage() {
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>{selectedEmployee?.name}</DialogTitle>
-              <DialogDescription>{selectedEmployee ? `${ROLE_LABELS[selectedEmployee.role] ?? selectedEmployee.role} · Resturlaub ${Math.max(0, (selectedEmployee.vacation_days_total ?? 0) - (selectedEmployee.vacation_days_used ?? 0))} Tage · Überstunden ${hoursToLabel(Number(selectedEmployee.overtime_hours ?? 0))}` : ""}</DialogDescription>
+              <DialogDescription>{selectedEmployee ? `${ROLE_LABELS[selectedEmployee.role] ?? selectedEmployee.role} · ${contractLabel(selectedEmployee)} · Resturlaub ${Math.max(0, (selectedEmployee.vacation_days_total ?? 0) - (selectedEmployee.vacation_days_used ?? 0))} Tage · Überstunden ${hoursToLabel(overtimeOf(selectedEmployee).total)}` : ""}</DialogDescription>
             </DialogHeader>
             {selectedEmployee && <div className="space-y-4">
               <div>
@@ -200,8 +215,9 @@ export function AdminTimeTrackingPage() {
                 <h4 className="mb-3 text-sm font-semibold">Konto anpassen</h4>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5"><Label htmlFor="edit-vacation">Resturlaub (Tage)</Label><Input id="edit-vacation" type="number" min={0} max={365} value={editVacation} onChange={(event) => setEditVacation(event.target.value)} /></div>
-                  <div className="space-y-1.5"><Label htmlFor="edit-overtime">Überstunden (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
+                  <div className="space-y-1.5"><Label htmlFor="edit-overtime">Korrektur Überstunden (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
                 </div>
+                <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)} (aus Stempelungen &amp; Vertragsart {contractLabel(selectedEmployee)} – die Soll-Stunden werden bewusst nicht angezeigt). Das Konto ergibt sich aus automatischem Wert + Korrektur.</p>
                 <p className="mt-2 text-xs text-muted-foreground">Urlaubsanspruch gesamt: {selectedEmployee.vacation_days_total ?? 0} Tage ({selectedEmployee.vacation_days_used ?? 0} genutzt). Der neue Resturlaub wird in den Gesamtanspruch umgerechnet.</p>
                 <DialogFooter className="mt-4 sm:justify-end"><Button onClick={() => void saveAccount()} disabled={savingAccount}>{savingAccount ? "Wird gespeichert…" : "Speichern"}</Button></DialogFooter>
               </div>

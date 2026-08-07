@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser, isAdmin, usernameToEmail, emailToUsername, isUserRole } from "@/lib/auth";
+import { isContractType } from "@/lib/contract";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { parseClientUpdatedAt } from "@/lib/lww";
 import type { Database, Profile } from "@/types/database";
@@ -17,7 +18,7 @@ export async function GET() {
   try {
     const admin = getSupabaseAdmin();
     const [{ data, error }, { data: assignments }] = await Promise.all([
-      admin.from("profiles").select("id, name, role, email, created_at").order("name"),
+      admin.from("profiles").select("id, name, role, email, created_at, contract_type").order("name"),
       admin.from("object_assignments").select("user_id, object_id"),
     ]);
 
@@ -38,6 +39,7 @@ export async function GET() {
       role: p.role,
       username: emailToUsername(p.email),
       created_at: p.created_at,
+      contract_type: p.contract_type,
       object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
 
@@ -59,6 +61,9 @@ export async function POST(request: Request) {
     const name = typeof body.name === "string" ? body.name.trim() : username;
     const password = typeof body.password === "string" ? body.password : "";
     const role = isUserRole(body.role) ? body.role : "driver";
+    const contractType = isContractType(body.contract_type)
+      ? body.contract_type
+      : "full_time";
     const objectIds = Array.isArray(body.object_ids)
       ? (body.object_ids as unknown[]).filter(
           (id: unknown): id is string =>
@@ -66,10 +71,10 @@ export async function POST(request: Request) {
         )
       : [];
 
-    // Objektbetreuer müssen mindestens einem Objekt zugeteilt werden.
+    // Reinigungskräfte müssen mindestens einem Objekt zugeteilt werden.
     if (role === "facility_manager" && objectIds.length === 0) {
       return NextResponse.json(
-        { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+        { error: "Reinigungskräfte müssen mindestens einem Objekt zugeteilt werden." },
         { status: 400 },
       );
     }
@@ -139,6 +144,7 @@ export async function POST(request: Request) {
       name,
       role,
       email,
+      contract_type: contractType,
     };
     if (clientUpdatedAt) {
       profilePayload.client_updated_at = clientUpdatedAt;
@@ -146,7 +152,7 @@ export async function POST(request: Request) {
     profilePayload.synced_at = new Date().toISOString();
     await admin.from("profiles").update(profilePayload).eq("id", created.user.id);
 
-    // Objektzuweisungen des Objektbetreuers anlegen.
+    // Objektzuweisungen der Reinigungskraft anlegen.
     if (objectIds.length > 0) {
       const { error: assignmentError } = await admin.from("object_assignments").insert(
         objectIds.map((object_id: string) => ({ user_id: created.user.id, object_id })),
@@ -163,6 +169,7 @@ export async function POST(request: Request) {
           role,
           username: emailToUsername(email),
           created_at: new Date().toISOString(),
+          contract_type: contractType,
           object_ids: objectIds,
         },
       },

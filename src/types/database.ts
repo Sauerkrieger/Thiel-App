@@ -29,8 +29,16 @@ export type UserRole =
   | 'driver'
   | 'admin'
   | 'facility_manager'
-  | 'cleaner'
   | 'substitute';
+
+/** Vertragsart: bestimmt die Soll-Wochenarbeitszeit (40/20/10 h). */
+export type ContractType = 'full_time' | 'part_time' | 'mini_job';
+
+export const CONTRACT_TYPES: readonly ContractType[] = [
+  'full_time',
+  'part_time',
+  'mini_job',
+];
 
 export type ObjectCategory = 'objekt' | 'treppenhaus';
 
@@ -43,7 +51,6 @@ export const USER_ROLES: readonly UserRole[] = [
   'driver',
   'admin',
   'facility_manager',
-  'cleaner',
   'substitute',
 ];
 
@@ -75,6 +82,8 @@ export interface Database {
           vacation_days_total: number;
           vacation_days_used: number;
           overtime_hours: number;
+          /** Vertragsart (Vollzeit/Teilzeit/Minijob) – Soll-Wochenarbeitszeit. */
+          contract_type: ContractType;
         };
         Insert: {
           id: string;
@@ -88,6 +97,7 @@ export interface Database {
           vacation_days_total?: number;
           vacation_days_used?: number;
           overtime_hours?: number;
+          contract_type?: ContractType;
         };
         Update: {
           id?: string;
@@ -101,6 +111,7 @@ export interface Database {
           vacation_days_total?: number;
           vacation_days_used?: number;
           overtime_hours?: number;
+          contract_type?: ContractType;
         };
         Relationships: [
           {
@@ -659,6 +670,7 @@ export interface Database {
     };
     Enums: {
       user_role: UserRole;
+      contract_type: ContractType;
       time_off_type: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
       time_off_status: 'pending' | 'approved' | 'rejected';
       object_category: ObjectCategory;
