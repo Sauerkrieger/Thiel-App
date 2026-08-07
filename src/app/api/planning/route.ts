@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   }
   if (!isPlanner(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { error: "Nur Fahrer, Springer und Admins dürfen Touren planen." },
       { status: 403 },
     );
   }
@@ -84,7 +84,7 @@ export async function PUT(request: Request) {
   }
   if (!isPlanner(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Fahrer und Admins dürfen Touren planen." },
+      { error: "Nur Fahrer, Springer und Admins dürfen Touren planen." },
       { status: 403 },
     );
   }

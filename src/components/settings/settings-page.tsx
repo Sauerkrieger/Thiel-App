@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Fingerprint,
   KeyRound,
+  ListChecks,
   Loader2,
   LogOut,
   Plus,
@@ -24,6 +25,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -31,6 +33,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { offlineFetch } from "@/lib/offline/fetch";
@@ -57,6 +67,12 @@ type UserListItem = {
   email: string | null;
   username: string;
   created_at: string;
+  object_ids: string[];
+};
+
+type ObjectOption = {
+  id: string;
+  name: string;
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -71,11 +87,13 @@ export function SettingsPage({
   user,
   passkeys,
   users,
+  objects,
   isAdmin,
 }: {
   user: CurrentUser;
   passkeys: PasskeyInfo[];
   users: UserListItem[];
+  objects: ObjectOption[];
   isAdmin: boolean;
 }) {
   const router = useRouter();
@@ -176,7 +194,13 @@ export function SettingsPage({
             onRegister={handleRegisterPasskey}
             onDelete={handleDeletePasskey}
           />
-          {isAdmin ? <UsersSection users={users} onChanged={() => router.refresh()} /> : null}
+          {isAdmin ? (
+            <UsersSection
+              users={users}
+              objects={objects}
+              onChanged={() => router.refresh()}
+            />
+          ) : null}
         </div>
       </div>
     </div>
@@ -436,17 +460,37 @@ function PasskeysSection({
 
 function UsersSection({
   users,
+  objects,
   onChanged,
 }: {
   users: UserListItem[];
+  objects: ObjectOption[];
   onChanged: () => void;
 }) {
   const [username, setUsername] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("driver");
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Objektzuweisung beim Bearbeiten eines Objektbetreuers.
+  const [editTarget, setEditTarget] = useState<UserListItem | null>(null);
+  const [editObjectIds, setEditObjectIds] = useState<string[]>([]);
+  const [editSaving, setEditSaving] = useState(false);
+
+  function toggleObject(id: string) {
+    setSelectedObjectIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  function toggleEditObject(id: string) {
+    setEditObjectIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -458,12 +502,23 @@ function UsersSection({
       toast.error("Das Passwort muss mindestens 8 Zeichen lang sein.");
       return;
     }
+    // Objektbetreuer müssen beim Anlegen mindestens einem Objekt zugeteilt werden.
+    if (role === "facility_manager" && selectedObjectIds.length === 0) {
+      toast.error("Bitte mindestens ein Objekt für den Objektbetreuer auswählen.");
+      return;
+    }
     setCreating(true);
     try {
       const res = await offlineFetch("/api/auth/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), name: name.trim(), password, role }),
+        body: JSON.stringify({
+          username: username.trim(),
+          name: name.trim(),
+          password,
+          role,
+          ...(role === "facility_manager" ? { object_ids: selectedObjectIds } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -475,12 +530,25 @@ function UsersSection({
       setName("");
       setPassword("");
       setRole("driver");
+      setSelectedObjectIds([]);
       onChanged();
     } catch {
       toast.error("Nutzer konnte nicht angelegt werden.");
     } finally {
       setCreating(false);
     }
+  }
+
+  /** Rolle ändern – für Objektbetreuer öffnet sich zuerst der Zuweisungs-Dialog. */
+  function handleRoleSelect(id: string, newRole: string) {
+    const user = users.find((u) => u.id === id);
+    if (!user) return;
+    if (newRole === "facility_manager") {
+      setEditTarget(user);
+      setEditObjectIds(user.object_ids ?? []);
+      return;
+    }
+    void handleRoleChange(id, newRole);
   }
 
   async function handleRoleChange(id: string, newRole: string) {
@@ -502,6 +570,35 @@ function UsersSection({
       toast.error("Rolle konnte nicht geändert werden.");
     } finally {
       setSavingId(null);
+    }
+  }
+
+  /** Objektzuweisungen eines Objektbetreuers speichern (Rolle + Objekte). */
+  async function handleEditSave() {
+    if (!editTarget) return;
+    if (editObjectIds.length === 0) {
+      toast.error("Bitte mindestens ein Objekt für den Objektbetreuer auswählen.");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const res = await offlineFetch(`/api/auth/users/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "facility_manager", object_ids: editObjectIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Objektzuweisung konnte nicht gespeichert werden.");
+        return;
+      }
+      toast.success("Objektzuweisung gespeichert.");
+      setEditTarget(null);
+      onChanged();
+    } catch {
+      toast.error("Objektzuweisung konnte nicht gespeichert werden.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -582,6 +679,43 @@ function UsersSection({
               </Select>
             </div>
           </div>
+
+          {/* Objektbetreuer: Objektzuweisung (mindestens 1) beim Anlegen */}
+          {role === "facility_manager" && (
+            <div className="space-y-1.5">
+              <Label>
+                Zugewiesene Objekte <span className="text-destructive">*</span>
+              </Label>
+              {objects.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Noch keine Objekte vorhanden – lege zuerst Objekte an.
+                </p>
+              ) : (
+                <>
+                  <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                    {objects.map((obj) => (
+                      <label
+                        key={obj.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-accent/50"
+                      >
+                        <Checkbox
+                          checked={selectedObjectIds.includes(obj.id)}
+                          onCheckedChange={() => toggleObject(obj.id)}
+                          aria-label={`${obj.name} zuweisen`}
+                        />
+                        <span className="min-w-0 truncate">{obj.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedObjectIds.length} ausgewählt – der Betreuer sieht nur diese
+                    Objekte.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           <Button type="submit" disabled={creating}>
             {creating ? <Loader2 className="animate-spin" /> : null}
             Benutzer anlegen
@@ -611,7 +745,7 @@ function UsersSection({
                 <div className="flex items-center gap-2">
                   <Select
                     value={u.role}
-                    onValueChange={(v) => handleRoleChange(u.id, v)}
+                    onValueChange={(v) => handleRoleSelect(u.id, v)}
                     disabled={savingId === u.id}
                   >
                     <SelectTrigger className="h-8 w-32">
@@ -623,6 +757,21 @@ function UsersSection({
                       <SelectItem value="admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>
+                  {u.role === "facility_manager" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1 text-xs"
+                      onClick={() => {
+                        setEditTarget(u);
+                        setEditObjectIds(u.object_ids ?? []);
+                      }}
+                      title={`${(u.object_ids ?? []).length} Objekte zugewiesen`}
+                    >
+                      <ListChecks className="h-3.5 w-3.5" />
+                      {(u.object_ids ?? []).length} Objekte
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -637,6 +786,53 @@ function UsersSection({
           </div>
         )}
       </CardContent>
+
+      {/* Objektzuweisungs-Dialog (Objektbetreuer) */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Objekte zuweisen</DialogTitle>
+            <DialogDescription>
+              {editTarget?.name} (Objektbetreuer) sieht nur die hier zugewiesenen
+              Objekte – mindestens eines ist Pflicht.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+            {objects.length === 0 ? (
+              <p className="px-1 py-2 text-sm text-muted-foreground">
+                Noch keine Objekte vorhanden.
+              </p>
+            ) : (
+              objects.map((obj) => (
+                <label
+                  key={obj.id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-accent/50"
+                >
+                  <Checkbox
+                    checked={editObjectIds.includes(obj.id)}
+                    onCheckedChange={() => toggleEditObject(obj.id)}
+                    aria-label={`${obj.name} zuweisen`}
+                  />
+                  <span className="min-w-0 truncate">{obj.name}</span>
+                </label>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditTarget(null)}
+              disabled={editSaving}
+            >
+              Abbrechen
+            </Button>
+            <Button onClick={() => void handleEditSave()} disabled={editSaving}>
+              {editSaving ? <Loader2 className="animate-spin" /> : null}
+              Speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

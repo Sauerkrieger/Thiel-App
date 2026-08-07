@@ -36,8 +36,8 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
-**Enums:** `user_role` (`driver` | `admin` | `facility_manager`), `object_category`
-(`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
+**Enums:** `user_role` (`driver` | `admin` | `facility_manager` | `cleaner` | `substitute`),
+`object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
 
 ### `profiles` – Benutzerprofile (1:1 zu `auth.users`)
 - `id` (PK → auth.users, cascade), `name`, `role` (user_role, default `driver`), `email`, `created_at`, `updated_at`
@@ -50,6 +50,13 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - `opens_at` (time, nullable) – Öffnungszeit: **DARF erst ab dieser Uhrzeit angefahren werden**
 - `latitude`, `longitude` (ORS-verifizierte Koordinaten, nullable)
 - `key_number` (integer, nullable)
+
+### `object_assignments` – Objektzuweisungen (m:n Benutzer ↔ Objekt)
+- `user_id` (FK auth.users, cascade), `object_id` (FK objects, cascade), `created_at`
+- Primary Key `(user_id, object_id)`
+- Steuert die Sichtbarkeit für **Objektbetreuer** (`facility_manager`): Sie sehen nur die
+  hier zugewiesenen Objekte (und deren Items) – online wie offline. Beim Anlegen eines
+  Objektbetreuers ist mindestens eine Zuweisung Pflicht.
 
 ### `object_items` – Items eines Objekts
 - `id`, `object_id` (FK cascade), `item_name`
@@ -87,25 +94,28 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 | Rolle | Rechte |
 | :--- | :--- |
 | `admin` | Alles: Objekte, Foto-Import, OCR, Benutzerverwaltung, Planung, Touren, Item-Fotos |
-| `facility_manager` | Objektverwaltung & Foto-Import (keine Planung, keine Benutzerverwaltung) |
+| `facility_manager` | **Objektbetreuer**: sieht NUR zugewiesene Objekte (Spalten Name, Adresse, Schlüssel, Kategorie, Items) mit Items in Nur-Lese-Ansicht. Keine Planung, keine Benutzerverwaltung, kein Anlegen/Bearbeiten/Löschen. Zuweisung erfolgt über die Benutzerverwaltung (mind. 1 Objekt). |
 | `driver` | Tourenplanung, Pack-Modus, Tour-Modus, Historie (eigene Touren) |
+| `cleaner` | Reiniger – Basis-Zugriff (Zeiterfassung, Einstellungen) |
+| `substitute` | **Springer**: sieht wie Fahrer alles (Objekte inkl. Zuletzt-beliefert/Info, Planung, Historie) – keine Objektzuweisung nötig, von der Objektbetreuer-Einschränkung unberührt |
 
 **Keine öffentliche Registrierung** – Benutzer werden ausschließlich von Admins über
 die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „Leon".
 
 **Dreifache Absicherung:**
 1. **Middleware** (`src/middleware.ts`): schützt alle Routen außer `/login` + Passkey-Login-APIs. Seiten → Redirect auf `/login?next=…`; API-Routen → `401 UNAUTHENTICATED`
-2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`), zusätzlich Tour-Owner-Check
-3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer, alle anderen Daten nur für authentifizierte Nutzer
+2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`/`isFacilityManager`), zusätzlich Tour-Owner-Check. **Objektbetreuer:** `/api/objects*` liefert nur zugewiesene Objekte (ohne Letzte-Belieferung-Felder), Item-/Foto-/Pack-Info-Endpunkte sind auf zugewiesene Objekte begrenzt und schreibgeschützt (403)
+3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer; `objects`/`object_items` rollenbewusst (Objektbetreuer nur zugewiesene Zeilen, Schreiben nur Admins); `object_assignments` Admin-verwaltet mit Eigen-Lese-Recht
 
 ## 5. Kernfunktionen & Workflows
 
 ### 5.1 Objektverwaltung (`/objects`)
-- CRUD für Objekte (Name, Adresse, Kategorie, Öffnungszeit, Schlüsselnummer)
+- CRUD für Objekte (Name, Adresse, Kategorie, Öffnungszeit, Schlüsselnummer) – nur Admins
 - **Suche + Sortierung** je Attribut: Name/Adresse (A–Z/Z–A), Schlüssel-Nr. (auf-/absteigend), Kategorie, Items-Anzahl
 - **Adress-Autocomplete** per ORS (`/api/geocoding/autocomplete`) + **Verifizierung** beim Speichern (`/api/geocoding/verify`), Stadtteil-Suffixe werden fürs Geocoding normalisiert
 - **Fußgängerzone wird beim Speichern automatisch per Overpass erkannt** (keine Checkbox)
-- Items je Objekt: Name, Menge, Bemerkung, **Foto-Upload** (`/api/items/photo`, 10 MB, Admin)
+- Items je Objekt: Name, Menge, Bemerkung, **Foto-Upload** (`/api/items/photo`, 10 MB)
+- **Objektbetreuer (`facility_manager`):** sehen nur ihre zugewiesenen Objekte. Tabellenspalten auf Name, Adresse, Schlüssel, Kategorie, Items reduziert (kein „Zuletzt am"/„Info"). Der Items-Dialog ist eine reine Lesensicht (keine Bearbeitung, kein Foto-Upload).
 
 ### 5.2 Foto-Import (KI, Admin)
 Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
@@ -152,6 +162,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 
 ### 5.8 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
+- **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Objekte zuweisen** – beim Anlegen eines Objektbetreuers erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Objektbetreuer haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
 ## 6. Karten (Leaflet)
 - `src/components/map/route-map.tsx` – imperatives Leaflet (nur im `useEffect`, SSR-sicher), OSM-Kacheln (kostenlos)
@@ -164,10 +175,12 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Passkeys:** `POST /api/auth/passkeys/login-options` (öffentlich) · `login-verify` (öffentlich) · `register-options` · `register-verify` · `DELETE /api/auth/passkeys/[id]`
 **Benutzer (Admin):** `GET/POST /api/auth/users` · `PATCH/DELETE /api/auth/users/[id]`
 **Geocoding:** `POST /api/geocoding/autocomplete` · `POST /api/geocoding/verify`
-**Objekte (Admin/Facility):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
+**Objekte (Admin; Facility lesend):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
 **Inventar (Admin):** `GET/POST /api/inventory` · `PUT/DELETE /api/inventory/[id]`
 **Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
-**Items:** `POST /api/items/ocr` · `POST /api/items/photo` (Admin)
+**Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Objektbetreuer)
+
+**Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Objektbetreuern)
 **Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
 **Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
 
@@ -209,7 +222,7 @@ src/
     routing/tsp.ts · time.ts
     supabase/                       # server/admin/middleware-Client
     webauthn.ts                     # Passkey-Verifikation
-supabase/migrations/                # 13 Migrationen (Schema von Grund auf)
+supabase/migrations/                # 22 Migrationen (Schema von Grund auf)
 ```
 
 ## 10. Entwicklung

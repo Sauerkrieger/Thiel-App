@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { ITEM_PHOTOS_BUCKET, itemPhotoUrl } from "@/lib/storage";
-import { requireUser, isAdmin } from "@/lib/auth";
+import { requireUser, isFacilityManager } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -33,9 +33,10 @@ export async function POST(request: Request) {
       { status: auth.status },
     );
   }
-  if (!isAdmin(auth.user)) {
+  // Objektbetreuer dürfen Items nicht verändern – auch keine Fotos hochladen.
+  if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Admins dürfen Item-Fotos hochladen." },
+      { error: "Objektbetreuer dürfen Item-Fotos nicht hochladen." },
       { status: 403 },
     );
   }

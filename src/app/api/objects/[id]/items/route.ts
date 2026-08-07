@@ -2,16 +2,41 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseItemInput } from "@/lib/items";
-import { requireUser, isAdmin } from "@/lib/auth";
+import { requireUser, isFacilityManager } from "@/lib/auth";
 import { parseClientUpdatedAt } from "@/lib/lww";
 import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
+
+    // Objektbetreuer: Items nur zugewiesener Objekte lesen.
+    if (isFacilityManager(auth.user)) {
+      const { data: assignment } = await supabase
+        .from("object_assignments")
+        .select("object_id")
+        .eq("user_id", auth.user.id)
+        .eq("object_id", id)
+        .maybeSingle();
+      if (!assignment) {
+        return NextResponse.json(
+          { error: "Objekt nicht gefunden." },
+          { status: 404 },
+        );
+      }
+    }
+
     const { data, error } = await supabase
       .from("object_items")
       .select("*")
@@ -34,9 +59,10 @@ export async function POST(request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
-  if (!isAdmin(auth.user)) {
+  // Objektbetreuer dürfen Items nur ansehen, nicht ändern.
+  if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Admins dürfen Items verwalten." },
+      { error: "Objektbetreuer dürfen Items nicht bearbeiten." },
       { status: 403 },
     );
   }

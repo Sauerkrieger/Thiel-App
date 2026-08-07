@@ -90,7 +90,20 @@ export function isAdmin(user: CurrentUser): boolean {
   return user.role === "admin";
 }
 
-/** true, wenn der Nutzer Touren planen darf (Fahrer oder Admin). */
+/** true, wenn der Nutzer Objektbetreuer ist. */
+export function isFacilityManager(user: CurrentUser): boolean {
+  return user.role === "facility_manager";
+}
+
+/**
+ * true, wenn der Nutzer Touren planen darf (Fahrer, Springer oder Admin).
+ * Springer (substitute) sieht das gleiche wie Fahrer UND Objektbetreuer –
+ * als Planner erhält er damit die Tourenplanung/Historie der Fahrer.
+ */
 export function isPlanner(user: CurrentUser): boolean {
-  return user.role === "driver" || user.role === "admin";
+  return (
+    user.role === "driver" ||
+    user.role === "admin" ||
+    user.role === "substitute"
+  );
 }

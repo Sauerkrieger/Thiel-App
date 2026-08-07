@@ -26,9 +26,13 @@ type Props = {
   object: ObjectWithItems | null;
   onOpenChange: (open: boolean) => void;
   onChanged: () => void;
+  /** Löschen ist Admins vorbehalten – ohne diese Rechte wird der Button ausgeblendet. */
+  canDelete?: boolean;
+  /** Reine Lesansicht (Objektbetreuer): keine Bearbeitung/Änderung möglich. */
+  readOnly?: boolean;
 };
 
-export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
+export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete = true, readOnly = false }: Props) {
   const [items, setItems] = useState<ObjectItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [newQuantity, setNewQuantity] = useState("1");
@@ -185,8 +189,9 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
             Items – {object?.name}
           </DialogTitle>
           <DialogDescription>
-            Je Item: Menge, Bezeichnung und optionale Bemerkung. „Standard“ ist
-            bei jeder Belieferung fest vorgesehen. „Vormerken" markiert ein Nicht-Standard-Item einmalig für die nächste Belieferung.
+            {readOnly
+              ? "Nur-Lese-Ansicht: Die Item-Liste dieses Objekts."
+              : "Je Item: Menge, Bezeichnung und optionale Bemerkung. „Standard“ ist bei jeder Belieferung fest vorgesehen. „Vormerken“ markiert ein Nicht-Standard-Item einmalig für die nächste Belieferung."}
           </DialogDescription>
         </DialogHeader>
 
@@ -199,7 +204,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
             </div>
           ) : items.length === 0 ? (
             <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-              Noch keine Items. Füge das erste Item hinzu.
+              {readOnly ? "Keine Items vorhanden." : "Noch keine Items. Füge das erste Item hinzu."}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -208,149 +213,181 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
                   key={item.id}
                   className="rounded-md border bg-card p-2.5"
                 >
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={item.is_always_required}
-                      onCheckedChange={() =>
-                        void handleUpdate(item, {
-                          is_always_required: !item.is_always_required,
-                          ...(item.is_always_required ? {} : { is_reserved: false }),
-                        })
-                      }
-                      aria-label={
-                        item.is_always_required
-                          ? `${item.item_name} als Standard entfernen`
-                          : `${item.item_name} als Standard markieren`
-                      }
-                    />
-                    {item.is_always_required ? (
-                      <Badge variant="success">Standard</Badge>
-                    ) : (
-                      <>
-                        <Checkbox
-                          checked={item.is_reserved}
-                          onCheckedChange={() =>
-                            void handleUpdate(item, {
-                              is_reserved: !item.is_reserved,
-                            })
-                          }
-                          aria-label={
-                            item.is_reserved
-                              ? `${item.item_name} Vormerkung aufheben`
-                              : `${item.item_name} für nächste Belieferung vormerken`
-                          }
-                        />
-                        {item.is_reserved && (
-                          <Badge variant="outline">vorgemerkt</Badge>
-                        )}
-                      </>
-                    )}
-                    <div className="flex-1" />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      aria-label={`${item.item_name} löschen`}
-                      onClick={() => void handleDelete(item)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-[5.5rem_1fr] gap-2">
-                    <Input
-                      type="number"
-                      min={1}
-                      inputMode="numeric"
-                      defaultValue={String(item.quantity ?? 1)}
-                      onBlur={(e) => {
-                        const parsed = Number.parseInt(e.target.value, 10);
-                        const quantity = Number.isInteger(parsed) && parsed > 0
-                          ? parsed
-                          : item.quantity ?? 1;
-                        if (quantity !== item.quantity) {
-                          void handleUpdate(item, { quantity });
-                        }
-                      }}
-                      aria-label={`Menge für ${item.item_name}`}
-                    />
-                    <Input
-                      defaultValue={item.item_name}
-                      onBlur={(e) => {
-                        const trimmed = e.target.value.trim();
-                        if (trimmed && trimmed !== item.item_name) {
-                          void handleUpdate(item, { item_name: trimmed });
-                        }
-                      }}
-                      aria-label={`Bezeichnung für ${item.item_name}`}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Input
-                      className="flex-1"
-                      defaultValue={item.note ?? ""}
-                      placeholder="Bemerkung (optional)"
-                      onBlur={(e) => {
-                        const note = e.target.value.trim() || null;
-                        if (note !== (item.note ?? null)) {
-                          void handleUpdate(item, { note });
-                        }
-                      }}
-                      aria-label={`Bemerkung für ${item.item_name}`}
-                    />
-                    <input
-                      ref={(el) => {
-                        if (el) photoInputRefs.current.set(item.id, el);
-                        else photoInputRefs.current.delete(item.id);
-                      }}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        void handleItemPhoto(item, e.target.files?.[0] ?? null);
-                        e.target.value = "";
-                      }}
-                      aria-label={`Foto für ${item.item_name}`}
-                    />
-                    {item.photo_path ? (
-                      <span className="relative shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {readOnly ? (
+                    /* Nur-Lese-Ansicht: ohne Bearbeitungssteuerung */
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-medium tabular-nums">
+                        {item.quantity && item.quantity > 1 ? `${item.quantity}× ` : ""}
+                        {item.item_name}
+                      </span>
+                      {item.is_always_required && (
+                        <Badge variant="success">Standard</Badge>
+                      )}
+                      {item.is_reserved && !item.is_always_required && (
+                        <Badge variant="outline">vorgemerkt</Badge>
+                      )}
+                      {item.note && (
+                        <span className="text-sm text-muted-foreground">({item.note})</span>
+                      )}
+                      {item.photo_path && (
+                        /* eslint-disable-next-line @next/next/no-img-element */
                         <img
                           src={itemPhotoUrl(item.photo_path) ?? ""}
                           alt={`Foto für ${item.item_name}`}
                           className="h-9 w-9 rounded-md border object-cover"
                         />
-                        <button
-                          type="button"
-                          onClick={() => void handleUpdate(item, { photo_path: null })}
-                          aria-label="Foto entfernen"
-                          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9 shrink-0"
-                        aria-label={`Foto für ${item.item_name} hochladen`}
-                        disabled={photoBusyId === item.id}
-                        onClick={() => photoInputRefs.current.get(item.id)?.click()}
-                      >
-                        <ImagePlus className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    Anzeige: {formatItemLabel(item)}
-                  </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={item.is_always_required}
+                          onCheckedChange={() =>
+                            void handleUpdate(item, {
+                              is_always_required: !item.is_always_required,
+                              ...(item.is_always_required ? {} : { is_reserved: false }),
+                            })
+                          }
+                          aria-label={
+                            item.is_always_required
+                              ? `${item.item_name} als Standard entfernen`
+                              : `${item.item_name} als Standard markieren`
+                          }
+                        />
+                        {item.is_always_required ? (
+                          <Badge variant="success">Standard</Badge>
+                        ) : (
+                          <>
+                            <Checkbox
+                              checked={item.is_reserved}
+                              onCheckedChange={() =>
+                                void handleUpdate(item, {
+                                  is_reserved: !item.is_reserved,
+                                })
+                              }
+                              aria-label={
+                                item.is_reserved
+                                  ? `${item.item_name} Vormerkung aufheben`
+                                  : `${item.item_name} für nächste Belieferung vormerken`
+                              }
+                            />
+                            {item.is_reserved && (
+                              <Badge variant="outline">vorgemerkt</Badge>
+                            )}
+                          </>
+                        )}
+                        <div className="flex-1" />
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            aria-label={`${item.item_name} löschen`}
+                            onClick={() => void handleDelete(item)}
+                          >
+                            <Trash2 />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="mt-2 grid grid-cols-[5.5rem_1fr] gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          inputMode="numeric"
+                          defaultValue={String(item.quantity ?? 1)}
+                          onBlur={(e) => {
+                            const parsed = Number.parseInt(e.target.value, 10);
+                            const quantity = Number.isInteger(parsed) && parsed > 0
+                              ? parsed
+                              : item.quantity ?? 1;
+                            if (quantity !== item.quantity) {
+                              void handleUpdate(item, { quantity });
+                            }
+                          }}
+                          aria-label={`Menge für ${item.item_name}`}
+                        />
+                        <Input
+                          defaultValue={item.item_name}
+                          onBlur={(e) => {
+                            const trimmed = e.target.value.trim();
+                            if (trimmed && trimmed !== item.item_name) {
+                              void handleUpdate(item, { item_name: trimmed });
+                            }
+                          }}
+                          aria-label={`Bezeichnung für ${item.item_name}`}
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Input
+                          className="flex-1"
+                          defaultValue={item.note ?? ""}
+                          placeholder="Bemerkung (optional)"
+                          onBlur={(e) => {
+                            const note = e.target.value.trim() || null;
+                            if (note !== (item.note ?? null)) {
+                              void handleUpdate(item, { note });
+                            }
+                          }}
+                          aria-label={`Bemerkung für ${item.item_name}`}
+                        />
+                        <input
+                          ref={(el) => {
+                            if (el) photoInputRefs.current.set(item.id, el);
+                            else photoInputRefs.current.delete(item.id);
+                          }}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          onChange={(e) => {
+                            void handleItemPhoto(item, e.target.files?.[0] ?? null);
+                            e.target.value = "";
+                          }}
+                          aria-label={`Foto für ${item.item_name}`}
+                        />
+                        {item.photo_path ? (
+                          <span className="relative shrink-0">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={itemPhotoUrl(item.photo_path) ?? ""}
+                              alt={`Foto für ${item.item_name}`}
+                              className="h-9 w-9 rounded-md border object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void handleUpdate(item, { photo_path: null })}
+                              aria-label="Foto entfernen"
+                              className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 shrink-0"
+                            aria-label={`Foto für ${item.item_name} hochladen`}
+                            disabled={photoBusyId === item.id}
+                            onClick={() => photoInputRefs.current.get(item.id)?.click()}
+                          >
+                            <ImagePlus className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">
+                        Anzeige: {formatItemLabel(item)}
+                      </p>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
           )}
 
+          {!readOnly && (
           <form onSubmit={handleAdd} className="space-y-2 rounded-md border border-dashed p-2.5">
             <div className="grid grid-cols-[5.5rem_1fr] gap-2">
               <Input
@@ -386,6 +423,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged }: Props) {
               Hinzufügen
             </Button>
           </form>
+          )}
         </div>
       </DialogContent>
     </Dialog>

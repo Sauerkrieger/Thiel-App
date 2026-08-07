@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
-import { requireUser, isAdmin } from "@/lib/auth";
+import { requireUser, isAdmin, isFacilityManager } from "@/lib/auth";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
 import type { Database } from "@/types/database";
 
 type Context = { params: Promise<{ id: string; itemId: string }> };
 
+// Items bearbeiten (PUT) dürfen inzwischen alle angemeldeten Nutzer außer
+// Objektbetreuern (nur Lesen) – das Löschen (DELETE) bleibt Admins vorbehalten.
 export async function PUT(request: Request, { params }: Context) {
   const auth = await requireUser();
   if (!auth.user) {
@@ -16,9 +18,10 @@ export async function PUT(request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
-  if (!isAdmin(auth.user)) {
+  // Objektbetreuer dürfen Items nur ansehen, nicht ändern.
+  if (isFacilityManager(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Admins dürfen Items verwalten." },
+      { error: "Objektbetreuer dürfen Items nicht bearbeiten." },
       { status: 403 },
     );
   }
@@ -103,9 +106,10 @@ export async function DELETE(_request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
+  // Löschen bleibt Admins vorbehalten.
   if (!isAdmin(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Admins dürfen Items verwalten." },
+      { error: "Nur Admins dürfen Items löschen." },
       { status: 403 },
     );
   }

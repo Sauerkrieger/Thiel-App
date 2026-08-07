@@ -16,12 +16,20 @@ export async function GET() {
 
   try {
     const admin = getSupabaseAdmin();
-    const { data, error } = await admin
-      .from("profiles")
-      .select("id, name, role, email, created_at")
-      .order("name");
+    const [{ data, error }, { data: assignments }] = await Promise.all([
+      admin.from("profiles").select("id, name, role, email, created_at").order("name"),
+      admin.from("object_assignments").select("user_id, object_id"),
+    ]);
 
     if (error) throw error;
+
+    // Zugewiesene Objekte je Nutzer (für die Benutzerverwaltung).
+    const objectIdsByUser = new Map<string, string[]>();
+    for (const assignment of assignments ?? []) {
+      const list = objectIdsByUser.get(assignment.user_id) ?? [];
+      list.push(assignment.object_id);
+      objectIdsByUser.set(assignment.user_id, list);
+    }
 
     const users = (data as Profile[]).map((p) => ({
       id: p.id,
@@ -30,6 +38,7 @@ export async function GET() {
       role: p.role,
       username: emailToUsername(p.email),
       created_at: p.created_at,
+      object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
 
     return NextResponse.json({ users });
@@ -50,6 +59,37 @@ export async function POST(request: Request) {
     const name = typeof body.name === "string" ? body.name.trim() : username;
     const password = typeof body.password === "string" ? body.password : "";
     const role = isUserRole(body.role) ? body.role : "driver";
+    const objectIds = Array.isArray(body.object_ids)
+      ? (body.object_ids as unknown[]).filter(
+          (id: unknown): id is string =>
+            typeof id === "string" && id.length > 0,
+        )
+      : [];
+
+    // Objektbetreuer müssen mindestens einem Objekt zugeteilt werden.
+    if (role === "facility_manager" && objectIds.length === 0) {
+      return NextResponse.json(
+        { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+        { status: 400 },
+      );
+    }
+
+    const admin = getSupabaseAdmin();
+
+    // Zugewiesene Objekte müssen existieren (sonst sauberer 400 statt FK-500).
+    if (objectIds.length > 0) {
+      const { count, error: countError } = await admin
+        .from("objects")
+        .select("id", { count: "exact", head: true })
+        .in("id", objectIds);
+      if (countError) throw countError;
+      if ((count ?? 0) !== objectIds.length) {
+        return NextResponse.json(
+          { error: "Mindestens ein zugewiesenes Objekt existiert nicht." },
+          { status: 400 },
+        );
+      }
+    }
 
     if (!username || !password) {
       return NextResponse.json(
@@ -73,7 +113,6 @@ export async function POST(request: Request) {
     const email = usernameToEmail(username);
 
     // Duplikat-Prüfung
-    const admin = getSupabaseAdmin();
     const { data: existing } = await admin
       .from("profiles")
       .select("id")
@@ -107,6 +146,14 @@ export async function POST(request: Request) {
     profilePayload.synced_at = new Date().toISOString();
     await admin.from("profiles").update(profilePayload).eq("id", created.user.id);
 
+    // Objektzuweisungen des Objektbetreuers anlegen.
+    if (objectIds.length > 0) {
+      const { error: assignmentError } = await admin.from("object_assignments").insert(
+        objectIds.map((object_id: string) => ({ user_id: created.user.id, object_id })),
+      );
+      if (assignmentError) throw assignmentError;
+    }
+
     return NextResponse.json(
       {
         user: {
@@ -116,6 +163,7 @@ export async function POST(request: Request) {
           role,
           username: emailToUsername(email),
           created_at: new Date().toISOString(),
+          object_ids: objectIds,
         },
       },
       { status: 201 },

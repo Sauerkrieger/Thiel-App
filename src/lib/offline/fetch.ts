@@ -20,6 +20,7 @@ import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
 import { deleteRecord, getAllRecords, getRecord, putRecord } from "./db";
 import {
   getCurrentUserId,
+  getCurrentUserRole,
   getSyncState,
   ingestServerRecord,
   newRecordId,
@@ -217,6 +218,35 @@ async function cacheRowsOf(table: SyncTable): Promise<Record<string, unknown>[]>
   return records.map((record) => ({ ...record.data, id: record.id }));
 }
 
+/**
+ * Zugewiesene Objekt-IDs des aktuellen Objektbetreuers aus localStorage
+ * (leer, wenn keine gespeichert sind – dann darf nichts offline gelesen
+ * werden, siehe Filter in readOffline).
+ */
+function cachedAssignedObjectIds(): string[] {
+  if (getCurrentUserRole() !== "facility_manager") return [];
+  const userId = getCurrentUserId();
+  try {
+    const raw = window.localStorage.getItem(
+      `thiel-assigned-objects:${userId ?? "anonymous"}`,
+    );
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    return [];
+  }
+}
+
+/** Prüft, ob der aktuelle Objektbetreuer ein Objekt offline sehen darf. */
+function mayReadObjectOffline(objectId: string): boolean {
+  if (getCurrentUserRole() !== "facility_manager") return true;
+  const assigned = cachedAssignedObjectIds();
+  if (assigned.length === 0) return false;
+  return assigned.includes(objectId);
+}
+
 /** Speichert die Daten einer erfolgreichen Online-GET-Antwort. */
 async function cacheResponse(
   path: string,
@@ -225,6 +255,22 @@ async function cacheResponse(
   const userId = getCurrentUserId();
   if (path === "/api/objects") {
     const objects = Array.isArray(body.objects) ? body.objects : [];
+    // Objektbetreuer: Zuweisungsliste merken, damit der Offline-Read-Assembler
+    // nur zugewiesene Objekte liefert (auch wenn im Cache fremde Objekte
+    // liegen, z. B. vom Admin-Konto auf demselben Gerät).
+    if (
+      getCurrentUserRole() === "facility_manager" &&
+      Array.isArray(body.assigned_object_ids)
+    ) {
+      try {
+        window.localStorage.setItem(
+          `thiel-assigned-objects:${userId ?? "anonymous"}`,
+          JSON.stringify(body.assigned_object_ids),
+        );
+      } catch {
+        /* localStorage voll – Filter fällt auf alle Objekte zurück */
+      }
+    }
     const items: Array<Record<string, unknown>> = [];
     for (const obj of objects as Array<Record<string, unknown>>) {
       const embedded = Array.isArray(obj.object_items)
@@ -400,7 +446,17 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   const { path, params, query } = req;
 
   if (path === "/api/objects") {
-    const objects = await cacheRowsOf("objects");
+    let objects = await cacheRowsOf("objects");
+    // Objektbetreuer: offline nur zugewiesene Objekte ausliefern.
+    if (getCurrentUserRole() === "facility_manager") {
+      const assignedIds = cachedAssignedObjectIds();
+      if (assignedIds.length > 0) {
+        const assigned = new Set(assignedIds);
+        objects = objects.filter((o) => assigned.has(String(o.id)));
+      } else {
+        objects = [];
+      }
+    }
     const items = await cacheRowsOf("object_items");
     const itemsByObject = new Map<string, Record<string, unknown>[]>();
     for (const item of items) {
@@ -420,6 +476,9 @@ async function readOffline(req: OfflineRead): Promise<Response> {
 
   if (/^\/api\/objects\/[^/]+$/.test(path)) {
     const id = params.id;
+    if (!mayReadObjectOffline(id)) {
+      return jsonResponse(404, { error: "Objekt nicht gefunden." });
+    }
     const obj = (await cacheRowsOf("objects")).find((row) => row.id === id);
     if (!obj) {
       return jsonResponse(404, { error: "Objekt nicht gefunden." });
@@ -432,6 +491,9 @@ async function readOffline(req: OfflineRead): Promise<Response> {
 
   if (/^\/api\/objects\/[^/]+\/items$/.test(path)) {
     const id = params.id;
+    if (!mayReadObjectOffline(id)) {
+      return jsonResponse(404, { error: "Objekt nicht gefunden." });
+    }
     const items = (await cacheRowsOf("object_items")).filter(
       (row) => row.object_id === id,
     );
@@ -440,6 +502,9 @@ async function readOffline(req: OfflineRead): Promise<Response> {
 
   if (/^\/api\/objects\/[^/]+\/pack-info$/.test(path)) {
     const id = params.id;
+    if (!mayReadObjectOffline(id)) {
+      return jsonResponse(404, { error: "Objekt nicht gefunden." });
+    }
     const items = (await cacheRowsOf("object_items")).filter(
       (row) => row.object_id === id,
     );

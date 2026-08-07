@@ -143,10 +143,10 @@ export async function POST(request: Request) {
       { status: auth.status },
     );
   }
-  // Nur Fahrer und Admins dürfen Touren planen/starten.
+  // Nur Fahrer, Springer und Admins dürfen Touren planen/starten.
   if (!isPlanner(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Fahrer und Admins dürfen Touren starten." },
+      { error: "Nur Fahrer, Springer und Admins dürfen Touren starten." },
       { status: 403 },
     );
   }

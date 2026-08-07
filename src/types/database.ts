@@ -283,6 +283,33 @@ export interface Database {
         };
         Relationships: [];
       };
+      object_assignments: {
+        Row: {
+          user_id: string;
+          object_id: string;
+          created_at: string;
+        };
+        Insert: {
+          user_id: string;
+          object_id: string;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          object_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'object_assignments_object_id_fkey';
+            columns: ['object_id'];
+            isOneToOne: false;
+            referencedRelation: 'objects';
+            referencedColumns: ['id'];
+            referencedSchema: 'public';
+          },
+        ];
+      };
       object_items: {
         Row: {
           id: string;
@@ -652,6 +679,7 @@ export type Profile = Tables<'profiles'>;
 export type TimeEntryRecord = Tables<'time_entries'>;
 export type TimeOffRequestRecord = Tables<'time_off_requests'>;
 export type ObjectRecord = Tables<'objects'>;
+export type ObjectAssignment = Tables<'object_assignments'>;
 export type ObjectItem = Tables<'object_items'>;
 export type InventoryItem = Tables<'inventory_items'>;
 export type WeeklyDefaultRoute = Tables<'weekly_default_routes'>;

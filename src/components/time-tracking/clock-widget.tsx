@@ -157,11 +157,11 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
 
   return (
     <div className="flex items-center gap-1.5">
-      <Badge variant="success" className="h-8 gap-1 px-2 font-mono text-xs">
+      <Badge variant="success" className="h-8 min-w-[4.75rem] shrink-0 justify-center gap-1.5 whitespace-nowrap px-3 font-mono text-xs">
         <Timer className="h-3.5 w-3.5" />
         {minutesToLabel(shownMinutes)}
       </Badge>
-      <Button variant="ghost" size="icon" onClick={togglePause} disabled={busy} className="h-8 w-8" title={pausedAt ? "Pause beenden" : "Pause starten"}>
+      <Button variant="ghost" size="icon" onClick={togglePause} disabled={busy} className="h-8 w-10" title={pausedAt ? "Pause beenden" : "Pause starten"}>
         <Coffee className={pausedAt ? "h-4 w-4 text-amber-600" : "h-4 w-4"} />
       </Button>
       <Select
@@ -170,12 +170,11 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
         disabled={busy}
       >
         <SelectTrigger
-          className="h-8 gap-1 px-2 text-xs"
+          className="h-8 w-8 justify-center px-0 text-xs [&>span]:hidden [&>svg:last-child]:hidden"
           title="Pausenzeit eintragen/abziehen (z. B. vergessene Pause)"
           aria-label="Pausenzeit hinzufügen"
         >
           <Plus className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Min</span>
         </SelectTrigger>
         <SelectContent align="end">
           <SelectItem value="15">+15 Min</SelectItem>

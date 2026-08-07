@@ -186,7 +186,7 @@ export function TimeTrackingPage() {
       <div>
         <p className="mb-2 text-sm font-medium text-primary">Mein Arbeitskonto</p>
         <h1 className="text-3xl font-bold tracking-tight">Zeiterfassung</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick. Die Stempeluhr findest du oben in der Leiste (am Handy unten).</p>
+        <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick.</p>
       </div>
 
       {loading && !summary ? (

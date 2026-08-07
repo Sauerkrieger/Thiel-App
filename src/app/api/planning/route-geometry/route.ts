@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   }
   if (!isPlanner(auth.user)) {
     return NextResponse.json(
-      { error: "Nur Fahrer und Admins dürfen Routen auf der Karte anzeigen." },
+      { error: "Nur Fahrer, Springer und Admins dürfen Routen auf der Karte anzeigen." },
       { status: 403 },
     );
   }

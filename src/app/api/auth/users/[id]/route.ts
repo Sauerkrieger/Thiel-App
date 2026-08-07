@@ -30,6 +30,10 @@ export async function PATCH(
     const body = await request.json().catch(() => ({}));
     const name = typeof body.name === "string" ? body.name.trim() : null;
     const role = isUserRole(body.role) ? body.role : null;
+    const rawObjectIds: unknown = Array.isArray(body.object_ids) ? body.object_ids : undefined;
+    const objectIds = Array.isArray(rawObjectIds)
+      ? rawObjectIds.filter((oid: unknown): oid is string => typeof oid === "string" && oid.length > 0)
+      : undefined;
 
     // Kontokorrektur (Zeitadmin): Urlaubsanspruch & Überstunden
     const vacationDaysTotal =
@@ -61,14 +65,54 @@ export async function PATCH(
       );
     }
 
-    if (!name && !role && vacationDaysTotal === undefined && overtimeHours === undefined) {
+    const admin = getSupabaseAdmin();
+
+    // Objektbetreuer müssen mindestens einem Objekt zugeteilt werden
+    // (gilt beim Anlegen und wenn die Rolle auf Objektbetreuer wechselt).
+    if (role === "facility_manager") {
+      if (objectIds !== undefined && objectIds.length === 0) {
+        return NextResponse.json(
+          { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+          { status: 400 },
+        );
+      }
+      // Ohne übermittelte Objektliste: Prüfen, ob bereits Zuweisungen existieren.
+      if (objectIds === undefined) {
+        const { count, error: countError } = await admin
+          .from("object_assignments")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", id);
+        if (countError) throw countError;
+        if ((count ?? 0) === 0) {
+          return NextResponse.json(
+            { error: "Objektbetreuer müssen mindestens einem Objekt zugeteilt werden." },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
+    if (!name && !role && vacationDaysTotal === undefined && overtimeHours === undefined && objectIds === undefined) {
       return NextResponse.json(
         { error: "Keine Änderungen übermittelt." },
         { status: 400 },
       );
     }
 
-    const admin = getSupabaseAdmin();
+    // Zugewiesene Objekte müssen existieren (sonst sauberer 400 statt FK-500).
+    if (objectIds !== undefined && objectIds.length > 0) {
+      const { count, error: countError } = await admin
+        .from("objects")
+        .select("id", { count: "exact", head: true })
+        .in("id", objectIds);
+      if (countError) throw countError;
+      if ((count ?? 0) !== objectIds.length) {
+        return NextResponse.json(
+          { error: "Mindestens ein zugewiesenes Objekt existiert nicht." },
+          { status: 400 },
+        );
+      }
+    }
 
     // Kein Admin darf sich selbst die Admin-Rolle entziehen (letzter Admin-Schutz).
     if (id === result.user.id && role && role !== "admin") {
@@ -117,6 +161,42 @@ export async function PATCH(
       .single();
     if (error) throw error;
 
+    // Objektzuweisungen eines Objektbetreuers: ersetzt werden sie, wenn der
+    // Admin Objekte übermittelt (Rolle = facility_manager). Wechselt die Rolle
+    // von Objektbetreuer auf etwas anderes, werden alle Zuweisungen entfernt.
+    // Reine Namens-/Kontokorrekturen lassen die Zuweisungen unangetastet.
+    let resultObjectIds: string[] = [];
+    if (objectIds !== undefined) {
+      const nextObjectIds: string[] =
+        role !== "admin" && role !== "driver" ? objectIds : [];
+      const { error: deleteError } = await admin
+        .from("object_assignments")
+        .delete()
+        .eq("user_id", id);
+      if (deleteError) throw deleteError;
+      if (nextObjectIds.length > 0) {
+        const { error: insertError } = await admin
+          .from("object_assignments")
+          .insert(nextObjectIds.map((object_id: string) => ({ user_id: id, object_id })));
+        if (insertError) throw insertError;
+      }
+      resultObjectIds = nextObjectIds;
+    } else if (role !== null && role !== "facility_manager") {
+      // Wechsel weg vom Objektbetreuer: Zuweisungen löschen.
+      const { error: deleteError } = await admin
+        .from("object_assignments")
+        .delete()
+        .eq("user_id", id);
+      if (deleteError) throw deleteError;
+    } else {
+      // Nicht übermittelt: bestehende Zuweisungen zurückgeben.
+      const { data: assignments } = await admin
+        .from("object_assignments")
+        .select("object_id")
+        .eq("user_id", id);
+      resultObjectIds = (assignments ?? []).map((a) => a.object_id);
+    }
+
     return NextResponse.json({
       user: {
         id: data.id,
@@ -125,6 +205,7 @@ export async function PATCH(
         role: data.role,
         username: emailToUsername(data.email),
         created_at: data.created_at,
+        object_ids: resultObjectIds,
       },
     });
   } catch {

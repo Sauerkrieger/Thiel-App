@@ -73,6 +73,17 @@ export function getCurrentUserId(): string | null {
   return currentUserId;
 }
 
+/** Aktuelle Rolle (vom Layout gesetzt, für rollenabhängige Offline-Filter). */
+let currentUserRole: string | null = null;
+
+export function setCurrentUserRole(role: string | null): void {
+  currentUserRole = role;
+}
+
+export function getCurrentUserRole(): string | null {
+  return currentUserRole;
+}
+
 function emit(): void {
   for (const listener of listeners) listener();
 }

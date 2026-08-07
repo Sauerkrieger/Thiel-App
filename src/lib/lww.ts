@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { CurrentUser } from "@/lib/auth";
-import { isAdmin, isPlanner } from "@/lib/auth";
+import { isAdmin, isFacilityManager, isPlanner } from "@/lib/auth";
 import { SYNC_TABLES, isSyncTable, type SyncTable } from "@/lib/sync-tables";
 
 export { SYNC_TABLES, isSyncTable, type SyncTable } from "@/lib/sync-tables";
@@ -354,12 +354,22 @@ export function prepareSyncEntry(
   const planner = isPlanner(user);
   switch (table) {
     case "objects":
-    case "object_items":
     case "inventory_items":
       if (!admin) {
         return {
           ok: false,
           error: "Nur Admins dürfen diese Daten synchronisieren.",
+        };
+      }
+      break;
+    // object_items: Items dürfen inzwischen alle angemeldeten Nutzer außer
+    // Objektbetreuern bearbeiten (siehe /api/objects/[id]/items) –
+    // Objektbetreuer sind reine Betrachter.
+    case "object_items":
+      if (isFacilityManager(user)) {
+        return {
+          ok: false,
+          error: "Objektbetreuer dürfen Items nicht bearbeiten.",
         };
       }
       break;
@@ -369,7 +379,7 @@ export function prepareSyncEntry(
       if (!planner) {
         return {
           ok: false,
-          error: "Nur Fahrer und Admins dürfen Touren synchronisieren.",
+          error: "Nur Fahrer, Springer und Admins dürfen Touren synchronisieren.",
         };
       }
       break;

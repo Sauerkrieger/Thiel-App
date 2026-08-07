@@ -1283,33 +1283,18 @@ function KeyResultBody({ result }: { result: KeyImportResult }) {
 }
 
 function ItemResultBody({ result }: { result: ItemGroupImportResult }) {
-  const skipped = result.new_objects_skipped;
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-        <ResultStat
-          value={result.assigned}
-          label="Objekte angelegt"
-          tone="success"
-        />
-        <ResultStat
-          value={result.new_objects_created}
-          label="Objekte angelegt"
-          tone="success"
-        />
-        <ResultStat
-          value={result.items_added}
-          label="Items hinzugefügt"
-          tone="neutral"
-        />
-        <ResultStat value={skipped} label="übersprungen" tone="destructive" />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Jede bestätigte Gruppe wurde als neues Objekt mit exakter Adresse
-        angelegt. Warnungen zu ähnlichen Bestandsobjekten ändern daran nichts;
-        bestehende Objekte werden nicht bearbeitet. Als „Standard“ markierte
-        Items sind bei jeder Belieferung fest vorgesehen.
-      </p>
+    <div className="grid grid-cols-2 gap-2 text-center">
+      <ResultStat
+        value={result.new_objects_created}
+        label="Objekte angelegt"
+        tone="success"
+      />
+      <ResultStat
+        value={result.items_added}
+        label="Items hinzugefügt"
+        tone="neutral"
+      />
     </div>
   );
 }

@@ -21,7 +21,8 @@ export default async function EinstellungenPage() {
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
-  // Nutzerliste (nur für Admins).
+  // Nutzerliste (nur für Admins) + Objektliste für die Zuweisung an
+  // Objektbetreuer.
   let users: {
     id: string;
     name: string;
@@ -29,20 +30,32 @@ export default async function EinstellungenPage() {
     email: string | null;
     username: string;
     created_at: string;
+    object_ids: string[];
   }[] = [];
+  let objects: { id: string; name: string }[] = [];
   if (isAdmin(user)) {
-    const { data } = await admin
-      .from("profiles")
-      .select("id, name, role, email, created_at")
-      .order("name");
-    users = (data ?? []).map((p) => ({
+    const [{ data: profileData }, { data: objectData }, { data: assignmentData }] =
+      await Promise.all([
+        admin.from("profiles").select("id, name, role, email, created_at").order("name"),
+        admin.from("objects").select("id, name").order("name"),
+        admin.from("object_assignments").select("user_id, object_id"),
+      ]);
+    const objectIdsByUser = new Map<string, string[]>();
+    for (const assignment of assignmentData ?? []) {
+      const list = objectIdsByUser.get(assignment.user_id) ?? [];
+      list.push(assignment.object_id);
+      objectIdsByUser.set(assignment.user_id, list);
+    }
+    users = (profileData ?? []).map((p) => ({
       id: p.id,
       name: p.name,
       role: p.role,
       email: p.email,
       username: p.email?.split("@")[0] ?? "",
       created_at: p.created_at,
+      object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
+    objects = (objectData ?? []).map((o) => ({ id: o.id, name: o.name }));
   }
 
   return (
@@ -50,6 +63,7 @@ export default async function EinstellungenPage() {
       user={user}
       passkeys={passkeys ?? []}
       users={users}
+      objects={objects}
       isAdmin={isAdmin(user)}
     />
   );

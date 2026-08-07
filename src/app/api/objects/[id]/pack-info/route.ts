@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveryItems } from "@/lib/items";
+import { requireUser, isFacilityManager } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +10,34 @@ type Context = { params: Promise<{ id: string }> };
 
 /** GET /api/objects/[id]/pack-info -> Items + Extra-Items der letzten Tour. */
 export async function GET(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
   try {
     const { id } = await params;
     const excludeTour = new URL(request.url).searchParams.get("exclude_tour");
     const supabase = getSupabaseAdmin();
+
+    // Objektbetreuer: Pack-Infos nur zugewiesener Objekte.
+    if (isFacilityManager(auth.user)) {
+      const { data: assignment } = await supabase
+        .from("object_assignments")
+        .select("object_id")
+        .eq("user_id", auth.user.id)
+        .eq("object_id", id)
+        .maybeSingle();
+      if (!assignment) {
+        return NextResponse.json(
+          { error: "Objekt nicht gefunden." },
+          { status: 404 },
+        );
+      }
+    }
     let stopsQuery = supabase
       .from("tour_stops")
       .select("next_delivery_items, created_at")

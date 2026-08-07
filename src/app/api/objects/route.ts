@@ -9,7 +9,7 @@ import {
 import { parseItemInputs } from "@/lib/items";
 import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { cleanAddressLabel } from "@/lib/address";
-import { requireUser, isAdmin } from "@/lib/auth";
+import { requireUser, isAdmin, isFacilityManager } from "@/lib/auth";
 import { parseClientUpdatedAt } from "@/lib/lww";
 import type { Database } from "@/types/database";
 
@@ -33,18 +33,43 @@ export async function GET() {
 
   try {
     const supabase = getSupabaseAdmin();
+
+    // Objektbetreuer: nur zugewiesene Objekte, ohne Letzte-Belieferung-/Info-
+    // Felder (diese Spalten sind für die Rolle ausgeblendet).
+    let assignedObjectIds: string[] | null = null;
+    if (isFacilityManager(auth.user)) {
+      const { data: assignments } = await supabase
+        .from("object_assignments")
+        .select("object_id")
+        .eq("user_id", auth.user.id);
+      assignedObjectIds = (assignments ?? []).map((a) => a.object_id);
+    }
+
     // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins;
     // die Bemerkung (remark) ist für alle sichtbar.
     const select = isAdmin(auth.user)
       ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
-      : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, last_delivery_at, last_delivery_driver_name, last_delivery_items, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)";
-    const { data, error } = await supabase
-      .from("objects")
-      .select(select)
-      .order("name");
+      : isFacilityManager(auth.user)
+        ? "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
+        : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, last_delivery_at, last_delivery_driver_name, last_delivery_items, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)";
+
+    // Objektbetreuer ohne Zuweisungen sehen eine leere Liste.
+    if (assignedObjectIds !== null && assignedObjectIds.length === 0) {
+      return NextResponse.json({ objects: [], assigned_object_ids: [] });
+    }
+
+    let query = supabase.from("objects").select(select).order("name");
+    if (assignedObjectIds !== null) {
+      query = query.in("id", assignedObjectIds);
+    }
+    const { data, error } = await query;
 
     if (error) throw error;
-    return NextResponse.json({ objects: data });
+    // Zuweisungsliste für die Offline-Layer-Filterung mitgeben.
+    return NextResponse.json({
+      objects: data,
+      ...(assignedObjectIds !== null ? { assigned_object_ids: assignedObjectIds } : {}),
+    });
   } catch (e) {
     return apiErrorResponse(e);
   }

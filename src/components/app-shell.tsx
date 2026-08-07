@@ -6,7 +6,12 @@ import { usePathname } from "next/navigation";
 import { Building2, Clock3, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
 import { ClockWidget } from "@/components/time-tracking/clock-widget";
 import { cn } from "@/lib/utils";
-import { initSync, useSyncState } from "@/lib/offline/sync";
+import {
+  initSync,
+  setCurrentUserId,
+  setCurrentUserRole,
+  useSyncState,
+} from "@/lib/offline/sync";
 import type { UserRole } from "@/types/database";
 
 type NavItem = {
@@ -27,12 +32,12 @@ const NAV_ITEMS: NavItem[] = [
   {
     href: "/planung",
     label: "Tourenplanung",
-    roles: ["driver", "admin"],
+    roles: ["driver", "admin", "substitute"],
   },
   {
     href: "/historie",
     label: "Historie",
-    roles: ["driver", "admin"],
+    roles: ["driver", "admin", "substitute"],
   },
   {
     href: "/zeiterfassung",
@@ -57,6 +62,11 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const sync = useSyncState();
+
+  // Rolle synchron setzen (vor Kind-Effekten), damit die Offline-Layer-Filter
+  // für Objektbetreuer schon beim ersten Seitenaufruf greifen.
+  setCurrentUserRole(userRole);
+  if (userId) setCurrentUserId(userId);
 
   // Seiten mit eigener fester Bottom-Leiste (z. B. Speichern/Tour starten):
   // dort wird die mobile Stempeluhr-Leiste ausgeblendet, damit sich zwei

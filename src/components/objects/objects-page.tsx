@@ -7,15 +7,13 @@ import {
   Calendar,
   Camera,
   ChevronsUpDown,
+  Info,
   KeyRound,
   ListChecks,
   MapPin,
-  Pencil,
   Plus,
   Search,
   Store,
-  Trash2,
-  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -42,14 +40,15 @@ import {
 } from "@/components/ui/dialog";
 import { ObjectFormDialog } from "./object-form-dialog";
 import { ItemsDialog } from "./items-dialog";
-import { ObjectRemark } from "./object-remark";
+import { ObjectInfoDialog } from "./object-info-dialog";
 import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
 import { offlineFetch } from "@/lib/offline/fetch";
 import type { ApiError, ObjectWithItems } from "@/types/api";
+import type { UserRole } from "@/types/database";
 
 /** Sortierbare Spalten der Objektliste (Klick auf Spaltenkopf). */
-type SortKey = "name" | "address" | "key" | "category" | "items" | "remark" | "lastDelivery";
+type SortKey = "name" | "address" | "key" | "category" | "items" | "lastDelivery";
 
 type SortState = {
   key: SortKey;
@@ -57,7 +56,12 @@ type SortState = {
   dir: 1 | -1;
 };
 
-export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
+export function ObjectsPage({ userRole }: { userRole: UserRole }) {
+  const isAdmin = userRole === "admin";
+  // Objektbetreuer: reduzierte Spaltenansicht (ohne „Zuletzt am“/„Info“) und
+  // Items nur lesbar – Springer & Co. sehen weiterhin alles.
+  const isFacilityManager = userRole === "facility_manager";
+
   const [objects, setObjects] = useState<ObjectWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -75,7 +79,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
   const [photoOpen, setPhotoOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ObjectWithItems | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [lastDeliveryDetail, setLastDeliveryDetail] = useState<ObjectWithItems | null>(null);
+  const [infoTarget, setInfoTarget] = useState<ObjectWithItems | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -136,8 +140,6 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
           return a.category.localeCompare(b.category, "de") * dir;
         case "items":
           return (itemCount(a) - itemCount(b)) * dir;
-        case "remark":
-          return (a.remark ?? "").localeCompare(b.remark ?? "", "de") * dir;
         case "lastDelivery":
           // Objekte ohne Lieferdatum immer ans Ende
           if (a.last_delivery_at == null && b.last_delivery_at == null) return 0;
@@ -229,6 +231,11 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
         ) : objects.length === 0 ? (
           isAdmin ? (
             <EmptyState onCreate={() => setFormDialog({ open: true, object: null })} />
+          ) : isFacilityManager ? (
+            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+              Ihnen sind noch keine Objekte zugewiesen. Wende dich an die
+              Verwaltung, um Objekte zugewiesen zu bekommen.
+            </div>
           ) : (
             <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
               Noch keine Objekte vorhanden.
@@ -274,19 +281,17 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                     sort={sort}
                     onToggle={toggleSort}
                   />
-                  <SortableHeader
-                    label="Bemerkung"
-                    sortKey="remark"
-                    sort={sort}
-                    onToggle={toggleSort}
-                  />
-                  <SortableHeader
-                    label="Zuletzt am"
-                    sortKey="lastDelivery"
-                    sort={sort}
-                    onToggle={toggleSort}
-                  />
-                  <TableHead className="pr-4 text-right">Aktionen</TableHead>
+                  {!isFacilityManager && (
+                    <SortableHeader
+                      label="Zuletzt am"
+                      sortKey="lastDelivery"
+                      sort={sort}
+                      onToggle={toggleSort}
+                    />
+                  )}
+                  {!isFacilityManager && (
+                    <TableHead className="pr-4 text-right">Info</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -316,74 +321,58 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {isAdmin ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 gap-1.5 px-2 text-muted-foreground"
-                          onClick={() => setItemsDialog({ open: true, object: obj })}
-                        >
-                          <ListChecks className="h-3.5 w-3.5" />
-                          {itemCount(obj)}
-                        </Button>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-                          <ListChecks className="h-3.5 w-3.5" />
-                          {itemCount(obj)}
-                        </span>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1.5 px-2 text-muted-foreground"
+                        onClick={() => setItemsDialog({ open: true, object: obj })}
+                        title={
+                          isFacilityManager
+                            ? `${itemCount(obj)} Items anzeigen`
+                            : `${itemCount(obj)} Items anzeigen/bearbeiten`
+                        }
+                      >
+                        <ListChecks className="h-3.5 w-3.5" />
+                        {itemCount(obj)}
+                      </Button>
                     </TableCell>
-                    <TableCell>
-                      <ObjectRemark
-                        remark={obj.remark}
-                        objectName={obj.name}
-                        // Spalte schmal halten – volle Bemerkung per Tipp
-                        className="max-w-52"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {obj.last_delivery_at ? (
-                        <button
-                          type="button"
-                          onClick={() => setLastDeliveryDetail(obj)}
-                          className="inline-flex items-center gap-1.5 text-sm tabular-nums text-primary hover:underline"
-                          title="Details zur letzten Belieferung anzeigen"
-                        >
-                          <Calendar className="h-3.5 w-3.5 shrink-0" />
-                          {new Date(obj.last_delivery_at).toLocaleDateString("de-DE", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "2-digit",
-                          })}
-                        </button>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">–</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="pr-4">
-                      {isAdmin ? (
-                        <div className="flex items-center justify-end gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                    {!isFacilityManager && (
+                      <TableCell>
+                        {obj.last_delivery_at ? (
+                          <button
+                            type="button"
+                            onClick={() => setInfoTarget(obj)}
+                            className="inline-flex items-center gap-1.5 text-sm tabular-nums text-primary hover:underline"
+                            title="Details anzeigen"
+                          >
+                            <Calendar className="h-3.5 w-3.5 shrink-0" />
+                            {new Date(obj.last_delivery_at).toLocaleDateString("de-DE", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "2-digit",
+                            })}
+                          </button>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">–</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {!isFacilityManager && (
+                      <TableCell className="pr-4">
+                        <div className="flex items-center justify-end">
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8"
-                            aria-label={`${obj.name} bearbeiten`}
-                            onClick={() => setFormDialog({ open: true, object: obj })}
+                            aria-label={`${obj.name} Info anzeigen`}
+                            title="Details anzeigen"
+                            onClick={() => setInfoTarget(obj)}
                           >
-                            <Pencil />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            aria-label={`${obj.name} löschen`}
-                            onClick={() => setDeleteTarget(obj)}
-                          >
-                            <Trash2 />
+                            <Info />
                           </Button>
                         </div>
-                      ) : null}
-                    </TableCell>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -392,7 +381,7 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
-      {/* Dialoge (nur Admin) */}
+      {/* Dialoge */}
       {isAdmin && (
         <>
           <ObjectFormDialog
@@ -403,14 +392,6 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
             }
             onSaved={() => void load()}
           />
-          <ItemsDialog
-            open={itemsDialog.open}
-            object={itemsDialog.object}
-            onOpenChange={(open) =>
-              setItemsDialog((prev) => ({ ...prev, open }))
-            }
-            onChanged={() => void load()}
-          />
           <PhotoImportDialog
             open={photoOpen}
             onOpenChange={setPhotoOpen}
@@ -418,6 +399,32 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
           />
         </>
       )}
+      <ItemsDialog
+        open={itemsDialog.open}
+        object={itemsDialog.object}
+        canDelete={isAdmin}
+        readOnly={isFacilityManager}
+        onOpenChange={(open) =>
+          setItemsDialog((prev) => ({ ...prev, open }))
+        }
+        onChanged={() => void load()}
+      />
+      <ObjectInfoDialog
+        open={!!infoTarget}
+        object={infoTarget}
+        isAdmin={isAdmin}
+        onOpenChange={(open) => {
+          if (!open) setInfoTarget(null);
+        }}
+        onEdit={(object) => {
+          setInfoTarget(null);
+          setFormDialog({ open: true, object });
+        }}
+        onDelete={(object) => {
+          setInfoTarget(null);
+          setDeleteTarget(object);
+        }}
+      />
 
       {/* Lösch-Bestätigung */}
       <Dialog
@@ -451,68 +458,6 @@ export function ObjectsPage({ isAdmin }: { isAdmin: boolean }) {
               {deleting ? "Wird gelöscht…" : "Löschen"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Letzte-Belieferung-Detail */}
-      <Dialog
-        open={!!lastDeliveryDetail}
-        onOpenChange={(open) => {
-          if (!open) setLastDeliveryDetail(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Letzte Belieferung – {lastDeliveryDetail?.name}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span>
-                {lastDeliveryDetail?.last_delivery_at
-                  ? new Date(lastDeliveryDetail.last_delivery_at).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "long",
-                      year: "numeric",
-                    }) +
-                    ", " +
-                    new Date(lastDeliveryDetail.last_delivery_at).toLocaleTimeString("de-DE", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }) +
-                    " Uhr"
-                  : "–"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-muted-foreground" />
-              <span>
-                {lastDeliveryDetail?.last_delivery_driver_name ?? "Unbekannter Fahrer"}
-              </span>
-            </div>
-            <div>
-              <p className="mb-1.5 font-medium">Gelieferte Items:</p>
-              {lastDeliveryDetail?.last_delivery_items &&
-              Array.isArray(lastDeliveryDetail.last_delivery_items) &&
-              lastDeliveryDetail.last_delivery_items.length > 0 ? (
-                <ul className="list-inside list-disc space-y-0.5 text-muted-foreground">
-                  {(lastDeliveryDetail.last_delivery_items as Array<{ item_name?: string; quantity?: number; note?: string | null }>).map(
-                    (item, i) => (
-                      <li key={i}>
-                        {item.quantity && item.quantity > 1 ? `${item.quantity}x ` : ""}
-                        {item.item_name ?? "Unbekanntes Item"}
-                        {item.note ? ` (${item.note})` : ""}
-                      </li>
-                    ),
-                  )}
-                </ul>
-              ) : (
-                <p className="text-muted-foreground">Keine Items erfasst.</p>
-              )}
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
     </div>
