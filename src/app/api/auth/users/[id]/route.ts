@@ -4,6 +4,7 @@ import {
   isAdmin,
   emailToUsername,
   isUserRole,
+  invalidateProfileCache,
 } from "@/lib/auth";
 import { isContractType } from "@/lib/contract";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -167,6 +168,11 @@ export async function PATCH(
       .single();
     if (error) throw error;
 
+    // Profil-Cache verwerfen, damit Rollen-/Namensänderungen sofort greifen
+    // (sonst würde die kurzlebige Memoization die alte Rolle bis zu 60 s
+    // ausliefern – z. B. nach einer Admin-Entziehung).
+    invalidateProfileCache(id);
+
     // Objektzuweisungen einer Reinigungskraft: ersetzt werden sie, wenn der
     // Admin Objekte übermittelt (Rolle = facility_manager). Wechselt die Rolle
     // von Reinigungskraft auf etwas anderes, werden alle Zuweisungen entfernt.
@@ -246,6 +252,10 @@ export async function DELETE(
     // Passkeys & Profil werden per ON DELETE CASCADE entfernt.
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) throw error;
+
+    // Gecachtes Profil entfernen, damit ein ggf. noch gültiges JWT nicht auf
+    // veraltete Rollendaten trifft.
+    invalidateProfileCache(id);
 
     return NextResponse.json({ ok: true });
   } catch {

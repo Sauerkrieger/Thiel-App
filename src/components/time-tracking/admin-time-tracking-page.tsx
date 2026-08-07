@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeOffRequest } from "@/types/time-tracking";
@@ -62,13 +62,22 @@ export function AdminTimeTrackingPage() {
   const [editOvertime, setEditOvertime] = useState("");
   const [savingAccount, setSavingAccount] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
+  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
+    const params = new URLSearchParams();
+    if (role !== "all") params.set("role", role);
+    if (query.trim()) params.set("q", query.trim());
+    const url = `/api/admin/time-tracking/overview?${params.toString()}`;
+    const cached = fresh ? null : await offlineReadCached(url);
+    if (cached) {
+      setOverview(cached as Overview);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const params = new URLSearchParams();
-      if (role !== "all") params.set("role", role);
-      if (query.trim()) params.set("q", query.trim());
-      const res = await offlineFetch(`/api/admin/time-tracking/overview?${params.toString()}`, { cache: "no-store" });
+      const res = await offlineFetch(url, { cache: "no-store" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Übersicht konnte nicht geladen werden.");
       setOverview(body as Overview);
@@ -85,7 +94,7 @@ export function AdminTimeTrackingPage() {
       const res = await offlineFetch(`/api/admin/time-tracking/entries/${entry.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_approved: approved }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Arbeitszeit konnte nicht aktualisiert werden.");
-      await load();
+      await load(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
@@ -97,7 +106,7 @@ export function AdminTimeTrackingPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Eintrag konnte nicht gelöscht werden.");
       toast.success("Eintrag gelöscht.");
-      await load();
+      await load(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht gelöscht werden."); } finally { setSaving(null); }
   }
 
@@ -107,7 +116,7 @@ export function AdminTimeTrackingPage() {
       const res = await offlineFetch(`/api/time-tracking/requests/${request.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Antrag konnte nicht aktualisiert werden.");
-      await load();
+      await load(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : "Antrag konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
@@ -154,7 +163,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Konto konnte nicht aktualisiert werden.");
       toast.success("Konto aktualisiert.");
       setSelectedEmployee(null);
-      await load();
+      await load(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : "Konto konnte nicht aktualisiert werden."); } finally { setSavingAccount(false); }
   }
 

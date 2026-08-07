@@ -764,6 +764,41 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   return jsonResponse(503, { error: "Diese Seite ist offline nicht verfügbar." });
 }
 
+/**
+ * Liest die gecachten Daten eines lesbaren GET-Endpunkts (ohne Netzwerk).
+ * Gibt `null` zurück, wenn keine nutzbaren Daten im IndexedDB-Cache liegen
+ * oder der Endpunkt nicht gecacht wird.
+ *
+ * Zweck: „Stale-while-revalidate“-Seiten zeigen den Cache sofort an (kein
+ * Skeleton-Flash beim Navigieren) und laden die frischen Daten parallel vom
+ * Server nach (siehe die Seiten-Komponenten).
+ */
+export async function offlineReadCached(
+  input: string | URL | Request,
+): Promise<Record<string, unknown> | null> {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+  const { path, query } = stripQuery(url);
+  if (!isReadableGet(path, "GET")) return null;
+  try {
+    const res = await readOffline({
+      kind: "read",
+      path,
+      method: "GET",
+      params: extractParams(path),
+      query,
+    });
+    if (res.status !== 200) return null;
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Offline-Queue (Mutationen)                                          */
 /* ------------------------------------------------------------------ */

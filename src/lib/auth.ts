@@ -1,6 +1,12 @@
 import "server-only";
+import { cache } from "react";
+import { headers } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  AUTH_USER_EMAIL_HEADER,
+  AUTH_USER_ID_HEADER,
+} from "@/lib/auth-headers";
 import type { UserRole } from "@/types/database";
 
 /** Domain, auf die Benutzernamen gemappt werden (Leon -> leon@thiel.local). */
@@ -42,21 +48,127 @@ export type CurrentUser = {
   username: string;
 };
 
-/** Holen den angemeldeten Nutzer inkl. Profil; null wenn nicht angemeldet. */
-export async function getCurrentUser(): Promise<CurrentUser | null> {
+/* ------------------------------------------------------------------ */
+/* Profil-Cache (kurzlebig)                                            */
+/* ------------------------------------------------------------------ */
+
+type CachedProfile = {
+  name: string;
+  role: UserRole;
+  email: string | null;
+};
+
+/**
+ * Kurzzeit-Memoization der Profil-Query. Die Middleware validiert die Session
+ * bereits pro Request; die Profilabfrage (Rolle/Name) wird hier zusätzlich
+ * für ~60 s zwischengespeichert, damit Layout, Page und API-Routen sie nicht
+ * für jeden Request erneut über das Netz holen. Rollen-/Namensänderungen
+ * greifen dadurch binnen einer Minute bzw. sofort nach
+ * `invalidateProfileCache()` (siehe API-Routen).
+ */
+const PROFILE_CACHE_TTL_MS = 60_000;
+const profileCache = new Map<
+  string,
+  { expiresAt: number; profile: CachedProfile }
+>();
+
+function cachedProfileFor(userId: string): CachedProfile | null {
+  const entry = profileCache.get(userId);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    profileCache.delete(userId);
+    return null;
+  }
+  return entry.profile;
+}
+
+function setProfileCache(userId: string, profile: CachedProfile): void {
+  profileCache.set(userId, {
+    expiresAt: Date.now() + PROFILE_CACHE_TTL_MS,
+    profile,
+  });
+}
+
+/** Profil-Cache verwerfen, damit Zugriffsrechte sofort greifen. */
+export function invalidateProfileCache(userId?: string): void {
+  if (userId) profileCache.delete(userId);
+  else profileCache.clear();
+}
+
+/** Profil laden (mit Kurzzeit-Cache); null, wenn kein Profil existiert. */
+async function fetchProfile(userId: string): Promise<CachedProfile | null> {
+  const cached = cachedProfileFor(userId);
+  if (cached) return cached;
+
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("id, name, role, email")
+      .eq("id", userId)
+      .maybeSingle();
+    if (!profile) return null;
+    const result: CachedProfile = {
+      name: profile.name ?? "",
+      role: isUserRole(profile.role) ? profile.role : "driver",
+      email: profile.email ?? null,
+    };
+    setProfileCache(userId, result);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Aktueller Nutzer                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Holen den angemeldeten Nutzer inkl. Profil; null wenn nicht angemeldet.
+ *
+ * Performance: Die Middleware setzt pro Request den Nutzer per Header
+ * (`x-thiel-user-id`/`x-thiel-user-email`). Ist der Header vorhanden, wird
+ * der teure `supabase.auth.getUser()`-Call übersprungen und nur noch das
+ * (kurzzeitig gecachte) Profil gelesen. Zusätzlich dedupliziert React.cache
+ * den Aufruf innerhalb eines Requests – Layout und Page führen ihn damit nur
+ * noch einmal aus statt zweimal.
+ */
+async function loadCurrentUser(): Promise<CurrentUser | null> {
+  // 1) Header-Pfad (von der Middleware gesetzt) – ohne weiteren Roundtrip.
+  let headerUserId: string | null = null;
+  let headerEmail: string | null = null;
+  try {
+    const headerStore = await headers();
+    headerUserId = headerStore.get(AUTH_USER_ID_HEADER);
+    headerEmail = headerStore.get(AUTH_USER_EMAIL_HEADER);
+  } catch {
+    // Kein Request-Kontext (z. B. Build) → klassischer Pfad unten.
+  }
+
+  if (headerUserId) {
+    const profile = await fetchProfile(headerUserId);
+    if (profile) {
+      return {
+        id: headerUserId,
+        email: profile.email ?? headerEmail,
+        name: profile.name,
+        role: profile.role,
+        username: emailToUsername(profile.email ?? headerEmail),
+      };
+    }
+    // Profil nicht (mehr) vorhanden → mit dem klassischen Pfad fortfahren,
+    // damit der Nutzer nicht fälschlich ausgeloggt wird.
+  }
+
+  // 2) Klassischer Pfad (Fallback): Session aus dem Cookie validieren.
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const admin = getSupabaseAdmin();
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("id, name, role, email")
-    .eq("id", user.id)
-    .maybeSingle();
-
+  const profile = await fetchProfile(user.id);
   const email = profile?.email ?? user.email ?? null;
   return {
     id: user.id,
@@ -66,6 +178,8 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     username: emailToUsername(email),
   };
 }
+
+export const getCurrentUser = cache(loadCurrentUser);
 
 /** Aktueller Nutzer oder Standard-401-Antwort für API-Routen. */
 export async function requireUser(): Promise<

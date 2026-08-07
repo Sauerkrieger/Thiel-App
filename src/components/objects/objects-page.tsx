@@ -43,7 +43,7 @@ import { ItemsDialog } from "./items-dialog";
 import { ObjectInfoDialog } from "./object-info-dialog";
 import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import type { ApiError, ObjectWithItems } from "@/types/api";
 import type { UserRole } from "@/types/database";
 
@@ -81,22 +81,38 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
   const [deleting, setDeleting] = useState(false);
   const [infoTarget, setInfoTarget] = useState<ObjectWithItems | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Objekte sofort anzeigen, frische Daten
+  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
     setError(null);
+    // Leere Cache-Listen nicht als Daten werten (sonst blinkt z. B. bei
+    // Reinigungskräften kurz „keine Objekte zugewiesen“, bis die frischen
+    // Daten eintreffen).
+    const cached = fresh ? null : await offlineReadCached("/api/objects");
+    if (cached && Array.isArray(cached.objects) && cached.objects.length > 0) {
+      setObjects(cached.objects as ObjectWithItems[]);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch("/api/objects", { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
-        setError({
-          code: body.code,
-          message: body.error ?? "Unbekannter Fehler",
-        });
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
+        if (!cached) {
+          setError({
+            code: body.code,
+            message: body.error ?? "Unbekannter Fehler",
+          });
+        }
         return;
       }
       setObjects(body.objects ?? []);
     } catch {
-      setError({ message: "Netzwerkfehler beim Laden der Objekte." });
+      if (!cached) {
+        setError({ message: "Netzwerkfehler beim Laden der Objekte." });
+      }
     } finally {
       setLoading(false);
     }
@@ -167,7 +183,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
       }
       toast.success(`„${deleteTarget.name}" wurde gelöscht.`);
       setDeleteTarget(null);
-      await load();
+      await load(true);
     } catch {
       toast.error("Löschen fehlgeschlagen.");
     } finally {
@@ -390,12 +406,12 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
             onOpenChange={(open) =>
               setFormDialog((prev) => ({ ...prev, open }))
             }
-            onSaved={() => void load()}
+            onSaved={() => void load(true)}
           />
           <PhotoImportDialog
             open={photoOpen}
             onOpenChange={setPhotoOpen}
-            onImported={() => void load()}
+            onImported={() => void load(true)}
           />
         </>
       )}
@@ -407,7 +423,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
         onOpenChange={(open) =>
           setItemsDialog((prev) => ({ ...prev, open }))
         }
-        onChanged={() => void load()}
+        onChanged={() => void load(true)}
       />
       <ObjectInfoDialog
         open={!!infoTarget}

@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import type { ApiError, TourHistoryItem, UserListItem } from "@/types/api";
 
 const STATUS_LABELS: Record<TourHistoryItem["status"], string> = {
@@ -50,25 +50,39 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<TourHistoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Touren sofort anzeigen, frische Daten
+  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
     setError(null);
+    const params = new URLSearchParams();
+    if (isAdmin && filterUserId && filterUserId !== "all") {
+      params.set("user_id", filterUserId);
+    }
+    const url = `/api/tours?${params.toString()}`;
+    const cached = fresh ? null : await offlineReadCached(url);
+    if (cached && Array.isArray(cached.tours) && cached.tours.length > 0) {
+      setTours(cached.tours as TourHistoryItem[]);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const params = new URLSearchParams();
-      if (isAdmin && filterUserId && filterUserId !== "all") {
-        params.set("user_id", filterUserId);
-      }
-      const res = await offlineFetch(`/api/tours?${params.toString()}`, {
+      const res = await offlineFetch(url, {
         cache: "no-store",
       });
       const body = await res.json();
       if (!res.ok) {
-        setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
+        if (!cached) {
+          setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        }
         return;
       }
       setTours(body.tours ?? []);
     } catch {
-      setError({ message: "Netzwerkfehler beim Laden der Tourenhistorie." });
+      if (!cached) {
+        setError({ message: "Netzwerkfehler beim Laden der Tourenhistorie." });
+      }
     } finally {
       setLoading(false);
     }
@@ -101,7 +115,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       }
       toast.success("Tour gelöscht.");
       setDeleteTarget(null);
-      await load();
+      await load(true);
     } catch {
       toast.error("Tour konnte nicht gelöscht werden.");
     } finally {

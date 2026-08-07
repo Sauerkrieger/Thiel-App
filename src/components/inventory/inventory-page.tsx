@@ -32,7 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import type { ApiError } from "@/types/api";
 import type { InventoryItem } from "@/types/database";
 
@@ -57,22 +57,35 @@ export function InventoryPage() {
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Items sofort anzeigen, frische Daten
+  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
     setError(null);
+    const cached = fresh ? null : await offlineReadCached("/api/inventory");
+    if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
+      setItems(cached.items as InventoryItem[]);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch("/api/inventory", { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
-        setError({
-          code: body.code,
-          message: body.error ?? "Unbekannter Fehler",
-        });
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
+        if (!cached) {
+          setError({
+            code: body.code,
+            message: body.error ?? "Unbekannter Fehler",
+          });
+        }
         return;
       }
       setItems(body.items ?? []);
     } catch {
-      setError({ message: "Netzwerkfehler beim Laden des Inventars." });
+      if (!cached) {
+        setError({ message: "Netzwerkfehler beim Laden des Inventars." });
+      }
     } finally {
       setLoading(false);
     }
@@ -118,7 +131,7 @@ export function InventoryPage() {
       }
       setNewName("");
       setNewNote("");
-      await load();
+      await load(true);
       toast.success(`„${body.item?.name ?? newName.trim()}" zum Inventar hinzugefügt.`);
     } catch {
       toast.error("Item konnte nicht angelegt werden.");

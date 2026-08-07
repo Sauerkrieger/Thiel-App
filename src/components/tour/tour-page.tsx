@@ -36,7 +36,7 @@ const RouteMap = dynamic(
 import { cleanAddressLabel } from "@/lib/address";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
@@ -58,19 +58,33 @@ export function TourPage({ tourId }: Props) {
   }>({ open: false, stop: null });
   const [finishing, setFinishing] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Tour sofort anzeigen, frische Daten
+  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
     setError(null);
+    const url = `/api/tours/${tourId}`;
+    const cached = fresh ? null : await offlineReadCached(url);
+    if (cached?.tour) {
+      setTour(cached.tour as TourWithStops);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const res = await offlineFetch(`/api/tours/${tourId}`, { cache: "no-store" });
+      const res = await offlineFetch(url, { cache: "no-store" });
       const body = await res.json();
       if (!res.ok) {
-        setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
+        if (!cached) {
+          setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        }
         return;
       }
       setTour(body.tour);
     } catch {
-      setError({ message: "Netzwerkfehler beim Laden der Tour." });
+      if (!cached) {
+        setError({ message: "Netzwerkfehler beim Laden der Tour." });
+      }
     } finally {
       setLoading(false);
     }
@@ -323,7 +337,7 @@ export function TourPage({ tourId }: Props) {
         tourId={tourId}
         stop={dialog.stop}
         onOpenChange={(open) => setDialog((prev) => ({ ...prev, open }))}
-        onDelivered={() => void load()}
+        onDelivered={() => void load(true)}
       />
 
       {/* Sticky-Leiste: auf dem Handy über der festen Stempeluhr-Leiste

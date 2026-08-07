@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
@@ -74,8 +74,18 @@ export function TimeTrackingPage() {
   const [reNote, setReNote] = useState("");
   const [submittingEntry, setSubmittingEntry] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
+  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
+  const load = useCallback(async (fresh = false) => {
+    const cached = fresh
+      ? null
+      : await offlineReadCached("/api/time-tracking/summary");
+    if (cached?.profile) {
+      setSummary(cached as Summary);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch("/api/time-tracking/summary", { cache: "no-store" });
       const body = await res.json().catch(() => ({}));
@@ -143,7 +153,7 @@ export function TimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Antrag konnte nicht gesendet werden.");
       toast.success("Antrag wurde eingereicht.");
       setNote("");
-      await load();
+      await load(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Antrag konnte nicht gesendet werden.");
     } finally {
@@ -188,7 +198,7 @@ export function TimeTrackingPage() {
       toast.success("Arbeitszeit nachgereicht – wartet auf Freigabe.");
       setReDate(dateValue(new Date()));
       setReNote("");
-      await load();
+      await load(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht nachgereicht werden.");
     } finally {

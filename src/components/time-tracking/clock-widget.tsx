@@ -46,9 +46,19 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
   useEffect(() => {
     void load();
     setMounted(true);
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    // Nur bei laufender Stempelung sekündlich ticken (die laufende Zeit
+    // zählt sichtbar mit). Ohne offene Stempelung gibt es keinen sichtbaren
+    // Sekundenzähler – ein langsames Intervall spart Re-Renders auf jeder
+    // Seite (die Stempeluhr sitzt im globalen Header/Footer).
+    const timer = window.setInterval(
+      () => setNow(Date.now()),
+      entry ? 1000 : 30_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [entry]);
 
   useEffect(() => {
     const pauseKey = `thiel-clock-pause:${userId ?? "anonymous"}`;

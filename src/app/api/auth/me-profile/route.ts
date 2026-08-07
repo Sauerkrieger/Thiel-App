@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { requireUser, usernameToEmail, emailToUsername } from "@/lib/auth";
+import {
+  requireUser,
+  usernameToEmail,
+  emailToUsername,
+  invalidateProfileCache,
+} from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
@@ -96,6 +101,10 @@ export async function PATCH(request: Request) {
       .select("id, name, role, email")
       .single();
     if (error) throw error;
+
+    // Profil-Cache verwerfen, damit die eigene Namens-/E-Mail-Änderung sofort
+    // überall ankommt (sonst würde die Memoization bis zu 60 s den alten Wert liefern).
+    invalidateProfileCache(user.id);
 
     return NextResponse.json({
       user: {

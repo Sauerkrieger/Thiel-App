@@ -44,7 +44,7 @@ import {
   prepMinutesForCount,
   toMinutes,
 } from "@/lib/routing/time";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import type { DayOfWeek } from "@/types/database";
 import type {
   ApiError,
@@ -107,16 +107,36 @@ export function PlanningPage() {
 
   const todayLabel = useMemo(() => dateFormatter.format(new Date()), []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Stale-while-revalidate: gecachte Planung sofort anzeigen, frische Daten
+  // parallel vom Server nachladen.
+  const load = useCallback(async (fresh = false) => {
     setError(null);
+    const url = `/api/planning?day_of_week=${dayOfWeek}`;
+    const cached = fresh ? null : await offlineReadCached(url);
+    if (cached) {
+      setObjects((cached.objects as PlanningObject[]) ?? []);
+      const ids: string[] = (cached.selected_ids as string[]) ?? [];
+      setSelected(new Set(ids));
+      setSavedIds(ids);
+      setDefaultsUpdatedAt(
+        typeof cached.defaults_updated_at === "string"
+          ? cached.defaults_updated_at
+          : null,
+      );
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const res = await offlineFetch(`/api/planning?day_of_week=${dayOfWeek}`, {
+      const res = await offlineFetch(url, {
         cache: "no-store",
       });
       const body = await res.json();
       if (!res.ok) {
-        setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
+        if (!cached) {
+          setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
+        }
         return;
       }
       setObjects(body.objects ?? []);
@@ -125,7 +145,9 @@ export function PlanningPage() {
       setSavedIds(ids);
       setDefaultsUpdatedAt(body.defaults_updated_at ?? null);
     } catch {
-      setError({ message: "Netzwerkfehler beim Laden der Tourenplanung." });
+      if (!cached) {
+        setError({ message: "Netzwerkfehler beim Laden der Tourenplanung." });
+      }
     } finally {
       setLoading(false);
     }

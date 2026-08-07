@@ -12,7 +12,46 @@ import {
   setCurrentUserRole,
   useSyncState,
 } from "@/lib/offline/sync";
+import { offlineFetch } from "@/lib/offline/fetch";
 import type { UserRole } from "@/types/database";
+
+/**
+ * Daten-Endpunkt je Navigationsziel für den Hover-Prefetch. Beim Überfahren
+ * eines Nav-Links wird die Daten-Antwort schon einmal geladen und in den
+ * IndexedDB-Cache geschrieben – die Seite rendert nach dem Klick dadurch
+ * sofort aus dem Cache (Stale-while-revalidate), statt erst aufs Netz zu
+ * warten. Nur Tabellen, die der Nutzer auch sehen darf (Nav-Filter greift
+ * vorher), werden vorgewärmt.
+ */
+const DATA_ENDPOINTS: Record<string, () => string> = {
+  "/objects": () => "/api/objects",
+  "/inventar": () => "/api/inventory",
+  "/planung": () => `/api/planning?day_of_week=${new Date().getDay()}`,
+  "/historie": () => "/api/tours",
+  "/zeiterfassung": () => "/api/time-tracking/summary",
+  "/admin/zeiterfassung": () => "/api/admin/time-tracking/overview",
+};
+
+// Debounce + Dedupe: nur der zuletzt überfahrene Link wird (kurz) vorgewärmt,
+// damit ein schnelles Bewegen über die Leiste keine Fetch-Flut auslöst.
+const prefetchTimers = new Map<string, number>();
+
+function prefetchPageData(href: string) {
+  const build = DATA_ENDPOINTS[href];
+  if (!build) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  const existing = prefetchTimers.get(href);
+  if (existing !== undefined) window.clearTimeout(existing);
+  prefetchTimers.set(
+    href,
+    window.setTimeout(() => {
+      prefetchTimers.delete(href);
+      // Antwort wird verworfen – offlineFetch legt erfolgreiche GETs
+      // automatisch in den IndexedDB-Cache.
+      void offlineFetch(build(), { cache: "no-store" }).catch(() => {});
+    }, 250),
+  );
+}
 
 type NavItem = {
   href: string;
@@ -126,6 +165,8 @@ export function AppShell({
                 <Link
                   key={item.href}
                   href={item.href}
+                  onMouseEnter={() => prefetchPageData(item.href)}
+                  onFocus={() => prefetchPageData(item.href)}
                   aria-label={item.icon ? item.label : undefined}
                   title={item.icon ? item.label : undefined}
                   className={cn(
