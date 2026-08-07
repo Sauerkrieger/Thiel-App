@@ -17,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
+import { overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
@@ -122,13 +122,6 @@ export function TimeTrackingPage() {
       .reduce((total, entry) => total + workedMinutesOf(entry), 0);
   }, [summary]);
   const vacationRemaining = summary ? Math.max(0, summary.profile.vacation_days_total - summary.profile.vacation_days_used) : 0;
-  // Soll/Ist-Vergleich: Das Überstundenkonto rechnet automatisch die Plus-
-  // oder Minusstunden aus den Stempelungen im Vergleich zur Soll-Arbeitszeit
-  // der Vertragsart (Vollzeit/Teilzeit/Minijob) – die genauen Soll-Stunden
-  // werden bewusst nicht angezeigt.
-  const contractLabel = summary
-    ? (CONTRACT_LABELS[summary.profile.contract_type ?? "full_time"] ?? "Vollzeit")
-    : "";
   // Automatisch berechnet + manuelle Korrektur der Verwaltung (overtime_hours).
   const overtimeBalance = summary
     ? overtimeBalanceHours(summary.entries, summary.profile.contract_type) +
@@ -220,9 +213,9 @@ export function TimeTrackingPage() {
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard icon={<CalendarDays />} label="Resturlaub" value={`${vacationRemaining} Tage`} detail={`${summary.profile.vacation_days_used} von ${summary.profile.vacation_days_total} Tagen genutzt`} />
-            <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} detail={`Freigegebene Stempelungen · ${contractLabel}`} />
-            <MetricCard icon={<TimerReset />} label="Dieser Monat" value={minutesToLabel(monthMinutes)} detail="Freigegebene Stempelungen" />
-            <MetricCard icon={<FileClock />} label="Überstundenkonto (Soll/Ist)" value={hoursToLabel(overtimeBalance)} detail={`Automatisch aus Stempelungen & Vertragsart (${contractLabel}) · inkl. Korrektur`} />
+            <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} />
+            <MetricCard icon={<TimerReset />} label="Dieser Monat" value={minutesToLabel(monthMinutes)} />
+            <MetricCard icon={<FileClock />} label="Überstundenkonto" value={hoursToLabel(overtimeBalance)} />
           </div>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-3">
@@ -267,6 +260,6 @@ export function TimeTrackingPage() {
   );
 }
 
-function MetricCard({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) {
-  return <Card className="overflow-hidden"><CardContent className="flex items-start gap-3 p-5"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</span><div className="min-w-0"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold tracking-tight">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div></CardContent></Card>;
+function MetricCard({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail?: string }) {
+  return <Card className="overflow-hidden"><CardContent className="flex items-start gap-3 p-5"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</span><div className="min-w-0"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold tracking-tight">{value}</p>{detail && <p className="mt-1 text-xs text-muted-foreground">{detail}</p>}</div></CardContent></Card>;
 }

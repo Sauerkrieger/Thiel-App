@@ -75,12 +75,18 @@ export async function GET(request: Request) {
     const { data: objectRows, error: objectsError } = objectIds.length
       ? await getSupabaseAdmin()
           .from("objects")
-          .select("id, name")
+          .select("id, name, address, customer")
           .in("id", objectIds)
       : { data: [], error: null };
     if (objectsError) throw objectsError;
     const nameByObjectId = new Map(
       (objectRows ?? []).map((o) => [o.id, o.name]),
+    );
+    const addressByObjectId = new Map(
+      (objectRows ?? []).map((o) => [o.id, o.address]),
+    );
+    const customerByObjectId = new Map(
+      (objectRows ?? []).map((o) => [o.id, o.customer ?? ""]),
     );
 
     // Fahrernamen (driver_id -> profiles.name) laden.
@@ -119,6 +125,12 @@ export async function GET(request: Request) {
         delivered_objects: delivered
           .map((s) => nameByObjectId.get(s.object_id))
           .filter((n): n is string => typeof n === "string"),
+        delivered_addresses: delivered
+          .map((s) => addressByObjectId.get(s.object_id) ?? "")
+          .filter((a): a is string => a.length > 0),
+        delivered_customers: delivered
+          .map((s) => customerByObjectId.get(s.object_id) ?? "")
+          .filter((c): c is string => c.length > 0),
         key_numbers: [...new Set(
           tourStops
             .map((s) => s.key_number)

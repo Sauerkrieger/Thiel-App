@@ -220,9 +220,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
                         {item.quantity && item.quantity > 1 ? `${item.quantity}× ` : ""}
                         {item.item_name}
                       </span>
-                      {item.is_always_required && (
-                        <Badge variant="success">Standard</Badge>
-                      )}
+                      {/* Reinigungskraft (Nur-Lese): kein „Standard“-Badge */}
                       {item.is_reserved && !item.is_always_required && (
                         <Badge variant="outline">vorgemerkt</Badge>
                       )}

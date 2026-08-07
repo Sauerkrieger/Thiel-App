@@ -9,12 +9,14 @@ import {
   History,
   Trash2,
   KeyRound,
+  Search,
   Truck,
   User as UserIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -45,6 +47,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
   const [tours, setTours] = useState<TourHistoryItem[]>([]);
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [filterUserId, setFilterUserId] = useState<string>("all");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TourHistoryItem | null>(null);
@@ -130,6 +133,40 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
     return found?.name ?? "Unbekannt";
   }, [isAdmin, filterUserId, users]);
 
+  // Freitext-Suche über Fahrername, Objektname/-adresse, Datum und Schlüsselnummer.
+  const filteredTours = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tours;
+    return tours.filter((tour) => {
+      const dateText = new Date(tour.date + "T00:00:00");
+      const haystack = [
+        tour.driver_name ?? "",
+        ...(tour.delivered_objects ?? []),
+        ...(tour.delivered_addresses ?? []),
+        ...(tour.delivered_customers ?? []),
+        ...(tour.key_numbers ?? []).flatMap((key) => [`nr. ${key}`, String(key)]),
+        tour.start_time ? `start ${tour.start_time.slice(0, 5)}` : "",
+        tour.date,
+        dateText.toLocaleDateString("de-DE"),
+        dateText.toLocaleDateString("de-DE", {
+          weekday: "short",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }),
+        dateText.toLocaleDateString("de-DE", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        }),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [tours, search]);
+
   return (
     <div className="container py-6 sm:py-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -164,6 +201,20 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
+      {/* Suche: Fahrer, Objektname/-adresse, Datum, Schlüsselnummer */}
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative max-w-sm flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Suchen: Fahrer, Objekt, Adresse, Datum, Schlüsselnummer…"
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
       <div className="mt-6">
         {error?.code === "SUPABASE_NOT_CONFIGURED" ? (
           <SetupHint message={error.message} />
@@ -187,9 +238,17 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                 : "Sobald Touren gestartet und gefahren werden, erscheinen sie hier."}
             </p>
           </div>
+        ) : filteredTours.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-12 text-center">
+            <Search className="mx-auto h-10 w-10 text-muted-foreground" />
+            <h2 className="mt-3 text-base font-semibold">Keine Treffer</h2>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+              Keine Touren passen zu „{search}“.
+            </p>
+          </div>
         ) : (
           <div className="space-y-3">
-            {tours.map((tour) => (
+            {filteredTours.map((tour) => (
               <div
                 key={tour.id}
                 className="rounded-lg border bg-card p-4 shadow-sm"

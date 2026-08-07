@@ -798,6 +798,7 @@ function UsersSection({
                     <SelectContent>
                       <SelectItem value="driver">Fahrer</SelectItem>
                       <SelectItem value="facility_manager">Reinigungskraft</SelectItem>
+                      <SelectItem value="substitute">Springer</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>

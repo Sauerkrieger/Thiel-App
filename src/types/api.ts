@@ -351,6 +351,10 @@ export type TourHistoryItem = {
   driver_name: string | null;
   /** Namen der belieferten Objekte. */
   delivered_objects: string[];
+  /** Adressen der belieferten Objekte (parallel zu delivered_objects). */
+  delivered_addresses: string[];
+  /** Kunden/Ansprechpartner der belieferten Objekte (parallel zu delivered_objects). */
+  delivered_customers: string[];
   /** Anzahl der belieferten Stopps. */
   delivered_count: number;
   /** Gesamtzahl der Stopps. */
