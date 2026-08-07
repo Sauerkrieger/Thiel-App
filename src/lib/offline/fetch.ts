@@ -115,6 +115,7 @@ const TIME_ENTRY_FIELDS = [
   "break_duration_minutes",
   "note",
   "is_approved",
+  "source",
 ] as const;
 const TIME_OFF_FIELDS = [
   "user_id",
@@ -918,6 +919,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       ...pick(body, TIME_ENTRY_FIELDS as readonly string[]),
       user_id: getCurrentUserId(),
       is_approved: false,
+      source: "submitted",
     });
     return jsonResponse(201, { entry: { id } });
   }
@@ -940,8 +942,9 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
         break_duration_minutes: 0,
         note: null,
         is_approved: true,
+        source: "clock",
       });
-      return jsonResponse(201, { entry: { id, user_id: currentUserId, clock_in: eventAt, clock_out: null, break_duration_minutes: 0, note: null, is_approved: true } });
+      return jsonResponse(201, { entry: { id, user_id: currentUserId, clock_in: eventAt, clock_out: null, break_duration_minutes: 0, note: null, is_approved: true, source: "clock" } });
     }
     if (action === "clock_out" && open && typeof open.id === "string") {
       const existing = await getRecord("time_entries", open.id);

@@ -126,6 +126,8 @@ export async function POST(request: Request) {
         break_duration_minutes: 0,
         note: null,
         is_approved: true,
+        // Normale Stempelung: erscheint in der Admin-Ansicht als „Gestempelt“.
+        source: "clock",
         synced_at: new Date().toISOString(),
       };
       if (clientUpdatedAt) {

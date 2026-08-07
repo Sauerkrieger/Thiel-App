@@ -148,6 +148,8 @@ export async function POST(request: Request) {
       note,
       // Wartet auf Freigabe durch die Verwaltung.
       is_approved: false,
+      // Nachgereichte Arbeitszeit: läuft durch den Freigabe-Feed.
+      source: "submitted",
       synced_at: new Date().toISOString(),
     };
     if (clientUpdatedAt) {

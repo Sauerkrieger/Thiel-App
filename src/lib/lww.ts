@@ -110,6 +110,7 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "break_duration_minutes",
     "note",
     "is_approved",
+    "source",
   ],
   time_off_requests: [
     "user_id",
@@ -215,6 +216,7 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     break_duration_minutes: { t: "number", min: 0, max: 1440, int: true },
     note: { t: "text", max: 500 },
     is_approved: { t: "bool" },
+    source: { t: "enum", values: ["clock", "submitted"] },
   },
   time_off_requests: {
     user_id: { t: "text", max: 64 },
@@ -414,9 +416,10 @@ export function prepareSyncEntry(
       // serverseitigen Admin-Sync nur den eigenen user_id tragen.
       data.user_id = user.id;
       if (table === "time_entries") {
-        // Freigaben bleiben Admin-Sache. Bei neuen Mitarbeiter-Einträgen
-        // gilt der Datenbank-Default; ein manipuliertes Feld wird entfernt.
-        delete data.is_approved;
+        // Freigaben bleiben Admin-Sache: Nur `false` (nachgereichte Arbeitszeit
+        // wartet auf Freigabe) darf von Mitarbeitern gesetzt werden. `true`
+        // (Selbst-Freigabe) wird verworfen – der DB-Default greift.
+        if (data.is_approved !== false) delete data.is_approved;
       } else {
         // Mitarbeiter können Anträge einreichen, aber nicht selbst genehmigen
         // oder ablehnen.

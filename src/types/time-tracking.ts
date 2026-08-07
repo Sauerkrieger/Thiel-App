@@ -14,6 +14,8 @@ export interface TimeEntry {
   break_duration_minutes: number;
   note: string | null;
   is_approved: boolean;
+  /** Herkunft: clock = Stempeluhr, submitted = nachgereichte Arbeitszeit. */
+  source: "clock" | "submitted";
   created_at: string;
   updated_at: string;
   client_updated_at: string | null;

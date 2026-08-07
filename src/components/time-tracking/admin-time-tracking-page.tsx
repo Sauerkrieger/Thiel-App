@@ -32,6 +32,21 @@ function timeLabel(value: string): string {
   return new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * Status-Badge eines Stempel-Eintrags:
+ * - Normale Stempelung (Stempeluhr) → „Gestempelt“
+ * - Nachgereichte Arbeitszeit, freigegeben → „Freigegeben“
+ * - Nachgereichte Arbeitszeit, offen → „Ausstehend“
+ */
+function entryBadge(entry: TimeEntry): { label: string; variant: "secondary" | "success" | "warning" } {
+  if (entry.source === "submitted") {
+    return entry.is_approved
+      ? { label: "Freigegeben", variant: "success" }
+      : { label: "Ausstehend", variant: "warning" };
+  }
+  return { label: "Gestempelt", variant: "secondary" };
+}
+
 export function AdminTimeTrackingPage() {
   const [role, setRole] = useState("all");
   const [query, setQuery] = useState("");
@@ -145,7 +160,7 @@ export function AdminTimeTrackingPage() {
 
   const openCount = overview?.employees.filter((employee) => employee.current_entry).length ?? 0;
   const pendingRequests = overview?.requests.filter((request) => request.status === "pending") ?? [];
-  const pendingEntries = overview?.entries.filter((entry) => !entry.is_approved) ?? [];
+  const pendingEntries = overview?.entries.filter((entry) => entry.source === "submitted" && !entry.is_approved) ?? [];
 
   /** Überstunden eines Mitarbeiters: automatisch (Stempelungen & Vertragsart) + Korrektur. */
   function overtimeOf(employee: Employee): { auto: number; correction: number; total: number } {
@@ -208,7 +223,7 @@ export function AdminTimeTrackingPage() {
               <div>
                 <h4 className="mb-2 text-sm font-semibold">Stempelhistorie</h4>
                 <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
-                  {employeeEntries.length === 0 ? <p className="text-sm text-muted-foreground">Keine Stempelungen vorhanden.</p> : employeeEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"><div><p className="font-medium">{new Date(entry.clock_in).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}</p><p className="text-xs text-muted-foreground">{timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "läuft gerade"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}</p></div><div className="flex items-center gap-2"><span className="font-mono text-xs">{entry.clock_out ? minutesToLabel(workedMinutesOf(entry)) : "offen"}</span><Badge variant={entry.is_approved ? "success" : "warning"}>{entry.is_approved ? "Freigegeben" : "Ausstehend"}</Badge></div></div>)}
+                  {employeeEntries.length === 0 ? <p className="text-sm text-muted-foreground">Keine Stempelungen vorhanden.</p> : employeeEntries.map((entry) => { const badge = entryBadge(entry); return <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"><div><p className="font-medium">{new Date(entry.clock_in).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}</p><p className="text-xs text-muted-foreground">{timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "läuft gerade"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}</p></div><div className="flex items-center gap-2"><span className="font-mono text-xs">{entry.clock_out ? minutesToLabel(workedMinutesOf(entry)) : "offen"}</span><Badge variant={badge.variant}>{badge.label}</Badge></div></div>; })}
                 </div>
               </div>
               <div className="rounded-lg border p-4">

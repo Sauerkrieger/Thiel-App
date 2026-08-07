@@ -34,6 +34,9 @@ export type UserRole =
 /** Vertragsart: bestimmt die Soll-Wochenarbeitszeit (40/20/10 h). */
 export type ContractType = 'full_time' | 'part_time' | 'mini_job';
 
+/** Herkunft eines Zeiterfassungs-Eintrags (Stempeluhr vs. nachgereicht). */
+export type TimeEntrySource = 'clock' | 'submitted';
+
 export const CONTRACT_TYPES: readonly ContractType[] = [
   'full_time',
   'part_time',
@@ -133,6 +136,8 @@ export interface Database {
           break_duration_minutes: number;
           note: string | null;
           is_approved: boolean;
+          /** Herkunft: clock = Stempeluhr, submitted = nachgereichte Arbeitszeit. */
+          source: TimeEntrySource;
           created_at: string;
           updated_at: string;
           client_updated_at: string | null;
@@ -146,6 +151,7 @@ export interface Database {
           break_duration_minutes?: number;
           note?: string | null;
           is_approved?: boolean;
+          source?: TimeEntrySource;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -159,6 +165,7 @@ export interface Database {
           break_duration_minutes?: number;
           note?: string | null;
           is_approved?: boolean;
+          source?: TimeEntrySource;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -671,6 +678,7 @@ export interface Database {
     Enums: {
       user_role: UserRole;
       contract_type: ContractType;
+      time_entry_source: TimeEntrySource;
       time_off_type: 'vacation' | 'sick_leave' | 'unpaid' | 'compensatory';
       time_off_status: 'pending' | 'approved' | 'rejected';
       object_category: ObjectCategory;
