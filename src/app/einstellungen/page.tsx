@@ -14,8 +14,8 @@ export default async function EinstellungenPage() {
 
   const admin = getSupabaseAdmin();
 
-  // Eigene Passkeys.
-  const { data: passkeys } = await admin
+  // Eigene Passkeys (lädt parallel zu den Admin-Queries – ein Roundtrip weniger).
+  const passkeysPromise = admin
     .from("passkeys")
     .select("id, created_at, last_used_at")
     .eq("user_id", user.id)
@@ -37,13 +37,20 @@ export default async function EinstellungenPage() {
     object_ids: string[];
   }[] = [];
   let objects: { id: string; name: string }[] = [];
+  let passkeys: {
+    id: string;
+    created_at: string;
+    last_used_at: string | null;
+  }[] = [];
   if (isAdmin(user)) {
-    const [{ data: profileData }, { data: objectData }, { data: assignmentData }] =
+    const [{ data: profileData }, { data: objectData }, { data: assignmentData }, { data: passkeysData }] =
       await Promise.all([
         admin.from("profiles").select("id, name, role, email, created_at, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
         admin.from("objects").select("id, name").order("name"),
         admin.from("object_assignments").select("user_id, object_id"),
+        passkeysPromise,
       ]);
+    passkeys = passkeysData ?? [];
     const objectIdsByUser = new Map<string, string[]>();
     for (const assignment of assignmentData ?? []) {
       const list = objectIdsByUser.get(assignment.user_id) ?? [];
@@ -64,6 +71,9 @@ export default async function EinstellungenPage() {
       object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
     objects = (objectData ?? []).map((o) => ({ id: o.id, name: o.name }));
+  } else {
+    const { data: passkeysData } = await passkeysPromise;
+    passkeys = passkeysData ?? [];
   }
 
   return (

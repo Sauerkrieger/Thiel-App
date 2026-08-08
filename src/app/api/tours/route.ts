@@ -61,13 +61,39 @@ export async function GET(request: Request) {
 
     // Stopps + Objektnamen für alle Touren laden (separate Queries, da die
     // verschachtelte Relation in den handgeschriebenen Typen nicht existiert).
+    // Performance: Stopps und Fahrernamen sind voneinander unabhängig und
+    // laufen parallel (ein Supabase-Roundtrip weniger).
     const tourIds = tours.map((t) => t.id);
-    const { data: stops, error: stopsError } = await getSupabaseAdmin()
-      .from("tour_stops")
-      .select("tour_id, object_id, is_delivered, key_number")
-      .in("tour_id", tourIds)
-      .order("stop_order");
+    const driverIds = [
+      ...new Set(
+        tours
+          .map((t) => t.driver_id)
+          .filter((id): id is string => typeof id === "string"),
+      ),
+    ];
+    const profilesPromise: PromiseLike<{
+      data: { id: string; name: string }[] | null;
+      error: { message: string } | null;
+    }> =
+      driverIds.length > 0
+        ? getSupabaseAdmin()
+            .from("profiles")
+            .select("id, name")
+            .in("id", driverIds)
+        : Promise.resolve({ data: null, error: null });
+    const [stopsResult, profilesResult] = await Promise.all([
+      getSupabaseAdmin()
+        .from("tour_stops")
+        .select("tour_id, object_id, is_delivered, key_number")
+        .in("tour_id", tourIds)
+        .order("stop_order"),
+      profilesPromise,
+    ]);
+    const { data: stops, error: stopsError } = stopsResult;
     if (stopsError) throw stopsError;
+    const { data: profiles, error: profilesError } = profilesResult;
+    if (profilesError) throw profilesError;
+    const nameById = new Map((profiles ?? []).map((p) => [p.id, p.name]));
 
     const objectIds = [
       ...new Set((stops ?? []).map((s) => s.object_id)),
@@ -89,23 +115,6 @@ export async function GET(request: Request) {
       (objectRows ?? []).map((o) => [o.id, o.customer ?? ""]),
     );
 
-    // Fahrernamen (driver_id -> profiles.name) laden.
-    const driverIds = [
-      ...new Set(
-        tours
-          .map((t) => t.driver_id)
-          .filter((id): id is string => typeof id === "string"),
-      ),
-    ];
-    const { data: profiles, error: profilesError } = driverIds.length
-      ? await getSupabaseAdmin()
-          .from("profiles")
-          .select("id, name")
-          .in("id", driverIds)
-      : { data: [], error: null };
-    if (profilesError) throw profilesError;
-    const nameById = new Map((profiles ?? []).map((p) => [p.id, p.name]));
-
     const stopsByTour = new Map<string, typeof stops>();
     for (const stop of stops ?? []) {
       const list = stopsByTour.get(stop.tour_id) ?? [];
@@ -121,6 +130,7 @@ export async function GET(request: Request) {
         date: tour.date,
         status: tour.status,
         start_time: tour.start_time,
+        driver_id: tour.driver_id,
         driver_name: tour.driver_id ? nameById.get(tour.driver_id) ?? null : null,
         delivered_objects: delivered
           .map((s) => nameByObjectId.get(s.object_id))

@@ -480,6 +480,10 @@ function UsersSection({
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // Lösch-Bestätigung für einen Benutzer (gestalteter Dialog)
+  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Soll-Werte des neuen Benutzers (Auto-Fill je Vertragsart, custom manuell).
   const [weeklyTargetHours, setWeeklyTargetHours] = useState("40");
   const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState("5");
@@ -747,16 +751,25 @@ function UsersSection({
     }
   }
 
-  async function handleDelete(id: string, name: string) {
-    if (!confirm(`Nutzer „${name}“ wirklich löschen?`)) return;
-    const res = await offlineFetch(`/api/auth/users/${id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      toast.error(data.error ?? "Nutzer konnte nicht gelöscht werden.");
-      return;
+  /** Löscht den im Dialog bestätigten Benutzer. */
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await offlineFetch(`/api/auth/users/${deleteTarget.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Nutzer konnte nicht gelöscht werden.");
+        return;
+      }
+      toast.success(`Nutzer „${deleteTarget.name}“ gelöscht.`);
+      setDeleteTarget(null);
+      onChanged();
+    } catch {
+      toast.error("Nutzer konnte nicht gelöscht werden.");
+    } finally {
+      setDeleting(false);
     }
-    toast.success(`Nutzer „${name}“ gelöscht.`);
-    onChanged();
   }
 
   return (
@@ -1005,7 +1018,7 @@ function UsersSection({
                     variant="ghost"
                     size="sm"
                     className="text-destructive hover:text-destructive"
-                    onClick={() => handleDelete(u.id, u.name)}
+                    onClick={() => setDeleteTarget(u)}
                   >
                     <Trash2 />
                   </Button>
@@ -1128,6 +1141,26 @@ function UsersSection({
             <Button onClick={() => void handleContractEditSave()} disabled={editContractSaving}>
               {editContractSaving ? <Loader2 className="animate-spin" /> : null}
               Speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lösch-Bestätigung (gestalteter Dialog statt window.confirm) */}
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5 text-destructive" /> Benutzer löschen?</DialogTitle>
+            <DialogDescription>
+              „{deleteTarget?.name}“ (@{deleteTarget?.username}) wird dauerhaft gelöscht. Der Zugang kann danach nicht wiederhergestellt werden.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Abbrechen
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
+              {deleting ? "Wird gelöscht…" : "Löschen"}
             </Button>
           </DialogFooter>
         </DialogContent>

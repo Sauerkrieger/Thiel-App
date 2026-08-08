@@ -75,6 +75,7 @@ const CACHEABLE_GETS: ReadonlyArray<{
   { pattern: /^\/api\/tours\/[^/]+$/, tables: ["active_tours", "tour_stops", "objects"] },
   { pattern: /^\/api\/auth\/users$/, tables: ["profiles"] },
   { pattern: /^\/api\/time-tracking\/clock$/, tables: ["time_entries"] },
+  { pattern: /^\/api\/time-tracking\/review$/, tables: ["time_entries"] },
   { pattern: /^\/api\/time-tracking\/entries$/, tables: ["time_entries"] },
   { pattern: /^\/api\/time-tracking\/requests$/, tables: ["time_off_requests"] },
   { pattern: /^\/api\/time-tracking\/summary$/, tables: ["profiles", "time_entries", "time_off_requests"] },
@@ -220,6 +221,31 @@ async function cacheRowsOf(table: SyncTable): Promise<Record<string, unknown>[]>
 }
 
 /**
+ * Entfernt Admin-Info-Felder aus Objekt-Zeilen, die der aktuellen Rolle
+ * online nicht zustehen (Kunde/Kundennummer/Reinigungsturnus nur Admin;
+ * Letzte-Belieferung-Info nicht für Reinigungskräfte). Notwendig, weil der
+ * IndexedDB-Cache auf geteilten Geräten auch vollständige Admin-Zeilen
+ * enthalten kann – der Offline-Read muss dann genauso filtern wie die
+ * Online-API.
+ */
+function sanitizeObjectRow(
+  obj: Record<string, unknown>,
+): Record<string, unknown> {
+  const role = getCurrentUserRole();
+  if (role === "admin") return obj;
+  const out = { ...obj };
+  delete out.customer;
+  delete out.customer_number;
+  delete out.cleaning_interval;
+  if (role === "facility_manager") {
+    delete out.last_delivery_at;
+    delete out.last_delivery_driver_name;
+    delete out.last_delivery_items;
+  }
+  return out;
+}
+
+/**
  * Zugewiesene Objekt-IDs der aktuellen Reinigungskraft aus localStorage
  * (leer, wenn keine gespeichert sind – dann darf nichts offline gelesen
  * werden, siehe Filter in readOffline).
@@ -351,6 +377,7 @@ async function cacheResponse(
         date: tour.date,
         status: tour.status,
         start_time: tour.start_time,
+        driver_id: tour.driver_id,
         driver_name: tour.driver_name,
         created_at: tour.created_at,
         key_numbers: tour.key_numbers,
@@ -402,6 +429,16 @@ async function cacheResponse(
         }
       }
     }
+    return;
+  }
+  if (path === "/api/time-tracking/review") {
+    // Prüfbedürftige Stempelungen cachen, damit das Zwangspopup
+    // „Vergessen auszustempeln?“ auch offline erscheint (die Einreichung
+    // ist über PATCH /api/time-tracking/entries/[id] bereits offline-fähig).
+    await cacheRows(
+      "time_entries",
+      stripProfiles((Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>),
+    );
     return;
   }
   if (path === "/api/time-tracking/entries") {
@@ -469,7 +506,7 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     }
     return jsonResponse(200, {
       objects: objects.map((obj) => ({
-        ...obj,
+        ...sanitizeObjectRow(obj),
         object_items: itemsByObject.get(String(obj.id)) ?? [],
       })),
     });
@@ -487,7 +524,9 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     const items = (await cacheRowsOf("object_items")).filter(
       (row) => row.object_id === id,
     );
-    return jsonResponse(200, { object: { ...obj, object_items: items } });
+    return jsonResponse(200, {
+      object: { ...sanitizeObjectRow(obj), object_items: items },
+    });
   }
 
   if (/^\/api\/objects\/[^/]+\/items$/.test(path)) {
@@ -567,7 +606,18 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   }
 
   if (path === "/api/tours") {
-    const tours = (await cacheRowsOf("active_tours")).sort((a, b) => {
+    let tours = await cacheRowsOf("active_tours");
+    // Fahrer/Springer sehen offline nur ihre eigenen Touren – analog zur
+    // Online-API (eq driver_id). Ohne driver_id (eigene, noch nicht
+    // synchronisierte Offline-Tour) wird die Tour mit einbezogen.
+    const role = getCurrentUserRole();
+    if (role !== "admin") {
+      const myId = getCurrentUserId();
+      tours = tours.filter(
+        (t) => t.driver_id === myId || t.driver_id == null,
+      );
+    }
+    tours.sort((a, b) => {
       const dateCmp = String(b.date ?? "").localeCompare(String(a.date ?? ""));
       if (dateCmp !== 0) return dateCmp;
       return String(b.created_at ?? "").localeCompare(
@@ -578,6 +628,8 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     const objects = await cacheRowsOf("objects");
     const profiles = await cacheRowsOf("profiles");
     const objectName = new Map(objects.map((o) => [o.id, o.name]));
+    const objectAddress = new Map(objects.map((o) => [o.id, o.address]));
+    const objectCustomer = new Map(objects.map((o) => [o.id, o.customer]));
     const driverName = new Map(profiles.map((p) => [p.id, p.name]));
     const history = tours.map((tour) => {
       const tourStops = stops
@@ -598,6 +650,15 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         delivered_objects: delivered
           .map((s) => objectName.get(s.object_id as string))
           .filter((n): n is string => typeof n === "string"),
+        // Parallel zu delivered_objects – gleiche Reihenfolge wie in der
+        // Online-API, damit die Historie-Suche (Adresse/Kunde) auch offline
+        // genauso funktioniert.
+        delivered_addresses: delivered
+          .map((s) => objectAddress.get(s.object_id as string))
+          .filter((a): a is string => typeof a === "string" && a.length > 0),
+        delivered_customers: delivered
+          .map((s) => objectCustomer.get(s.object_id as string))
+          .filter((c): c is string => typeof c === "string" && c.length > 0),
         delivered_count: delivered.length,
         key_numbers: [...new Set(
           tourStops
@@ -614,6 +675,16 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     const id = params.id;
     const tour = (await cacheRowsOf("active_tours")).find((row) => row.id === id);
     if (!tour) {
+      return jsonResponse(404, { error: "Tour nicht gefunden." });
+    }
+    // Nicht-Admins dürfen offline keine fremden Touren lesen (analog zu
+    // assertTourAccess in der Online-API).
+    const detailRole = getCurrentUserRole();
+    if (
+      detailRole !== "admin" &&
+      typeof tour.driver_id === "string" &&
+      tour.driver_id !== getCurrentUserId()
+    ) {
       return jsonResponse(404, { error: "Tour nicht gefunden." });
     }
     const stops = (await cacheRowsOf("tour_stops"))
@@ -658,6 +729,25 @@ async function readOffline(req: OfflineRead): Promise<Response> {
       .filter((row) => row.user_id === userId && row.clock_out == null)
       .sort((a, b) => String(b.clock_in ?? "").localeCompare(String(a.clock_in ?? "")))[0] ?? null;
     return jsonResponse(200, { entry });
+  }
+
+  if (path === "/api/time-tracking/review") {
+    // Analog zur Online-Route: nur ungelöste, prüfbedürftige und noch OFFENE
+    // Stempelungen des Nutzers (der Server markiert Überfällige online über
+    // flagOverdueTimeEntries – offline wird der zuletzt gecachte Stand gezeigt).
+    const userId = getCurrentUserId();
+    const rows = (await cacheRowsOf("time_entries"))
+      .filter(
+        (row) =>
+          row.user_id === userId &&
+          row.requires_review === true &&
+          row.is_approved === false &&
+          row.clock_out == null,
+      )
+      .sort((a, b) =>
+        String(a.clock_in ?? "").localeCompare(String(b.clock_in ?? "")),
+      );
+    return jsonResponse(200, { entries: rows });
   }
 
   if (path === "/api/time-tracking/entries") {

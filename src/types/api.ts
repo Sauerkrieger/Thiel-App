@@ -347,6 +347,8 @@ export type TourHistoryItem = {
   date: string;
   status: "packing" | "in_transit" | "completed";
   start_time: string | null;
+  /** Id der Person, die die Tour geplant/gefahren hat (für Offline-Filterung). */
+  driver_id: string | null;
   /** Name der Person, die die Tour geplant/gefahren hat. */
   driver_name: string | null;
   /** Namen der belieferten Objekte. */

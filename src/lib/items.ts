@@ -77,9 +77,12 @@ function normalizeInventoryName(value: string): string {
   return value
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    // Wie in normalizeItemName: echte Unicode-Decompose-Markierungen
+    // entfernen (keine doppelten Backslash-Escapes – die hätten nur
+    // Literal-Zeichen wie "u"/"f" entfernt und Whitespace nie gekürzt).
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/ß/g, "ss")
-    .replace(/\\s+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 

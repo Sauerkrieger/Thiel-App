@@ -116,6 +116,10 @@ function employeeStatusBadge(entry: TimeEntry | null) {
 export function AdminTimeTrackingPage() {
   const [role, setRole] = useState("all");
   const [query, setQuery] = useState("");
+  // Debounce: Die Freitext-Suche soll nicht bei jedem Tastendruck einen
+  // kompletten Server-Request + Cache-Read auslösen, sondern erst, wenn der
+  // Nutzer kurz pausiert (gleiche Filterung, nur sparsamer).
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -138,6 +142,10 @@ export function AdminTimeTrackingPage() {
   // Änderungshistorie (Audit-Log) eines Eintrags
   const [auditEntry, setAuditEntry] = useState<OverviewEntry | null>(null);
 
+  // Lösch-Bestätigung für einen Stempel-Eintrag (gestalteter Dialog)
+  const [deleteTarget, setDeleteTarget] = useState<OverviewEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Live-Ticker für die Dauer-Anzeige im Prüfbedarf-Abschnitt
   const [now, setNow] = useState(() => Date.now());
 
@@ -146,7 +154,7 @@ export function AdminTimeTrackingPage() {
   const load = useCallback(async (fresh = false) => {
     const params = new URLSearchParams();
     if (role !== "all") params.set("role", role);
-    if (query.trim()) params.set("q", query.trim());
+    if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
     const url = `/api/admin/time-tracking/overview?${params.toString()}`;
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached) {
@@ -163,9 +171,15 @@ export function AdminTimeTrackingPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Übersicht konnte nicht geladen werden.");
     } finally { setLoading(false); }
-  }, [role, query]);
+  }, [role, debouncedQuery]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Debounce der Freitext-Suche (siehe oben): sobald der Nutzer kurz pausiert.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 350);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   async function approveEntry(entry: TimeEntry, approved: boolean) {
     setSaving(entry.id);
@@ -177,16 +191,18 @@ export function AdminTimeTrackingPage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
-  async function deleteEntry(entry: TimeEntry) {
-    if (!window.confirm("Diesen Stempel-Eintrag wirklich löschen?")) return;
-    setSaving(entry.id);
+  /** Löscht den im Dialog bestätigten Stempel-Eintrag. */
+  async function deleteEntry() {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      const res = await offlineFetch(`/api/admin/time-tracking/entries/${entry.id}`, { method: "DELETE" });
+      const res = await offlineFetch(`/api/admin/time-tracking/entries/${deleteTarget.id}`, { method: "DELETE" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Eintrag konnte nicht gelöscht werden.");
       toast.success("Eintrag gelöscht.");
+      setDeleteTarget(null);
       await load(true);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht gelöscht werden."); } finally { setSaving(null); }
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht gelöscht werden."); } finally { setDeleting(false); }
   }
 
   /** Öffnet den „Ausstempeln & Freigeben“-Dialog für eine offene Stempelung. */
@@ -413,9 +429,9 @@ export function AdminTimeTrackingPage() {
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-3"><span>Monatsübersicht</span><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="h-9 w-44" aria-label="Monat wählen" /></CardTitle><CardDescription>Gesamtarbeitszeit aller Mitarbeiter im gewählten Monat (freigegebene, abgeschlossene Einträge).</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Mitarbeiter</TableHead><TableHead>Rolle</TableHead><TableHead className="text-right">Tage</TableHead><TableHead className="text-right">Arbeitszeit</TableHead></TableRow></TableHeader><TableBody>{monthRows.map((row) => <TableRow key={row.employee.id}><TableCell className="font-medium">{row.employee.name}</TableCell><TableCell className="text-muted-foreground">{ROLE_LABELS[row.employee.role] ?? row.employee.role}</TableCell><TableCell className="text-right">{row.days}</TableCell><TableCell className="text-right font-mono">{minutesToLabel(row.total)}</TableCell></TableRow>)}</TableBody><TableFooter><TableRow><TableCell colSpan={3}>Gesamt ({monthRows.length} Mitarbeiter)</TableCell><TableCell className="text-right font-mono">{minutesToLabel(monthTotal)}</TableCell></TableRow></TableFooter></Table></CardContent></Card>
 
-        <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Prüfbedarf</CardTitle><CardDescription>Vergessene Ausstempelungen – offene Stempelungen, die automatisch markiert wurden (12 h überschritten oder Mitternacht erreicht). Die Dauer zählt live mit.</CardDescription></CardHeader><CardContent className="space-y-3">{reviewEntries.length === 0 ? <p className="text-sm text-muted-foreground">Keine offenen Prüfbedarf-Einträge.</p> : reviewEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />{entry.profiles?.name ?? entry.user_id}<Badge variant="warning">Prüfbedarf</Badge></p><p className="text-xs text-muted-foreground">Eingestempelt am {new Date(entry.clock_in).toLocaleDateString("de-DE")} um {timeLabel(entry.clock_in)} Uhr · läuft seit {liveDurationLabel(entry, now)}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => openCloseEntry(entry)} disabled={saving === entry.id}><Timer /> Ausstempeln &amp; Freigeben</Button><Button size="sm" variant="outline" onClick={() => void deleteEntry(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}</CardContent></Card>
+        <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Prüfbedarf</CardTitle><CardDescription>Vergessene Ausstempelungen – offene Stempelungen, die automatisch markiert wurden (12 h überschritten oder Mitternacht erreicht). Die Dauer zählt live mit.</CardDescription></CardHeader><CardContent className="space-y-3">{reviewEntries.length === 0 ? <p className="text-sm text-muted-foreground">Keine offenen Prüfbedarf-Einträge.</p> : reviewEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />{entry.profiles?.name ?? entry.user_id}<Badge variant="warning">Prüfbedarf</Badge></p><p className="text-xs text-muted-foreground">Eingestempelt am {new Date(entry.clock_in).toLocaleDateString("de-DE")} um {timeLabel(entry.clock_in)} Uhr · läuft seit {liveDurationLabel(entry, now)}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => openCloseEntry(entry)} disabled={saving === entry.id}><Timer /> Ausstempeln &amp; Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}</CardContent></Card>
 
-        <Card className="mt-6"><CardHeader><CardTitle>Freigabe-Feed</CardTitle><CardDescription>Nachgereichte Arbeitszeiten und Anträge prüfen.</CardDescription></CardHeader><CardContent className="space-y-3">{pendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Nachgereichte Arbeitszeit · ${entry.profiles?.name ?? entry.user_id}` : `Vergessene Ausstempelung · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Ausstehend</Badge></p><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleDateString("de-DE")} · {timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "offen"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}{entry.clock_out ? ` · ${minutesToLabel(workedMinutesOf(entry))}` : ""}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Freigeben</Button><Button size="sm" variant="outline" onClick={() => void deleteEntry(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}
+        <Card className="mt-6"><CardHeader><CardTitle>Freigabe-Feed</CardTitle><CardDescription>Nachgereichte Arbeitszeiten und Anträge prüfen.</CardDescription></CardHeader><CardContent className="space-y-3">{pendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Nachgereichte Arbeitszeit · ${entry.profiles?.name ?? entry.user_id}` : `Vergessene Ausstempelung · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Ausstehend</Badge></p><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleDateString("de-DE")} · {timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "offen"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}{entry.clock_out ? ` · ${minutesToLabel(workedMinutesOf(entry))}` : ""}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}
       {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Ausstehend</Badge></p><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("de-DE")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("de-DE")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => void reviewRequest(request, "approved")} disabled={saving === request.id}>Genehmigen</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected")} disabled={saving === request.id}>Ablehnen</Button></div></div>)}{pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">Keine offenen Freigaben.</p>}</CardContent></Card>
 
         <Dialog open={selectedEmployee !== null} onOpenChange={(open) => { if (!open) setSelectedEmployee(null); }}>
@@ -474,6 +490,20 @@ export function AdminTimeTrackingPage() {
             <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
               {!auditEntry?.audit_logs?.length ? <p className="text-sm text-muted-foreground">Keine Änderungen protokolliert.</p> : auditEntry.audit_logs.map((log) => <div key={log.id} className="rounded-lg border p-3 text-sm"><p className="flex flex-wrap items-center gap-1.5 font-medium"><History className="h-3.5 w-3.5 text-muted-foreground" />{formatAuditDate(log.changed_at)} · von {log.changed_by_name ?? "unbekannt"}{log.change_reason ? <Badge variant="secondary">{log.change_reason}</Badge> : null}</p><div className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">{Object.entries(AUDIT_FIELD_LABELS).map(([key, label]) => { const oldV = log.old_values?.[key]; const newV = log.new_values?.[key]; if (auditValueLabel(key, oldV) === auditValueLabel(key, newV)) return null; return <p key={key}><span className="font-medium text-foreground">{label}:</span> {auditValueLabel(key, oldV)} → {auditValueLabel(key, newV)}</p>; })}</div></div>)}
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Lösch-Bestätigung (gestalteter Dialog statt window.confirm) */}
+        <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5 text-destructive" /> Stempel-Eintrag löschen?</DialogTitle>
+              <DialogDescription>{deleteTarget ? `Der Eintrag von ${deleteTarget.profiles?.name ?? deleteTarget.user_id} am ${new Date(deleteTarget.clock_in).toLocaleDateString("de-DE")} (${timeLabel(deleteTarget.clock_in)} – ${deleteTarget.clock_out ? timeLabel(deleteTarget.clock_out) : "offen"}) wird dauerhaft gelöscht.` : ""}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>Abbrechen</Button>
+              <Button variant="destructive" onClick={() => void deleteEntry()} disabled={deleting}>{deleting ? "Wird gelöscht…" : "Löschen"}</Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </> : null}
