@@ -17,7 +17,7 @@ import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } f
 import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeEntryAuditLog, TimeOffRequest } from "@/types/time-tracking";
 
-type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; weekly_target_hours: number | null; vacation_days_per_year: number | null; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
+type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; weekly_target_hours: number | null; working_days_per_week: number | null; vacation_days_per_year: number | null; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
 type OverviewEntry = TimeEntry & { profiles?: { name?: string; role?: string } | null; audit_logs?: TimeEntryAuditLog[] };
 type Overview = { employees: Employee[]; entries: OverviewEntry[]; requests: (TimeOffRequest & { profiles?: { name?: string; role?: string } | null })[] };
 
@@ -335,16 +335,40 @@ export function AdminTimeTrackingPage() {
     return { auto, correction, total: auto + correction };
   }
 
-  /** Vertrags-Label inkl. Details bei Individuell (z. B. „Individuell · 35 h/Woche“). */
+  /**
+   * Vertrags-Label inkl. Details (z. B. „Vollzeit · 5 Tage/Woche“ oder
+   * „Individuell · 35 h/Woche · 4 Tage/Woche“).
+   */
   function contractLabel(employee: Employee): string {
     const label = CONTRACT_LABELS[employee.contract_type ?? "full_time"] ?? "Vollzeit";
+    const days =
+      typeof employee.working_days_per_week === "number"
+        ? employee.working_days_per_week
+        : null;
+    const parts = [label];
     if (
       employee.contract_type === "custom" &&
       typeof employee.weekly_target_hours === "number"
     ) {
-      return `${label} · ${employee.weekly_target_hours} h/Woche`;
+      parts.push(`${employee.weekly_target_hours} h/Woche`);
     }
-    return label;
+    if (days !== null) parts.push(`${days} Tage/Woche`);
+    return parts.join(" · ");
+  }
+
+  /** Vertrags-Detailzeile für den Konto-Dialog (Soll, Arbeitstage, Urlaub). */
+  function contractDetailsLine(employee: Employee): string {
+    const weekly =
+      typeof employee.weekly_target_hours === "number"
+        ? `${employee.weekly_target_hours} h`
+        : "–";
+    const days =
+      typeof employee.working_days_per_week === "number"
+        ? `${employee.working_days_per_week} Tage`
+        : "–";
+    const vacation =
+      employee.vacation_days_per_year ?? employee.vacation_days_total ?? 0;
+    return `Soll ${weekly}/Woche · ${days}/Woche · Urlaub ${vacation} Tage/Jahr`;
   }
 
   /** Resturlaub eines Mitarbeiters (Jahresanspruch minus genutzte Tage). */
@@ -414,7 +438,7 @@ export function AdminTimeTrackingPage() {
                   <div className="space-y-1.5"><Label htmlFor="edit-overtime">Korrektur Überstunden (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)}</p>
-                <p className="mt-2 text-xs text-muted-foreground">Urlaubsanspruch: {(selectedEmployee.vacation_days_per_year ?? selectedEmployee.vacation_days_total ?? 0)} Tage/Jahr ({selectedEmployee.vacation_days_used ?? 0} genutzt). Der neue Resturlaub wird in den Jahresanspruch umgerechnet.</p>
+                <p className="mt-2 text-xs text-muted-foreground">{contractDetailsLine(selectedEmployee)} · {selectedEmployee.vacation_days_used ?? 0} Urlaubstage genutzt. Der neue Resturlaub wird in den Jahresanspruch umgerechnet.</p>
                 <DialogFooter className="mt-4 sm:justify-end"><Button onClick={() => void saveAccount()} disabled={savingAccount}>{savingAccount ? "Wird gespeichert…" : "Speichern"}</Button></DialogFooter>
               </div>
             </div>}
