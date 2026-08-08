@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser, isAdmin } from "@/lib/auth";
-import { loadProfileRefs } from "@/lib/time-tracking";
+import { auditSnapshotOf, loadProfileRefs, logTimeEntryChange } from "@/lib/time-tracking";
+import { enforcedBreakMinutes } from "@/lib/time-format";
 import { parseClientUpdatedAt } from "@/lib/lww";
 import type { Database } from "@/types/database";
 import type { TimeEntry } from "@/types/time-tracking";
@@ -127,6 +128,8 @@ export async function POST(request: Request) {
       }
       breakDuration = value;
     }
+    // Mindestpause nach § 4 ArbZG ergänzen (Anwesenheitszeit > 6 / > 9 h).
+    breakDuration = enforcedBreakMinutes(clockIn, clockOut, breakDuration);
     const note =
       typeof body.note === "string" && body.note.trim()
         ? body.note.trim().slice(0, MAX_NOTE_LENGTH)
@@ -158,13 +161,26 @@ export async function POST(request: Request) {
       payload.client_updated_at = clientUpdatedAt;
     }
 
-    const { data, error } = await getSupabaseAdmin()
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
       .from("time_entries")
       .insert(payload)
       .select("*")
       .single();
     if (error) throw error;
-    return NextResponse.json({ entry: data as TimeEntry }, { status: 201 });
+
+    // Revisionssicheres Änderungsprotokoll: nachgereichte Arbeitszeit durch den
+    // Mitarbeiter wird protokolliert (Anlage des Eintrags).
+    const created = data as TimeEntry;
+    await logTimeEntryChange(supabase, {
+      timeEntryId: created.id,
+      changedByUserId: auth.user.id,
+      oldValues: null,
+      newValues: auditSnapshotOf(created),
+      changeReason: "Arbeitszeit nachgereicht",
+    });
+
+    return NextResponse.json({ entry: created }, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);
   }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
-import { requireUser } from "@/lib/auth";
+import { isAdmin, requireUser } from "@/lib/auth";
 import {
   applyLww,
   ownsTourStop,
@@ -9,6 +9,12 @@ import {
   prepareSyncEntry,
   type PreparedSyncEntry,
 } from "@/lib/lww";
+import {
+  auditSnapshotOf,
+  logTimeEntryChange,
+  type TimeEntryAuditSnapshot,
+} from "@/lib/time-tracking";
+import type { Database } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +126,28 @@ export async function POST(request: Request) {
           }
         }
 
+        // Revisionssicheres Audit-Log: Offline eingereihte Änderungen an
+        // Zeiteinträgen werden mit Vorher/Nachher protokolliert – Admin-
+        // Korrekturen UND Nachreichungen durch Mitarbeiter (source = submitted).
+        const employeeSubmission =
+          !isAdmin(auth.user) && prepared.data.source === "submitted";
+        let auditOld: TimeEntryAuditSnapshot | null = null;
+        if (
+          prepared.table === "time_entries" &&
+          (isAdmin(auth.user) || employeeSubmission)
+        ) {
+          const existing = await supabase
+            .from("time_entries")
+            .select("*")
+            .eq("id", prepared.id)
+            .maybeSingle();
+          if (!existing.error && existing.data) {
+            auditOld = auditSnapshotOf(
+              existing.data as Database["public"]["Tables"]["time_entries"]["Row"],
+            );
+          }
+        }
+
         const outcome = await applyLww(
           supabase,
           prepared.table,
@@ -127,6 +155,31 @@ export async function POST(request: Request) {
           prepared.client_updated_at,
           prepared.data,
         );
+
+        // Auch neu angelegte Nachreichungen (offline POST entries, neuer
+        // Datensatz ohne Vorher-Zustand) werden protokolliert – dafür darf
+        // auditOld null sein. Bei Updates wird nur bei echter Änderung geloggt.
+        if (
+          prepared.table === "time_entries" &&
+          (isAdmin(auth.user) || employeeSubmission) &&
+          outcome.applied &&
+          (auditOld || employeeSubmission)
+        ) {
+          const auditNew = auditSnapshotOf(
+            outcome.record as Database["public"]["Tables"]["time_entries"]["Row"],
+          );
+          if (!auditOld || JSON.stringify(auditOld) !== JSON.stringify(auditNew)) {
+            await logTimeEntryChange(supabase, {
+              timeEntryId: prepared.id,
+              changedByUserId: auth.user.id,
+              oldValues: auditOld,
+              newValues: auditNew,
+              changeReason: isAdmin(auth.user)
+                ? "Offline-Änderung (Sync)"
+                : "Vergessene Ausstempelung nachgereicht (Offline)",
+            });
+          }
+        }
 
         // serverRecord immer mitsenden: Der Client übernimmt ihn als
         // Quelle der Wahrheit (inkl. evtl. abweichender Server-Id, z. B.

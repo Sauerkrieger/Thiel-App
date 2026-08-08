@@ -24,6 +24,35 @@ export function workedMinutesOf(entry: ClockedEntryLike): number {
 }
 
 /**
+ * Gesetzliche Mindestpause nach § 4 ArbZG in Minuten, abhängig von der
+ * Anwesenheitszeit (clock_out − clock_in):
+ * - mehr als 6 bis 9 Stunden → 30 Minuten
+ * - mehr als 9 Stunden → 45 Minuten
+ */
+export function requiredBreakMinutes(clockIn: string, clockOut: string): number {
+  const start = Date.parse(clockIn);
+  const end = Date.parse(clockOut);
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return 0;
+  // Math.floor, damit die Grenzen exakt zum SQL-Trigger (floor(epoch/60)) passen.
+  const presence = Math.floor((end - start) / 60000);
+  if (presence > 9 * 60) return 45;
+  if (presence > 6 * 60) return 30;
+  return 0;
+}
+
+/**
+ * Ergänzt die erfasste Pause auf die gesetzliche Mindestpause (§ 4 ArbZG).
+ * Die Netto-Arbeitszeit bleibt (clock_out − clock_in) − Pause (workedMinutesOf).
+ */
+export function enforcedBreakMinutes(
+  clockIn: string,
+  clockOut: string,
+  entered: number,
+): number {
+  return Math.max(Math.max(0, Math.round(entered)), requiredBreakMinutes(clockIn, clockOut));
+}
+
+/**
  * Minuten als echte Stunden & Minuten, z. B. 1153 → "19:13 h".
  * Ein negatives Vorzeichen bleibt erhalten (z. B. "-1:30 h").
  */

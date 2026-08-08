@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { requireUser } from "@/lib/auth";
+import { flagOverdueTimeEntries } from "@/lib/time-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,8 @@ export async function GET() {
 
   try {
     const supabase = getSupabaseAdmin();
+    // Überfällige offene Stempelungen (12 h / Mitternacht) als prüfbedürftig markieren.
+    await flagOverdueTimeEntries(supabase);
     const [{ data: profile, error: profileError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }] = await Promise.all([
       supabase
         .from("profiles")

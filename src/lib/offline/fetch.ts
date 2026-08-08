@@ -977,6 +977,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
         break_duration_minutes: 0,
         note: null,
         is_approved: true,
+        requires_review: false,
         source: "clock",
       });
       return jsonResponse(201, { entry: { id, user_id: currentUserId, clock_in: eventAt, clock_out: null, break_duration_minutes: 0, note: null, is_approved: true, source: "clock" } });
@@ -1003,13 +1004,27 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     return jsonResponse(200, { request: { ...(existing?.data ?? {}), id: params.id, status: body.status } });
   }
 
+  // PATCH /api/admin/time-tracking/entries/[id] – Freigabe / aktives Ausstempeln (Admin)
   if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path) && method === "PATCH") {
     const existing = await getRecord("time_entries", params.id);
     await queueMutation("time_entries", params.id, {
       ...(existing?.data ?? {}),
-      is_approved: body.is_approved,
+      ...pick(body, TIME_ENTRY_FIELDS as readonly string[]),
     });
-    return jsonResponse(200, { entry: { ...(existing?.data ?? {}), id: params.id, is_approved: body.is_approved } });
+    return jsonResponse(200, { entry: { ...(existing?.data ?? {}), id: params.id, ...pick(body, TIME_ENTRY_FIELDS as readonly string[]) } });
+  }
+
+  // PATCH /api/time-tracking/entries/[id] – vergessene Ausstempelung nachreichen
+  if (/^\/api\/time-tracking\/entries\/[^/]+$/.test(path) && method === "PATCH") {
+    const existing = await getRecord("time_entries", params.id);
+    await queueMutation("time_entries", params.id, {
+      ...(existing?.data ?? {}),
+      ...pick(body, TIME_ENTRY_FIELDS as readonly string[]),
+      // Nachgereicht: wartet auf Freigabe (requires_review bleibt serverseitig).
+      is_approved: false,
+      source: "submitted",
+    });
+    return jsonResponse(200, { entry: { ...(existing?.data ?? {}), id: params.id, ...pick(body, TIME_ENTRY_FIELDS as readonly string[]), is_approved: false, source: "submitted" } });
   }
 
   if (path === "/api/time-tracking/requests" && method === "POST") {
@@ -1041,6 +1056,10 @@ function extractParams(path: string): Record<string, string> {
     out.id = segments[3];
     return out;
   }
+  if (segments[0] === "api" && segments[1] === "time-tracking" && segments[2] === "entries" && segments[3]) {
+    out.id = segments[3];
+    return out;
+  }
   if (segments[0] === "api" && segments[1] === "admin" && segments[2] === "time-tracking" && segments[3] === "entries" && segments[4]) {
     out.id = segments[4];
     return out;
@@ -1068,6 +1087,7 @@ function isQueueableMutation(path: string, method: string): boolean {
     /^\/api\/auth\/users\/[^/]+$/.test(path) ||
     path === "/api/time-tracking/clock" ||
     path === "/api/time-tracking/entries" ||
+    /^\/api\/time-tracking\/entries\/[^/]+$/.test(path) ||
     path === "/api/time-tracking/requests" ||
     /^\/api\/time-tracking\/requests\/[^/]+$/.test(path) ||
     /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)
@@ -1097,7 +1117,7 @@ function serverKeyFor(path: string, method: string): string | null {
   if (/^\/api\/tours\/[^/]+$/.test(path)) return "tour";
   if (/^\/api\/tours\/[^/]+\/stops\/[^/]+$/.test(path)) return "stop";
   if (path === "/api/time-tracking/clock") return "entry";
-  if (path === "/api/time-tracking/entries") return "entry";
+  if (path === "/api/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   if (/^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "request";
   if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   return null; // auth: me-profile/users → Antwort ist kein Tabellen-Row
@@ -1116,7 +1136,7 @@ function tableFor(path: string, method: string): SyncTable | null {
   if (path === "/api/auth/me-profile" || /^\/api\/auth\/users\/[^/]+$/.test(path)) {
     return "profiles";
   }
-  if (path === "/api/time-tracking/clock" || path === "/api/time-tracking/entries" || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
+  if (path === "/api/time-tracking/clock" || path === "/api/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path) || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
   if (path === "/api/time-tracking/requests" || /^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "time_off_requests";
   return null;
 }

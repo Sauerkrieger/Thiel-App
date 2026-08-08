@@ -14,6 +14,7 @@ Die App unterstützt den kompletten Arbeitsablauf einer Reinigungs-/Liefer-Rundt
 3. **Packen** – konsolidierte Packlisten je Objekt, Route auf der Karte
 4. **Ausliefern** – Stopps in optimierter Reihenfolge, Items vorab gecheckt, Belieferung abhaken
 5. **Historie & Einstellungen** – vergangene Touren, Profil, Passwort, Passkeys
+6. **Zeiterfassung & Urlaubsverwaltung** – Stempeluhr, Arbeitszeit-Nachreichung, Abwesenheitsanträge, Zeitadmin mit Prüfbedarf (Auto-Timeout für vergessene Ausstempelungen)
 
 Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 **Thiel Dienstleistungen** (Standard: *Sartoriusstraße 14, 97072 Würzburg*, per Env
@@ -37,13 +38,35 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
 **Enums:** `user_role` (`driver` | `admin` | `facility_manager` | `substitute`),
-`contract_type` (`full_time` | `part_time` | `mini_job`), `object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`).
+`contract_type` (`full_time` | `part_time` | `mini_job`), `object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`),
+`time_entry_source` (`clock` | `submitted`), `time_off_type` (`vacation` | `sick_leave` | `unpaid` | `compensatory`), `time_off_status` (`pending` | `approved` | `rejected`).
 
 ### `profiles` – Benutzerprofile (1:1 zu `auth.users`)
 - `id` (PK → auth.users, cascade), `name`, `role` (user_role, default `driver`), `email`, `created_at`, `updated_at`
 - `contract_type` (`full_time` | `part_time` | `mini_job`, default `full_time`) – Vertragsart, steuert das Soll im Überstundenkonto (40/20/10 h pro Woche, bewusst nicht angezeigt)
 - Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an
 - **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
+
+### `time_entries` – Arbeitszeit-Stempelungen
+- `id`, `user_id` (FK auth.users, cascade), `clock_in`, `clock_out` (nullable), `break_duration_minutes` (default 0), `note` (nullable)
+- `is_approved` (bool, default true) – Freigabestatus; `requires_review` (bool, default false) – Prüfbedarf (vergessene Ausstempelung)
+- `source` (`time_entry_source`): `clock` = Stempeluhr, `submitted` = nachgereichte Arbeitszeit
+- **Maximal EIN offener Eintrag pro Nutzer** (partieller Unique-Index `WHERE clock_out IS NULL`)
+- LWW-Offline-Felder (`client_updated_at`, `synced_at`) + `updated_at`-Trigger
+- **Auto-Timeout-Trigger `set_time_entry_review_flag`:** Offene Stempelungen, die **12 h** überschreiten ODER **Mitternacht (00:00, Europa/Berlin)** erreichen, werden automatisch `requires_review = true` + `is_approved = false`; normales Ausstempeln bzw. Admin-Freigabe setzt `requires_review` zurück
+- Housekeeping-Funktion `flag_overdue_time_entries()` markiert „im Stillen“ überfällige Einträge (läuft bei jedem Lese-/Schreibzugriff auf Zeitdaten)
+- **Min-Pausen-Trigger `enforce_min_break` (§ 4 ArbZG):** Bei jedem Schreibvorgang mit `clock_out` wird die Anwesenheitszeit geprüft und die erfasste Pause per `greatest(erfasst, Mindestpause)` auf das gesetzliche Minimum ergänzt – **> 6 bis 9 Std. → 30 Min., > 9 Std. → 45 Min.** (nie reduziert). Backfill hebt Bestandsdaten an. Netto-Arbeitszeit = `(clock_out − clock_in) − break_duration_minutes` (`workedMinutesOf`)
+
+### `time_entry_audit_logs` – Revisionssicheres Änderungsprotokoll
+- `id`, `time_entry_id` (FK time_entries, **`on delete set null`** – Protokoll überlebt das Löschen des Eintrags), `changed_by_user_id` (FK auth.users, `on delete set null`)
+- `changed_at` (timestamptz, default `now()`), `old_values` / `new_values` (jsonb – z. B. clock_in, clock_out, Pause, Freigabe-Status), `change_reason` (text – Notiz/Begründung)
+- Wird **serverseitig** geschrieben, wenn ein Admin eine Stempelung im Zeitadmin anpasst, schließt, freigibt oder löscht (inkl. Offline-Änderungen via `/api/sync`) – **und** wenn ein Mitarbeiter eine vergessene Ausstempelung nachreicht (Zwangspopup) oder Arbeitszeit nachträglich einreicht (online wie offline); No-op-Updates werden übersprungen
+- RLS: Lesen nur für Admins (`current_user_role() = 'admin'`), Schreiben nur über die Service-Rolle
+
+### `time_off_requests` – Abwesenheitsanträge
+- `id`, `user_id` (FK auth.users, cascade), `type` (`vacation` | `sick_leave` | `unpaid` | `compensatory`), `start_date`, `end_date`
+- `status` (`pending` | `approved` | `rejected`), `reviewer_note`, `employee_note`
+- LWW-Offline-Felder; Trigger verbucht genehmigte Urlaubstage auf das Konto (`vacation_days_used`)
 
 ### `objects` – Ziele/Treppenhäuser
 - `id`, `name`, `address`, `category`
@@ -105,7 +128,7 @@ die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „
 **Dreifache Absicherung:**
 1. **Middleware** (`src/middleware.ts`): schützt alle Routen außer `/login` + Passkey-Login-APIs. Seiten → Redirect auf `/login?next=…`; API-Routen → `401 UNAUTHENTICATED`
 2. **API-Guards**: jede Route prüft `requireUser()` + Rollenprüfung (`isAdmin`/`isPlanner`/`isFacilityManager`), zusätzlich Tour-Owner-Check. **Reinigungskraft:** `/api/objects*` liefert nur zugewiesene Objekte (ohne Letzte-Belieferung-Felder), Item-/Foto-/Pack-Info-Endpunkte sind auf zugewiesene Objekte begrenzt und schreibgeschützt (403)
-3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer; `objects`/`object_items` rollenbewusst (Reinigungskräfte nur zugewiesene Zeilen, Schreiben nur Admins); `object_assignments` Admin-verwaltet mit Eigen-Lese-Recht
+3. **RLS** in der Datenbank (`auth.uid()` / `current_user_role()`) – Passkeys nur für den Besitzer; `objects`/`object_items` rollenbewusst (Reinigungskräfte nur zugewiesene Zeilen, Schreiben nur Admins); `object_assignments` Admin-verwaltet mit Eigen-Lese-Recht; `time_entries`/`time_off_requests` nutzergebunden (eigene Zeilen + Admin; Freigaben nur durch Admins)
 
 ## 5. Kernfunktionen & Workflows
 
@@ -164,6 +187,28 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
 - **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob – bestimmt das Soll im Überstundenkonto) und **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
+### 5.9 Zeiterfassung & Urlaubsverwaltung
+**Stempeluhr (auf allen Seiten sichtbar):** ClockWidget im Header (Desktop) bzw. in der unteren Leiste (Handy). Ein-/Ausstempeln, Pausen-Toggle + feste Pausen-Presets (+15/30/45/60 Min.), Live-Zähler, Browser-Erinnerung „Vergessen auszustempeln?“ (nach 8 h oder ab 17:00 Uhr mit ≥ 1 h, einmalig je Stempelung). **Offline-First** über IndexedDB + LWW (`client_updated_at`, Serverzeit-Ausrichtung via `nowServerAligned`).
+
+**Mitarbeiter-Dashboard (`/zeiterfassung`):**
+- Wochen-/Monatssummen und **Überstundenkonto** (automatischer Soll/Ist-Vergleich je Vertragsart: Vollzeit 40 h / Teilzeit 20 h / Minijob 10 h pro Woche, nur freigegebene, abgeschlossene Einträge und abgeschlossene Wochen) + manuelle Admin-Korrektur; Resturlaub-Anzeige
+- **Arbeitszeit nachreichen** (vergessene Stempelung) → Eintrag mit `source = submitted`, `is_approved = false` → wartet im Freigabe-Feed
+- **Abwesenheitsanträge** (Urlaub, Krankheit, unbezahlt, Freizeitausgleich) mit Status-Anzeige
+
+**Auto-Timeout & Prüfbedarf (vergessene Ausstempelung):**
+- Überschreitet eine offene Stempelung **12 h** oder erreicht **Mitternacht (00:00, Europa/Berlin)** → automatisch `requires_review = true` + `is_approved = false` (DB-Trigger bei Schreibvorgängen, Housekeeping `flag_overdue_time_entries` bei jedem Zugriff)
+- Solche Einträge fließen **nicht** in Wochen-/Monatssummen oder das Überstundenkonto, bis sie freigegeben sind
+- **Zwangspopup beim App-Start:** Für ungelöste, noch offene Prüfbedarf-Einträge erscheint ein **nicht-schließbares** Popup mit tatsächlicher Endzeit, Pause und Notiz (`PATCH /api/time-tracking/entries/[id]`). Absenden schließt den Eintrag (`source = submitted`) → „Nachgereicht / Warten auf Freigabe“. Kein Popup mehr, sobald der Eintrag geschlossen oder vom Admin freigegeben ist; erneute Prüfung bei Tab-Fokus
+
+**Pausen-Automatik (§ 4 ArbZG):** Anwesenheitszeit **> 6 bis 9 Std. → mindestens 30 Min. Pause, > 9 Std. → mindestens 45 Min.** Die erfasste Pause wird automatisch auf das Minimum ergänzt (nie reduziert) – DB-Trigger deckt alle Schreibpfade ab (Stempeluhr, Offline-Sync, Nachreichung, Admin-Korrektur). Netto-Arbeitszeit = `(clock_out − clock_in) − Pause` (`workedMinutesOf`). Unterschreitet die gewählte Pause das Minimum, zeigen **Ausstempeln-Dialog (Zeitadmin)** und **Zwangspopup** den Hinweis *„Gemäß § 4 ArbZG wurden automatisch X Minuten Mindestpause berücksichtigt.“*
+
+**Zeitadmin (`/admin/zeiterfassung`):**
+  - **Prüfbedarf-Sektion:** alle offenen, markierten Stempelungen mit live zählender Dauer seit Einstempeln; Aktionen „Ausstempeln & Freigeben“ (Endzeit, Pause, Notiz, optionales Feld „Grund der Änderung“ – schließt, erzwingt die ArbZG-Mindestpause und setzt `is_approved = true`) und „Löschen“
+  - **Freigabe-Feed:** geschlossene, noch nicht freigegebene Stempelungen („Nachgereichte Arbeitszeit“ / „Vergessene Ausstempelung“) und offene Anträge – einheitlich mit Icon + Status-Badge („Ausstehend“)
+  - **Freigabe löst den Fall:** `is_approved = true` + `requires_review = false` → Eintrag zählt danach in Summen und Konto
+  - **Änderungsprotokoll (Audit Log):** Jede Admin-Anpassung/-Freigabe/-Löschung einer Stempelung wird revisionssicher in `time_entry_audit_logs` protokolliert (alt→neu-Snapshot, Bearbeiter, Zeitstempel, Grund – bei Offline-Änderungen „Offline-Änderung (Sync)“). Auch **Nachreichungen durch den Mitarbeiter** werden protokolliert („Vergessene Ausstempelung nachgereicht“ / „Arbeitszeit nachgereicht“ – offline mit Zusatz „(Offline)“). Bearbeitete Einträge zeigen ein **Historiensymbol (🕘)** mit Tooltip *„{Begründung} von X am DD.MM.YYYY um HH:MM“* (z. B. *„Vergessene Ausstempelung nachgereicht von Max am 08.08.2026 um 14:32 Uhr“*); Klick öffnet einen Dialog mit allen Änderungen inkl. Feld-Diff (Start/Ende/Pause/Freigabe/Prüfbedarf/Notiz)
+  - Mitarbeiterstatus („Aktiv“ / „Prüfbedarf“), Monatsübersicht, Lohn-CSV-Export, Konto-Korrekturen (Urlaub/Überstunden)
+
 ## 6. Karten (Leaflet)
 - `src/components/map/route-map.tsx` – imperatives Leaflet (nur im `useEffect`, SSR-sicher), OSM-Kacheln (kostenlos)
 - Straßenverlauf per **ORS-Directions** (`POST /api/planning/route-geometry`, Bearer-Auth, Polyline-Decoder in `src/lib/polyline.ts`); Fallback: gestrichelte Luftlinien
@@ -183,6 +228,8 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH)
 **Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
 **Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
+**Zeiterfassung (angemeldet):** `GET/POST /api/time-tracking/clock` · `GET/POST /api/time-tracking/entries` · `PATCH /api/time-tracking/entries/[id]` (Nachreichung vergessener Ausstempelung) · `GET /api/time-tracking/review` (Prüfbedarf-Abfrage fürs Zwangspopup) · `GET /api/time-tracking/summary` · `GET/POST /api/time-tracking/requests` · `PATCH /api/time-tracking/requests/[id]`
+**Zeitadmin (Admin):** `GET /api/admin/time-tracking/overview` (inkl. `audit_logs` je Eintrag) · `GET /api/admin/time-tracking/status` · `GET /api/admin/time-tracking/export` (Lohn-CSV) · `PATCH/DELETE /api/admin/time-tracking/entries/[id]` (Freigabe + offene Stempelung aktiv schließen; ArbZG-Mindestpause; schreibt `time_entry_audit_logs`)
 
 ## 8. Umgebungsvariablen (`.env.local`)
 
@@ -205,8 +252,10 @@ src/
   app/
     page.tsx                        # Redirect → /objects
     login/ · objects/ · inventar/ · planung/ · tour/[id]/ · historie/ · einstellungen/
+                                    · zeiterfassung/ · admin/zeiterfassung/
     api/                            # auth, users, passkeys, geocoding, items,
-                                    # objects (inkl. import/*), inventory, planning, tours
+                                    # objects (inkl. import/*), inventory, planning,
+                                    # tours, time-tracking (+ admin/time-tracking)
   components/
     app-shell.tsx                   # Header-Navigation (rollenabhängig)
     map/route-map.tsx               # Leaflet-Route
@@ -214,15 +263,21 @@ src/
     inventory/                      # Inventar (Item-Katalog, Admin)
     planning/                       # Planung, Pack-Modus, Foto-Auswahl
     tour/                           # Tour-Modus, Liefer-Dialog
+    time-tracking/                  # Stempeluhr, Zeiterfassung, Zeitadmin, Prüfbedarf-Popup
     settings/ · history/ · auth/ · ui/
   lib/
     auth.ts                         # requireUser, Rollen, Username↔Email
     ors.ts · overpass.ts · ocr.ts · traffic-matrix.ts · warehouse.ts · polyline.ts
+    time-tracking.ts                # Profil-Referenzen, flagOverdueTimeEntries (Housekeeping),
+                                    # logTimeEntryChange + auditSnapshotOf (Audit-Log)
+    contract.ts · time-format.ts    # Soll/Ist, Überstundenkonto, Zeit-Formatierung,
+                                    # requiredBreakMinutes/enforcedBreakMinutes (§ 4 ArbZG)
+    offline/                        # db, fetch (offlineFetch), sync, clock (Serverzeit-Offset)
     routing/optimizer.ts            # VROOM + Matrix + TSP + Zeitfenster
     routing/tsp.ts · time.ts
     supabase/                       # server/admin/middleware-Client
     webauthn.ts                     # Passkey-Verifikation
-supabase/migrations/                # 22 Migrationen (Schema von Grund auf)
+supabase/migrations/                # 26 Migrationen (Schema von Grund auf)
 ```
 
 ## 10. Entwicklung

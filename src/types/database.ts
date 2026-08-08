@@ -136,6 +136,8 @@ export interface Database {
           break_duration_minutes: number;
           note: string | null;
           is_approved: boolean;
+          /** true = prüfbedürftig (vergessene Ausstempelung / wartet auf Prüfung). */
+          requires_review: boolean;
           /** Herkunft: clock = Stempeluhr, submitted = nachgereichte Arbeitszeit. */
           source: TimeEntrySource;
           created_at: string;
@@ -151,6 +153,7 @@ export interface Database {
           break_duration_minutes?: number;
           note?: string | null;
           is_approved?: boolean;
+          requires_review?: boolean;
           source?: TimeEntrySource;
           created_at?: string;
           updated_at?: string;
@@ -165,6 +168,7 @@ export interface Database {
           break_duration_minutes?: number;
           note?: string | null;
           is_approved?: boolean;
+          requires_review?: boolean;
           source?: TimeEntrySource;
           created_at?: string;
           updated_at?: string;
@@ -172,6 +176,45 @@ export interface Database {
           synced_at?: string | null;
         };
         Relationships: [];
+      };
+      time_entry_audit_logs: {
+        Row: {
+          id: string;
+          time_entry_id: string | null;
+          changed_by_user_id: string | null;
+          changed_at: string;
+          old_values: Json | null;
+          new_values: Json | null;
+          change_reason: string | null;
+        };
+        Insert: {
+          id?: string;
+          time_entry_id?: string | null;
+          changed_by_user_id?: string | null;
+          changed_at?: string;
+          old_values?: Json | null;
+          new_values?: Json | null;
+          change_reason?: string | null;
+        };
+        Update: {
+          id?: string;
+          time_entry_id?: string | null;
+          changed_by_user_id?: string | null;
+          changed_at?: string;
+          old_values?: Json | null;
+          new_values?: Json | null;
+          change_reason?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'time_entry_audit_logs_time_entry_id_fkey';
+            columns: ['time_entry_id'];
+            isOneToOne: false;
+            referencedRelation: 'time_entries';
+            referencedColumns: ['id'];
+            referencedSchema: 'public';
+          },
+        ];
       };
       time_off_requests: {
         Row: {
@@ -673,6 +716,15 @@ export interface Database {
           p_object_ids: string[];
         };
         Returns: undefined;
+      };
+      /**
+       * Markiert überfällige offene Stempelungen (12 h überschritten ODER
+       * Mitternacht erreicht) als prüfbedürftig (requires_review = true,
+       * is_approved = false). Gibt die Anzahl markierter Einträge zurück.
+       */
+      flag_overdue_time_entries: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
       };
     };
     Enums: {

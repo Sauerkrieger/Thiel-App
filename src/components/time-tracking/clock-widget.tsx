@@ -48,6 +48,14 @@ export function ClockWidget({ compact = true, userId = null }: Props) {
     setMounted(true);
   }, [load]);
 
+  // Externer Refresh (z. B. nachdem das Zwangspopup die vergessene
+  // Ausstempelung nachgereicht hat) – sonst liefe der Timer stale weiter.
+  useEffect(() => {
+    const handler = () => void load();
+    window.addEventListener("thiel-clock-refresh", handler);
+    return () => window.removeEventListener("thiel-clock-refresh", handler);
+  }, [load]);
+
   useEffect(() => {
     // Nur bei laufender Stempelung sekündlich ticken (die laufende Zeit
     // zählt sichtbar mit). Ohne offene Stempelung gibt es keinen sichtbaren

@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse, lwwConflictResponse } from "@/lib/http";
 import { requireUser } from "@/lib/auth";
 import { checkLww, parseClientUpdatedAt } from "@/lib/lww";
+import { flagOverdueTimeEntries } from "@/lib/time-tracking";
+import { enforcedBreakMinutes } from "@/lib/time-format";
 import type { Database } from "@/types/database";
 import type { TimeEntry } from "@/types/time-tracking";
 
@@ -23,6 +25,8 @@ export async function GET() {
 
   try {
     const supabase = getSupabaseAdmin();
+    // Überfällige offene Stempelungen (12 h / Mitternacht) als prüfbedürftig markieren.
+    await flagOverdueTimeEntries(supabase);
     const { data, error } = await supabase
       .from("time_entries")
       .select("*")
@@ -86,6 +90,8 @@ export async function POST(request: Request) {
       now = new Date().toISOString();
     }
     const supabase = getSupabaseAdmin();
+    // Überfällige offene Stempelungen (12 h / Mitternacht) als prüfbedürftig markieren.
+    await flagOverdueTimeEntries(supabase);
 
     const { data: openEntry, error: openError } = await supabase
       .from("time_entries")
@@ -183,6 +189,8 @@ export async function POST(request: Request) {
       }
       breakDuration = value;
     }
+    // Mindestpause nach § 4 ArbZG ergänzen (Anwesenheitszeit > 6 / > 9 h).
+    breakDuration = enforcedBreakMinutes(openEntry.clock_in, now, breakDuration);
 
     let note: string | null = null;
     if (typeof body.note === "string" && body.note.trim()) {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Building2, Clock3, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
 import { ClockWidget } from "@/components/time-tracking/clock-widget";
+import { TimeReviewDialog } from "@/components/time-tracking/review-dialog";
 import { cn } from "@/lib/utils";
 import {
   initSync,
@@ -211,6 +212,8 @@ export function AppShell({
       <footer className="border-t py-3 pb-20 text-center text-xs text-muted-foreground sm:pb-3">
         Thiel Dienstleistungen · Liefer- &amp; Tourenplanung
       </footer>
+      {/* Zwangspopup bei vergessener Ausstempelung (nur für angemeldete Nutzer). */}
+      {userRole && <TimeReviewDialog userId={userId} />}
     </div>
   );
 }

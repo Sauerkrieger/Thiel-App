@@ -14,12 +14,26 @@ export interface TimeEntry {
   break_duration_minutes: number;
   note: string | null;
   is_approved: boolean;
+  /** true = prüfbedürftig (vergessene Ausstempelung / wartet auf Prüfung). */
+  requires_review: boolean;
   /** Herkunft: clock = Stempeluhr, submitted = nachgereichte Arbeitszeit. */
   source: "clock" | "submitted";
   created_at: string;
   updated_at: string;
   client_updated_at: string | null;
   synced_at: string | null;
+}
+
+export interface TimeEntryAuditLog {
+  id: string;
+  time_entry_id: string | null;
+  changed_by_user_id: string | null;
+  changed_at: string;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  change_reason: string | null;
+  /** UI-Anreicherung: Name des Bearbeiters (aus profiles gejoint). */
+  changed_by_name?: string | null;
 }
 
 export interface TimeOffRequest {
