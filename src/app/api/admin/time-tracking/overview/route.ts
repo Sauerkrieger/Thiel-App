@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     // Überfällige offene Stempelungen (12 h / Mitternacht) als prüfbedürftig markieren.
     await flagOverdueTimeEntries(supabase);
     const [{ data: profiles, error: profilesError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: tours, error: toursError }, { data: auditLogs, error: auditLogsError }] = await Promise.all([
-      supabase.from("profiles").select("id, name, role, email, vacation_days_total, vacation_days_used, overtime_hours, contract_type").order("name"),
+      supabase.from("profiles").select("id, name, role, email, vacation_days_total, vacation_days_used, overtime_hours, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
       // Kein `profiles:user_id(...)`-Embed: time_entries.user_id referenziert
       // auth.users, nicht profiles – die Namen werden unten per JS-Join ergänzt.
       supabase.from("time_entries").select("*").order("clock_in", { ascending: false }),

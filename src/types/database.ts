@@ -31,8 +31,12 @@ export type UserRole =
   | 'facility_manager'
   | 'substitute';
 
-/** Vertragsart: bestimmt die Soll-Wochenarbeitszeit (40/20/10 h). */
-export type ContractType = 'full_time' | 'part_time' | 'mini_job';
+/**
+ * Vertragsart: bestimmt die Soll-Wochenarbeitszeit (40/20/10 h);
+ * `custom` = benutzerdefinierter Vertrag mit eigenen Sollstunden,
+ * Arbeitstagen und Jahresurlaubstagen (weekly_target_hours & Co.).
+ */
+export type ContractType = 'full_time' | 'part_time' | 'mini_job' | 'custom';
 
 /** Herkunft eines Zeiterfassungs-Eintrags (Stempeluhr vs. nachgereicht). */
 export type TimeEntrySource = 'clock' | 'submitted';
@@ -41,6 +45,7 @@ export const CONTRACT_TYPES: readonly ContractType[] = [
   'full_time',
   'part_time',
   'mini_job',
+  'custom',
 ];
 
 export type ObjectCategory = 'objekt' | 'treppenhaus';
@@ -85,8 +90,14 @@ export interface Database {
           vacation_days_total: number;
           vacation_days_used: number;
           overtime_hours: number;
-          /** Vertragsart (Vollzeit/Teilzeit/Minijob) – Soll-Wochenarbeitszeit. */
+          /** Vertragsart (Vollzeit/Teilzeit/Minijob/Individuell) – Soll-Wochenarbeitszeit. */
           contract_type: ContractType;
+          /** Wochen-Sollstunden fürs Überstundenkonto (Vertrag, z. B. 40). */
+          weekly_target_hours: number;
+          /** Geplante Arbeitstage pro Woche (z. B. 5). */
+          working_days_per_week: number;
+          /** Individuelle Jahresurlaubstage. Resturlaub = per_year - used. */
+          vacation_days_per_year: number;
         };
         Insert: {
           id: string;
@@ -101,6 +112,9 @@ export interface Database {
           vacation_days_used?: number;
           overtime_hours?: number;
           contract_type?: ContractType;
+          weekly_target_hours?: number;
+          working_days_per_week?: number;
+          vacation_days_per_year?: number;
         };
         Update: {
           id?: string;
@@ -115,6 +129,9 @@ export interface Database {
           vacation_days_used?: number;
           overtime_hours?: number;
           contract_type?: ContractType;
+          weekly_target_hours?: number;
+          working_days_per_week?: number;
+          vacation_days_per_year?: number;
         };
         Relationships: [
           {

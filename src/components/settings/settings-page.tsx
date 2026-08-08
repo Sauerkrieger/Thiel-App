@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
-import { CONTRACT_LABELS } from "@/lib/contract";
+import { CONTRACT_DEFAULTS, CONTRACT_LABELS, vacationSuggestionFor } from "@/lib/contract";
 import { offlineFetch } from "@/lib/offline/fetch";
 import type { ContractType, UserRole } from "@/types/database";
 
@@ -69,6 +69,9 @@ type UserListItem = {
   username: string;
   created_at: string;
   contract_type: string;
+  weekly_target_hours: number | null;
+  working_days_per_week: number | null;
+  vacation_days_per_year: number | null;
   object_ids: string[];
 };
 
@@ -477,10 +480,44 @@ function UsersSection({
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // Soll-Werte des neuen Benutzers (Auto-Fill je Vertragsart, custom manuell).
+  const [weeklyTargetHours, setWeeklyTargetHours] = useState("40");
+  const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState("5");
+  const [vacationDaysPerYear, setVacationDaysPerYear] = useState("30");
+
   // Objektzuweisung beim Bearbeiten eines Objektbetreuers.
   const [editTarget, setEditTarget] = useState<UserListItem | null>(null);
   const [editObjectIds, setEditObjectIds] = useState<string[]>([]);
   const [editSaving, setEditSaving] = useState(false);
+
+  // Individuellen Vertrag (custom) eines bestehenden Nutzers bearbeiten.
+  const [editContract, setEditContract] = useState<UserListItem | null>(null);
+  const [editWeekly, setEditWeekly] = useState("");
+  const [editDays, setEditDays] = useState("");
+  const [editVacation, setEditVacation] = useState("");
+  const [editContractSaving, setEditContractSaving] = useState(false);
+
+  /** Auto-Fill: Vertragsart gewählt → Soll-Werte vorbefüllen (custom = 40/5/30 Start). */
+  function applyContractPreset(type: ContractType) {
+    const preset = CONTRACT_DEFAULTS[type];
+    setContractType(type);
+    setWeeklyTargetHours(String(preset.weekly_target_hours));
+    setWorkingDaysPerWeek(String(preset.working_days_per_week));
+    setVacationDaysPerYear(String(preset.vacation_days_per_year));
+  }
+
+  /** Arbeitstage ändern → Urlaubsanspruch automatisch vorschlagen (custom). */
+  function handleDaysChange(
+    value: string,
+    apply: (v: string) => void,
+    applyVacation: (v: string) => void,
+  ) {
+    apply(value);
+    const days = Number(value);
+    if (Number.isFinite(days) && days > 0) {
+      applyVacation(String(vacationSuggestionFor(days)));
+    }
+  }
 
   function toggleObject(id: string) {
     setSelectedObjectIds((prev) =>
@@ -509,6 +546,21 @@ function UsersSection({
       toast.error("Bitte mindestens ein Objekt für die Reinigungskraft auswählen.");
       return;
     }
+    const weekly = Number(weeklyTargetHours);
+    const days = Number(workingDaysPerWeek);
+    const vacation = Number(vacationDaysPerYear);
+    if (!Number.isFinite(weekly) || weekly <= 0 || weekly > 168) {
+      toast.error("Bitte gültige Soll-Stunden pro Woche angeben (1–168).");
+      return;
+    }
+    if (!Number.isFinite(days) || days < 1 || days > 7) {
+      toast.error("Bitte gültige Arbeitstage pro Woche angeben (1–7).");
+      return;
+    }
+    if (!Number.isInteger(vacation) || vacation < 0 || vacation > 365) {
+      toast.error("Bitte gültige Urlaubstage pro Jahr angeben (0–365).");
+      return;
+    }
     setCreating(true);
     try {
       const res = await offlineFetch("/api/auth/users", {
@@ -520,6 +572,9 @@ function UsersSection({
           password,
           role,
           contract_type: contractType,
+          weekly_target_hours: weekly,
+          working_days_per_week: days,
+          vacation_days_per_year: vacation,
           ...(role === "facility_manager" ? { object_ids: selectedObjectIds } : {}),
         }),
       });
@@ -533,7 +588,7 @@ function UsersSection({
       setName("");
       setPassword("");
       setRole("driver");
-      setContractType("full_time");
+      applyContractPreset("full_time");
       setSelectedObjectIds([]);
       onChanged();
     } catch {
@@ -606,14 +661,20 @@ function UsersSection({
     }
   }
 
-  /** Vertragsart eines bestehenden Nutzers ändern (PATCH). */
+  /** Vertragsart eines bestehenden Nutzers ändern (PATCH inkl. Auto-Fill). */
   async function handleContractChange(id: string, contractType: ContractType) {
+    const preset = CONTRACT_DEFAULTS[contractType];
     setSavingId(id);
     try {
       const res = await offlineFetch(`/api/auth/users/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contract_type: contractType }),
+        body: JSON.stringify({
+          contract_type: contractType,
+          weekly_target_hours: preset.weekly_target_hours,
+          working_days_per_week: preset.working_days_per_week,
+          vacation_days_per_year: preset.vacation_days_per_year,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -626,6 +687,63 @@ function UsersSection({
       toast.error("Vertragsart konnte nicht geändert werden.");
     } finally {
       setSavingId(null);
+    }
+  }
+
+  /** Vertragsart wählen: custom öffnet den Detail-Dialog, sonst direkt speichern. */
+  function handleContractSelect(user: UserListItem, value: string) {
+    if (value === "custom") {
+      setEditContract(user);
+      setEditWeekly(String(user.weekly_target_hours ?? 40));
+      setEditDays(String(user.working_days_per_week ?? 5));
+      setEditVacation(String(user.vacation_days_per_year ?? 30));
+      return;
+    }
+    void handleContractChange(user.id, value as ContractType);
+  }
+
+  /** Individuellen Vertrag (custom) eines bestehenden Nutzers speichern. */
+  async function handleContractEditSave() {
+    if (!editContract) return;
+    const weekly = Number(editWeekly);
+    const days = Number(editDays);
+    const vacation = Number(editVacation);
+    if (!Number.isFinite(weekly) || weekly <= 0 || weekly > 168) {
+      toast.error("Bitte gültige Soll-Stunden pro Woche angeben (1–168).");
+      return;
+    }
+    if (!Number.isFinite(days) || days < 1 || days > 7) {
+      toast.error("Bitte gültige Arbeitstage pro Woche angeben (1–7).");
+      return;
+    }
+    if (!Number.isInteger(vacation) || vacation < 0 || vacation > 365) {
+      toast.error("Bitte gültige Urlaubstage pro Jahr angeben (0–365).");
+      return;
+    }
+    setEditContractSaving(true);
+    try {
+      const res = await offlineFetch(`/api/auth/users/${editContract.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_type: "custom",
+          weekly_target_hours: weekly,
+          working_days_per_week: days,
+          vacation_days_per_year: vacation,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Vertrag konnte nicht gespeichert werden.");
+        return;
+      }
+      toast.success("Vertrag gespeichert.");
+      setEditContract(null);
+      onChanged();
+    } catch {
+      toast.error("Vertrag konnte nicht gespeichert werden.");
+    } finally {
+      setEditContractSaving(false);
     }
   }
 
@@ -710,7 +828,7 @@ function UsersSection({
               <Label>Vertragsart</Label>
               <Select
                 value={contractType}
-                onValueChange={(v) => setContractType(v as ContractType)}
+                onValueChange={(v) => applyContractPreset(v as ContractType)}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -719,10 +837,61 @@ function UsersSection({
                   <SelectItem value="full_time">Vollzeit</SelectItem>
                   <SelectItem value="part_time">Teilzeit</SelectItem>
                   <SelectItem value="mini_job">Minijob</SelectItem>
+                  <SelectItem value="custom">Individuell</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="nu-vacation">Urlaubstage / Jahr</Label>
+              <Input
+                id="nu-vacation"
+                type="number"
+                min={0}
+                max={365}
+                value={vacationDaysPerYear}
+                onChange={(e) => setVacationDaysPerYear(e.target.value)}
+                disabled={creating}
+              />
+              <p className="text-xs text-muted-foreground">
+                Jahresurlaub – in allen Vertragsarten manuell anpassbar.
+              </p>
+            </div>
           </div>
+
+          {/* Individueller Vertrag: Soll-Stunden & Arbeitstage (custom) */}
+          {contractType === "custom" && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-weekly">Soll-Stunden / Woche</Label>
+                <Input
+                  id="nu-weekly"
+                  type="number"
+                  min={0.5}
+                  step="0.5"
+                  max={168}
+                  value={weeklyTargetHours}
+                  onChange={(e) => setWeeklyTargetHours(e.target.value)}
+                  disabled={creating}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-days">Arbeitstage / Woche</Label>
+                <Input
+                  id="nu-days"
+                  type="number"
+                  min={1}
+                  step="0.5"
+                  max={7}
+                  value={workingDaysPerWeek}
+                  onChange={(e) => handleDaysChange(e.target.value, setWorkingDaysPerWeek, setVacationDaysPerYear)}
+                  disabled={creating}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Urlaubsanspruch wird automatisch vorgeschlagen.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Reinigungskraft: Objektzuweisung (mindestens 1) beim Anlegen */}
           {role === "facility_manager" && (
@@ -804,7 +973,7 @@ function UsersSection({
                   </Select>
                   <Select
                     value={u.contract_type ?? "full_time"}
-                    onValueChange={(v) => handleContractChange(u.id, v as ContractType)}
+                    onValueChange={(v) => handleContractSelect(u, v)}
                     disabled={savingId === u.id}
                   >
                     <SelectTrigger className="h-8 w-32">
@@ -889,6 +1058,76 @@ function UsersSection({
             </Button>
             <Button onClick={() => void handleEditSave()} disabled={editSaving}>
               {editSaving ? <Loader2 className="animate-spin" /> : null}
+              Speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Individueller Vertrag (custom) eines bestehenden Nutzers */}
+      <Dialog open={editContract !== null} onOpenChange={(open) => { if (!open) setEditContract(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Individuellen Vertrag bearbeiten</DialogTitle>
+            <DialogDescription>
+              {editContract?.name} – Soll-Stunden, Arbeitstage und Jahresurlaub
+              frei festlegen. Der Urlaubsanspruch wird beim Ändern der
+              Arbeitstage automatisch vorgeschlagen.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ec-weekly">Soll-Stunden / Woche</Label>
+              <Input
+                id="ec-weekly"
+                type="number"
+                min={0.5}
+                step="0.5"
+                max={168}
+                value={editWeekly}
+                onChange={(e) => setEditWeekly(e.target.value)}
+                disabled={editContractSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ec-days">Arbeitstage / Woche</Label>
+              <Input
+                id="ec-days"
+                type="number"
+                min={1}
+                step="0.5"
+                max={7}
+                value={editDays}
+                onChange={(e) => handleDaysChange(e.target.value, setEditDays, setEditVacation)}
+                disabled={editContractSaving}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ec-vacation">Urlaubstage / Jahr</Label>
+            <Input
+              id="ec-vacation"
+              type="number"
+              min={0}
+              max={365}
+              value={editVacation}
+              onChange={(e) => setEditVacation(e.target.value)}
+              disabled={editContractSaving}
+            />
+            <p className="text-xs text-muted-foreground">
+              Vorschlag: 30 Tage × Arbeitstage ÷ 5 – manuell überschreibbar.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditContract(null)}
+              disabled={editContractSaving}
+            >
+              Abbrechen
+            </Button>
+            <Button onClick={() => void handleContractEditSave()} disabled={editContractSaving}>
+              {editContractSaving ? <Loader2 className="animate-spin" /> : null}
               Speichern
             </Button>
           </DialogFooter>

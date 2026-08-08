@@ -31,13 +31,16 @@ export default async function EinstellungenPage() {
     username: string;
     created_at: string;
     contract_type: string;
+    weekly_target_hours: number | null;
+    working_days_per_week: number | null;
+    vacation_days_per_year: number | null;
     object_ids: string[];
   }[] = [];
   let objects: { id: string; name: string }[] = [];
   if (isAdmin(user)) {
     const [{ data: profileData }, { data: objectData }, { data: assignmentData }] =
       await Promise.all([
-        admin.from("profiles").select("id, name, role, email, created_at, contract_type").order("name"),
+        admin.from("profiles").select("id, name, role, email, created_at, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
         admin.from("objects").select("id, name").order("name"),
         admin.from("object_assignments").select("user_id, object_id"),
       ]);
@@ -55,6 +58,9 @@ export default async function EinstellungenPage() {
       username: p.email?.split("@")[0] ?? "",
       created_at: p.created_at,
       contract_type: p.contract_type ?? "full_time",
+      weekly_target_hours: p.weekly_target_hours ?? null,
+      working_days_per_week: p.working_days_per_week ?? null,
+      vacation_days_per_year: p.vacation_days_per_year ?? null,
       object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
     objects = (objectData ?? []).map((o) => ({ id: o.id, name: o.name }));

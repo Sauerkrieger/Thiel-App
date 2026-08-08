@@ -17,7 +17,7 @@ import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } f
 import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeEntryAuditLog, TimeOffRequest } from "@/types/time-tracking";
 
-type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
+type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; weekly_target_hours: number | null; vacation_days_per_year: number | null; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
 type OverviewEntry = TimeEntry & { profiles?: { name?: string; role?: string } | null; audit_logs?: TimeEntryAuditLog[] };
 type Overview = { employees: Employee[]; entries: OverviewEntry[]; requests: (TimeOffRequest & { profiles?: { name?: string; role?: string } | null })[] };
 
@@ -258,7 +258,10 @@ export function AdminTimeTrackingPage() {
 
   function openEmployee(employee: Employee) {
     setSelectedEmployee(employee);
-    setEditVacation(String(Math.max(0, (employee.vacation_days_total ?? 0) - (employee.vacation_days_used ?? 0))));
+    // Resturlaub = Jahresurlaubsanspruch (Vertrag) minus genutzte Tage.
+    const entitlement =
+      employee.vacation_days_per_year ?? employee.vacation_days_total ?? 0;
+    setEditVacation(String(Math.max(0, entitlement - (employee.vacation_days_used ?? 0))));
     setEditOvertime(String(Number(employee.overtime_hours ?? 0)));
   }
 
@@ -280,8 +283,8 @@ export function AdminTimeTrackingPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // Der Anspruch ergibt sich aus genutzten Tagen + neuem Resturlaub.
-          vacation_days_total: (selectedEmployee.vacation_days_used ?? 0) + remaining,
+          // Der Jahresanspruch ergibt sich aus genutzten Tagen + neuem Resturlaub.
+          vacation_days_per_year: (selectedEmployee.vacation_days_used ?? 0) + remaining,
           overtime_hours: overtime,
         }),
       });
@@ -319,17 +322,36 @@ export function AdminTimeTrackingPage() {
     : 0;
   const closeEnteredBreak = Number(closeBreak) || 0;
 
-  /** Überstunden eines Mitarbeiters: automatisch (Stempelungen & Vertragsart) + Korrektur. */
+  /** Überstunden eines Mitarbeiters: automatisch (Stempelungen & Soll) + Korrektur. */
   function overtimeOf(employee: Employee): { auto: number; correction: number; total: number } {
     if (!overview) return { auto: 0, correction: 0, total: 0 };
     const entries = overview.entries.filter((entry) => entry.user_id === employee.id);
-    const auto = overtimeBalanceHours(entries, employee.contract_type);
+    const auto = overtimeBalanceHours(
+      entries,
+      employee.contract_type,
+      employee.weekly_target_hours ?? null,
+    );
     const correction = Number(employee.overtime_hours ?? 0);
     return { auto, correction, total: auto + correction };
   }
 
+  /** Vertrags-Label inkl. Details bei Individuell (z. B. „Individuell · 35 h/Woche“). */
   function contractLabel(employee: Employee): string {
-    return CONTRACT_LABELS[employee.contract_type ?? "full_time"] ?? "Vollzeit";
+    const label = CONTRACT_LABELS[employee.contract_type ?? "full_time"] ?? "Vollzeit";
+    if (
+      employee.contract_type === "custom" &&
+      typeof employee.weekly_target_hours === "number"
+    ) {
+      return `${label} · ${employee.weekly_target_hours} h/Woche`;
+    }
+    return label;
+  }
+
+  /** Resturlaub eines Mitarbeiters (Jahresanspruch minus genutzte Tage). */
+  function vacationRemainingOf(employee: Employee): number {
+    const entitlement =
+      employee.vacation_days_per_year ?? employee.vacation_days_total ?? 0;
+    return Math.max(0, entitlement - (employee.vacation_days_used ?? 0));
   }
 
   // Monatsübersicht: freigegebene, abgeschlossene Einträge pro Mitarbeiter.
@@ -363,7 +385,7 @@ export function AdminTimeTrackingPage() {
       <Card className="mt-6"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mitarbeiter suchen…" /></div><Select value={role} onValueChange={setRole}><SelectTrigger className="sm:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle Rollen</SelectItem>{Object.entries(ROLE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></CardContent></Card>
 
       {loading && !overview ? <div className="mt-8 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" /> Übersicht wird geladen…</div> : overview ? <>
-        <Card className="mt-6"><CardHeader><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? Klicke auf eine Karte für Stempelhistorie und Kontokorrektur.</CardDescription></CardHeader><CardContent><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${Math.max(0, (employee.vacation_days_total ?? 0) - (employee.vacation_days_used ?? 0))} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div></CardContent></Card>
+        <Card className="mt-6"><CardHeader><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? Klicke auf eine Karte für Stempelhistorie und Kontokorrektur.</CardDescription></CardHeader><CardContent><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${vacationRemainingOf(employee)} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div></CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-3"><span>Monatsübersicht</span><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="h-9 w-44" aria-label="Monat wählen" /></CardTitle><CardDescription>Gesamtarbeitszeit aller Mitarbeiter im gewählten Monat (freigegebene, abgeschlossene Einträge).</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Mitarbeiter</TableHead><TableHead>Rolle</TableHead><TableHead className="text-right">Tage</TableHead><TableHead className="text-right">Arbeitszeit</TableHead></TableRow></TableHeader><TableBody>{monthRows.map((row) => <TableRow key={row.employee.id}><TableCell className="font-medium">{row.employee.name}</TableCell><TableCell className="text-muted-foreground">{ROLE_LABELS[row.employee.role] ?? row.employee.role}</TableCell><TableCell className="text-right">{row.days}</TableCell><TableCell className="text-right font-mono">{minutesToLabel(row.total)}</TableCell></TableRow>)}</TableBody><TableFooter><TableRow><TableCell colSpan={3}>Gesamt ({monthRows.length} Mitarbeiter)</TableCell><TableCell className="text-right font-mono">{minutesToLabel(monthTotal)}</TableCell></TableRow></TableFooter></Table></CardContent></Card>
 
@@ -376,7 +398,7 @@ export function AdminTimeTrackingPage() {
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>{selectedEmployee?.name}</DialogTitle>
-              <DialogDescription>{selectedEmployee ? `${ROLE_LABELS[selectedEmployee.role] ?? selectedEmployee.role} · ${contractLabel(selectedEmployee)} · Resturlaub ${Math.max(0, (selectedEmployee.vacation_days_total ?? 0) - (selectedEmployee.vacation_days_used ?? 0))} Tage · Überstunden ${hoursToLabel(overtimeOf(selectedEmployee).total)}` : ""}</DialogDescription>
+              <DialogDescription>{selectedEmployee ? `${ROLE_LABELS[selectedEmployee.role] ?? selectedEmployee.role} · ${contractLabel(selectedEmployee)} · Resturlaub ${vacationRemainingOf(selectedEmployee)} Tage · Überstunden ${hoursToLabel(overtimeOf(selectedEmployee).total)}` : ""}</DialogDescription>
             </DialogHeader>
             {selectedEmployee && <div className="space-y-4">
               <div>
@@ -392,7 +414,7 @@ export function AdminTimeTrackingPage() {
                   <div className="space-y-1.5"><Label htmlFor="edit-overtime">Korrektur Überstunden (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)}</p>
-                <p className="mt-2 text-xs text-muted-foreground">Urlaubsanspruch gesamt: {selectedEmployee.vacation_days_total ?? 0} Tage ({selectedEmployee.vacation_days_used ?? 0} genutzt). Der neue Resturlaub wird in den Gesamtanspruch umgerechnet.</p>
+                <p className="mt-2 text-xs text-muted-foreground">Urlaubsanspruch: {(selectedEmployee.vacation_days_per_year ?? selectedEmployee.vacation_days_total ?? 0)} Tage/Jahr ({selectedEmployee.vacation_days_used ?? 0} genutzt). Der neue Resturlaub wird in den Jahresanspruch umgerechnet.</p>
                 <DialogFooter className="mt-4 sm:justify-end"><Button onClick={() => void saveAccount()} disabled={savingAccount}>{savingAccount ? "Wird gespeichert…" : "Speichern"}</Button></DialogFooter>
               </div>
             </div>}

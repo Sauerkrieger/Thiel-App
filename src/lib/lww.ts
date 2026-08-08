@@ -60,7 +60,14 @@ type SyncInsert = {
 
 /** Feld-Whitelists je Tabelle: Der Client darf NUR diese Felder über den Sync setzen. */
 const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
-  profiles: ["name", "role", "contract_type"],
+  profiles: [
+    "name",
+    "role",
+    "contract_type",
+    "weekly_target_hours",
+    "working_days_per_week",
+    "vacation_days_per_year",
+  ],
   objects: [
     "name",
     "address",
@@ -157,8 +164,11 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     },
     contract_type: {
       t: "enum",
-      values: ["full_time", "part_time", "mini_job"],
+      values: ["full_time", "part_time", "mini_job", "custom"],
     },
+    weekly_target_hours: { t: "number", min: 0.5, max: 168 },
+    working_days_per_week: { t: "number", min: 1, max: 7 },
+    vacation_days_per_year: { t: "number", min: 0, max: 365, int: true },
   },
   objects: {
     name: { t: "text", max: 200 },
@@ -438,9 +448,12 @@ export function prepareSyncEntry(
   }
   if (table === "profiles" && !admin) {
     delete data.role; // Rolle nur durch Admins änderbar
-    // Auch die Vertragsart steuert das Soll im Überstundenkonto –
-    // nur Admins dürfen sie ändern.
+    // Vertragsart + Soll-Werte (Sollstunden, Arbeitstage, Urlaubstage)
+    // steuern das Konto – nur Admins dürfen sie ändern.
     delete data.contract_type;
+    delete data.weekly_target_hours;
+    delete data.working_days_per_week;
+    delete data.vacation_days_per_year;
   }
 
   return {

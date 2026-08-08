@@ -38,13 +38,17 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
 **Enums:** `user_role` (`driver` | `admin` | `facility_manager` | `substitute`),
-`contract_type` (`full_time` | `part_time` | `mini_job`), `object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`),
+`contract_type` (`full_time` | `part_time` | `mini_job` | `custom`), `object_category` (`objekt` | `treppenhaus`), `tour_status` (`packing` | `in_transit` | `completed`),
 `time_entry_source` (`clock` | `submitted`), `time_off_type` (`vacation` | `sick_leave` | `unpaid` | `compensatory`), `time_off_status` (`pending` | `approved` | `rejected`).
 
 ### `profiles` – Benutzerprofile (1:1 zu `auth.users`)
 - `id` (PK → auth.users, cascade), `name`, `role` (user_role, default `driver`), `email`, `created_at`, `updated_at`
-- `contract_type` (`full_time` | `part_time` | `mini_job`, default `full_time`) – Vertragsart, steuert das Soll im Überstundenkonto (40/20/10 h pro Woche, bewusst nicht angezeigt)
-- Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an
+- `contract_type` (`full_time` | `part_time` | `mini_job` | `custom`, default `full_time`) – Vertragsart, steuert das Soll im Überstundenkonto
+- `weekly_target_hours` (numeric, default 40) – **Wochen-Sollstunden** fürs Überstundenkonto (Auto-Fill: Vollzeit 40 / Teilzeit 20 / Minijob 10; bei `custom` frei)
+- `working_days_per_week` (numeric, default 5) – geplante Arbeitstage pro Woche (Auto-Fill: 5/5/2; bei `custom` frei, Basis für den Urlaubsanspruch)
+- `vacation_days_per_year` (integer, default 30) – **individuelle Jahresurlaubstage**; Resturlaub überall = `vacation_days_per_year − vacation_days_used` (Auto-Fill: 30/30/12, in allen Vertragsarten manuell überschreibbar)
+- Auto-Fill beim Anlegen/Bearbeiten: Vollzeit → 40 h / 5 Tage / 30 Tage, Teilzeit → 20 h / 5 Tage / 30 Tage, Minijob → 10 h / 2 Tage / 12 Tage; `custom` zeigt Soll-Stunden & Arbeitstage als Eingabefelder, Urlaubsanspruch wird als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen
+- Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an (inkl. Vertrags-Defaults)
 - **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
 
 ### `time_entries` – Arbeitszeit-Stempelungen
@@ -185,13 +189,15 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 
 ### 5.8 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
-- **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob – bestimmt das Soll im Überstundenkonto) und **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
+- **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob/Individuell – bestimmt das Soll im Überstundenkonto)
+- **Vertrags-Auto-Fill:** Die Vertragsart befüllt Soll-Stunden, Arbeitstage und Urlaubstage automatisch (Vollzeit 40/5/30, Teilzeit 20/5/30, Minijob 10/2/12); `custom` („Individuell“) blendet **Soll-Stunden/Woche** und **Arbeitstage/Woche** ein, der Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen. **`vacation_days_per_year` bleibt in allen Vertragsarten manuell anpassbar.** Bei bestehenden Nutzern öffnet die Wahl „Individuell“ einen Dialog mit den drei Feldern; der Wechsel auf Vollzeit/Teilzeit/Minijob übernimmt die Auto-Fill-Werte serverseitig
+- **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
 ### 5.9 Zeiterfassung & Urlaubsverwaltung
 **Stempeluhr (auf allen Seiten sichtbar):** ClockWidget im Header (Desktop) bzw. in der unteren Leiste (Handy). Ein-/Ausstempeln, Pausen-Toggle + feste Pausen-Presets (+15/30/45/60 Min.), Live-Zähler, Browser-Erinnerung „Vergessen auszustempeln?“ (nach 8 h oder ab 17:00 Uhr mit ≥ 1 h, einmalig je Stempelung). **Offline-First** über IndexedDB + LWW (`client_updated_at`, Serverzeit-Ausrichtung via `nowServerAligned`).
 
 **Mitarbeiter-Dashboard (`/zeiterfassung`):**
-- Wochen-/Monatssummen und **Überstundenkonto** (automatischer Soll/Ist-Vergleich je Vertragsart: Vollzeit 40 h / Teilzeit 20 h / Minijob 10 h pro Woche, nur freigegebene, abgeschlossene Einträge und abgeschlossene Wochen) + manuelle Admin-Korrektur; Resturlaub-Anzeige
+- Wochen-/Monatssummen und **Überstundenkonto** (automatischer Soll/Ist-Vergleich auf Basis von **`weekly_target_hours`** aus dem Profil – Vollzeit 40 / Teilzeit 20 / Minijob 10 h, bei `custom` der individuelle Wert; nur freigegebene, abgeschlossene Einträge und abgeschlossene Wochen) + manuelle Admin-Korrektur; **Resturlaub-Anzeige = `vacation_days_per_year − vacation_days_used`**
 - **Arbeitszeit nachreichen** (vergessene Stempelung) → Eintrag mit `source = submitted`, `is_approved = false` → wartet im Freigabe-Feed
 - **Abwesenheitsanträge** (Urlaub, Krankheit, unbezahlt, Freizeitausgleich) mit Status-Anzeige
 
@@ -225,7 +231,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
 **Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Reinigungskräfte)
 
-**Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH)
+**Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH) – zusätzlich `weekly_target_hours`, `working_days_per_week`, `vacation_days_per_year` (Auto-Fill-Defaults serverseitig, Validierung Sollstunden 0–168 h / Arbeitstage 1–7 / Urlaubstage 0–365)
 **Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
 **Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
 **Zeiterfassung (angemeldet):** `GET/POST /api/time-tracking/clock` · `GET/POST /api/time-tracking/entries` · `PATCH /api/time-tracking/entries/[id]` (Nachreichung vergessener Ausstempelung) · `GET /api/time-tracking/review` (Prüfbedarf-Abfrage fürs Zwangspopup) · `GET /api/time-tracking/summary` · `GET/POST /api/time-tracking/requests` · `PATCH /api/time-tracking/requests/[id]`

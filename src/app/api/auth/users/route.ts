@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireUser, isAdmin, usernameToEmail, emailToUsername, isUserRole } from "@/lib/auth";
-import { isContractType } from "@/lib/contract";
+import { CONTRACT_DEFAULTS, isContractType } from "@/lib/contract";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { parseClientUpdatedAt } from "@/lib/lww";
-import type { Database, Profile } from "@/types/database";
+import type { ContractType, Database, Profile } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ export async function GET() {
   try {
     const admin = getSupabaseAdmin();
     const [{ data, error }, { data: assignments }] = await Promise.all([
-      admin.from("profiles").select("id, name, role, email, created_at, contract_type").order("name"),
+      admin.from("profiles").select("id, name, role, email, created_at, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
       admin.from("object_assignments").select("user_id, object_id"),
     ]);
 
@@ -40,6 +40,9 @@ export async function GET() {
       username: emailToUsername(p.email),
       created_at: p.created_at,
       contract_type: p.contract_type,
+      weekly_target_hours: p.weekly_target_hours,
+      working_days_per_week: p.working_days_per_week,
+      vacation_days_per_year: p.vacation_days_per_year,
       object_ids: objectIdsByUser.get(p.id) ?? [],
     }));
 
@@ -61,9 +64,39 @@ export async function POST(request: Request) {
     const name = typeof body.name === "string" ? body.name.trim() : username;
     const password = typeof body.password === "string" ? body.password : "";
     const role = isUserRole(body.role) ? body.role : "driver";
-    const contractType = isContractType(body.contract_type)
+    const contractType: ContractType = isContractType(body.contract_type)
       ? body.contract_type
       : "full_time";
+    const contractDefaults = CONTRACT_DEFAULTS[contractType];
+    // Sollstunden/Arbeitstage/Urlaubstage: übermittelte Werte gewinnen,
+    // sonst Auto-Fill-Defaults der Vertragsart.
+    const weeklyTargetHours =
+      typeof body.weekly_target_hours === "number" && Number.isFinite(body.weekly_target_hours)
+        ? body.weekly_target_hours
+        : contractDefaults.weekly_target_hours;
+    const workingDaysPerWeek =
+      typeof body.working_days_per_week === "number" && Number.isFinite(body.working_days_per_week)
+        ? body.working_days_per_week
+        : contractDefaults.working_days_per_week;
+    const vacationDaysPerYear =
+      typeof body.vacation_days_per_year === "number" && Number.isFinite(body.vacation_days_per_year)
+        ? Math.round(body.vacation_days_per_year)
+        : contractDefaults.vacation_days_per_year;
+
+    // Plausibilitätsprüfung der Vertragswerte.
+    if (
+      weeklyTargetHours <= 0 ||
+      weeklyTargetHours > 168 ||
+      workingDaysPerWeek <= 0 ||
+      workingDaysPerWeek > 7 ||
+      vacationDaysPerYear < 0 ||
+      vacationDaysPerYear > 365
+    ) {
+      return NextResponse.json(
+        { error: "Ungültige Vertragswerte (Sollstunden 0–168, Arbeitstage 1–7, Urlaubstage 0–365)." },
+        { status: 400 },
+      );
+    }
     const objectIds = Array.isArray(body.object_ids)
       ? (body.object_ids as unknown[]).filter(
           (id: unknown): id is string =>
@@ -145,6 +178,9 @@ export async function POST(request: Request) {
       role,
       email,
       contract_type: contractType,
+      weekly_target_hours: weeklyTargetHours,
+      working_days_per_week: workingDaysPerWeek,
+      vacation_days_per_year: vacationDaysPerYear,
     };
     if (clientUpdatedAt) {
       profilePayload.client_updated_at = clientUpdatedAt;
@@ -170,6 +206,9 @@ export async function POST(request: Request) {
           username: emailToUsername(email),
           created_at: new Date().toISOString(),
           contract_type: contractType,
+          weekly_target_hours: weeklyTargetHours,
+          working_days_per_week: workingDaysPerWeek,
+          vacation_days_per_year: vacationDaysPerYear,
           object_ids: objectIds,
         },
       },

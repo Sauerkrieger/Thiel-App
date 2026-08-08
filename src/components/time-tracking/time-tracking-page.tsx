@@ -17,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { overtimeBalanceHours } from "@/lib/contract";
+import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
@@ -30,6 +30,8 @@ type ProfileSummary = {
   vacation_days_used: number;
   overtime_hours: number;
   contract_type: ContractType | null;
+  weekly_target_hours: number | null;
+  vacation_days_per_year: number | null;
 };
 
 type Summary = {
@@ -55,6 +57,21 @@ function startOfWeek(date: Date): Date {
   result.setDate(result.getDate() - day + 1);
   result.setHours(0, 0, 0, 0);
   return result;
+}
+
+/**
+ * Vertrags-Label fürs Dashboard: Standard-Verträge zeigen nur den Namen
+ * („Vollzeit“), individuelle Verträge zusätzlich das Soll („Individuell · 35 h/Woche“).
+ */
+function contractInfoLabel(profile: ProfileSummary): string {
+  const label = CONTRACT_LABELS[profile.contract_type ?? "full_time"] ?? "Vollzeit";
+  if (
+    profile.contract_type === "custom" &&
+    typeof profile.weekly_target_hours === "number"
+  ) {
+    return `${label} · ${profile.weekly_target_hours} h/Woche`;
+  }
+  return label;
 }
 
 export function TimeTrackingPage() {
@@ -121,11 +138,20 @@ export function TimeTrackingPage() {
       })
       .reduce((total, entry) => total + workedMinutesOf(entry), 0);
   }, [summary]);
-  const vacationRemaining = summary ? Math.max(0, summary.profile.vacation_days_total - summary.profile.vacation_days_used) : 0;
-  // Automatisch berechnet + manuelle Korrektur der Verwaltung (overtime_hours).
+  // Resturlaub = Jahresurlaubsanspruch (Vertrag) minus genutzte Tage.
+  const vacationEntitlement =
+    summary?.profile.vacation_days_per_year ?? summary?.profile.vacation_days_total ?? 0;
+  const vacationRemaining = summary
+    ? Math.max(0, vacationEntitlement - summary.profile.vacation_days_used)
+    : 0;
+  // Automatisch berechnet (Soll = weekly_target_hours, custom nutzt Profilwert)
+  // + manuelle Korrektur der Verwaltung (overtime_hours).
   const overtimeBalance = summary
-    ? overtimeBalanceHours(summary.entries, summary.profile.contract_type) +
-      Number(summary.profile.overtime_hours ?? 0)
+    ? overtimeBalanceHours(
+        summary.entries,
+        summary.profile.contract_type,
+        summary.profile.weekly_target_hours ?? null,
+      ) + Number(summary.profile.overtime_hours ?? 0)
     : 0;
 
   async function submitRequest(event: React.FormEvent) {
@@ -201,10 +227,17 @@ export function TimeTrackingPage() {
 
   return (
     <div className="container py-6 sm:py-10">
-      <div>
-        <p className="mb-2 text-sm font-medium text-primary">Mein Arbeitskonto</p>
-        <h1 className="text-3xl font-bold tracking-tight">Zeiterfassung</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <p className="mb-2 text-sm font-medium text-primary">Mein Arbeitskonto</p>
+          <h1 className="text-3xl font-bold tracking-tight">Zeiterfassung</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Arbeitszeit, Urlaub und Abwesenheiten auf einen Blick.</p>
+        </div>
+        {summary ? (
+          <Badge variant="secondary" className="shrink-0">
+            {contractInfoLabel(summary.profile)}
+          </Badge>
+        ) : null}
       </div>
 
       {loading && !summary ? (
@@ -212,7 +245,7 @@ export function TimeTrackingPage() {
       ) : summary ? (
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={<CalendarDays />} label="Resturlaub" value={`${vacationRemaining} Tage`} detail={`${summary.profile.vacation_days_used} von ${summary.profile.vacation_days_total} Tagen genutzt`} />
+            <MetricCard icon={<CalendarDays />} label="Resturlaub" value={`${vacationRemaining} Tage`} detail={`${summary.profile.vacation_days_used} von ${vacationEntitlement} Tagen genutzt`} />
             <MetricCard icon={<Coffee />} label="Diese Woche" value={minutesToLabel(weekMinutes)} />
             <MetricCard icon={<TimerReset />} label="Dieser Monat" value={minutesToLabel(monthMinutes)} />
             <MetricCard icon={<FileClock />} label="Überstundenkonto" value={hoursToLabel(overtimeBalance)} />

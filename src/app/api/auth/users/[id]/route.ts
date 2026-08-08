@@ -6,7 +6,7 @@ import {
   isUserRole,
   invalidateProfileCache,
 } from "@/lib/auth";
-import { isContractType } from "@/lib/contract";
+import { CONTRACT_DEFAULTS, isContractType } from "@/lib/contract";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
@@ -32,9 +32,38 @@ export async function PATCH(
     const body = await request.json().catch(() => ({}));
     const name = typeof body.name === "string" ? body.name.trim() : null;
     const role = isUserRole(body.role) ? body.role : null;
-    const contractType = isContractType(body.contract_type)
+    const contractType: ContractType | undefined = isContractType(body.contract_type)
       ? body.contract_type
       : undefined;
+    // Sollstunden/Arbeitstage/Urlaubstage (custom): übermittelte Werte
+    // gewinnen; fehlt die Vertragsart, bleiben die Felder unberührt.
+    const weeklyTargetHours =
+      typeof body.weekly_target_hours === "number" && Number.isFinite(body.weekly_target_hours)
+        ? body.weekly_target_hours
+        : undefined;
+    const workingDaysPerWeek =
+      typeof body.working_days_per_week === "number" && Number.isFinite(body.working_days_per_week)
+        ? body.working_days_per_week
+        : undefined;
+    const vacationDaysPerYear =
+      typeof body.vacation_days_per_year === "number" && Number.isFinite(body.vacation_days_per_year)
+        ? Math.round(body.vacation_days_per_year)
+        : undefined;
+
+    // Plausibilitätsprüfung der Vertragswerte.
+    if (
+      (weeklyTargetHours !== undefined &&
+        (weeklyTargetHours <= 0 || weeklyTargetHours > 168)) ||
+      (workingDaysPerWeek !== undefined &&
+        (workingDaysPerWeek <= 0 || workingDaysPerWeek > 7)) ||
+      (vacationDaysPerYear !== undefined &&
+        (vacationDaysPerYear < 0 || vacationDaysPerYear > 365))
+    ) {
+      return NextResponse.json(
+        { error: "Ungültige Vertragswerte (Sollstunden 0–168, Arbeitstage 1–7, Urlaubstage 0–365)." },
+        { status: 400 },
+      );
+    }
     const rawObjectIds: unknown = Array.isArray(body.object_ids) ? body.object_ids : undefined;
     const objectIds = Array.isArray(rawObjectIds)
       ? rawObjectIds.filter((oid: unknown): oid is string => typeof oid === "string" && oid.length > 0)
@@ -97,7 +126,7 @@ export async function PATCH(
       }
     }
 
-    if (!name && !role && contractType === undefined && vacationDaysTotal === undefined && overtimeHours === undefined && objectIds === undefined) {
+    if (!name && !role && contractType === undefined && weeklyTargetHours === undefined && workingDaysPerWeek === undefined && vacationDaysPerYear === undefined && vacationDaysTotal === undefined && overtimeHours === undefined && objectIds === undefined) {
       return NextResponse.json(
         { error: "Keine Änderungen übermittelt." },
         { status: 400 },
@@ -137,12 +166,27 @@ export async function PATCH(
       name?: string;
       role?: UserRole;
       contract_type?: ContractType;
+      weekly_target_hours?: number;
+      working_days_per_week?: number;
+      vacation_days_per_year?: number;
       vacation_days_total?: number;
       overtime_hours?: number;
     } = {};
     if (name) update.name = name;
     if (role) update.role = role;
-    if (contractType !== undefined) update.contract_type = contractType;
+    if (contractType !== undefined) {
+      update.contract_type = contractType;
+      // Auto-Fill: Wird nur die Vertragsart geändert (z. B. Vollzeit ->
+      // Minijob), ziehen die Soll-Werte automatisch nach – analog zur UI.
+      // Ausdrücklich übermittelte Werte (custom) gewinnen.
+      const defaults = CONTRACT_DEFAULTS[contractType];
+      if (weeklyTargetHours === undefined) update.weekly_target_hours = defaults.weekly_target_hours;
+      if (workingDaysPerWeek === undefined) update.working_days_per_week = defaults.working_days_per_week;
+      if (vacationDaysPerYear === undefined) update.vacation_days_per_year = defaults.vacation_days_per_year;
+    }
+    if (weeklyTargetHours !== undefined) update.weekly_target_hours = weeklyTargetHours;
+    if (workingDaysPerWeek !== undefined) update.working_days_per_week = workingDaysPerWeek;
+    if (vacationDaysPerYear !== undefined) update.vacation_days_per_year = vacationDaysPerYear;
     if (vacationDaysTotal !== undefined) update.vacation_days_total = vacationDaysTotal;
     if (overtimeHours !== undefined) update.overtime_hours = Math.round(overtimeHours * 100) / 100;
 
@@ -164,7 +208,7 @@ export async function PATCH(
       .from("profiles")
       .update(updatePayload)
       .eq("id", id)
-      .select("id, name, role, email, created_at, vacation_days_total, vacation_days_used, overtime_hours, contract_type")
+      .select("id, name, role, email, created_at, vacation_days_total, vacation_days_used, overtime_hours, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year")
       .single();
     if (error) throw error;
 
@@ -218,6 +262,9 @@ export async function PATCH(
         username: emailToUsername(data.email),
         created_at: data.created_at,
         contract_type: data.contract_type,
+        weekly_target_hours: data.weekly_target_hours,
+        working_days_per_week: data.working_days_per_week,
+        vacation_days_per_year: data.vacation_days_per_year,
         object_ids: resultObjectIds,
       },
     });

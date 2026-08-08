@@ -14,7 +14,7 @@ export async function GET() {
   try {
     const supabase = getSupabaseAdmin();
     const [{ data: profiles, error: profilesError }, { data: openEntries, error: entriesError }] = await Promise.all([
-      supabase.from("profiles").select("id, name, role, vacation_days_total, vacation_days_used, overtime_hours, contract_type").order("name"),
+      supabase.from("profiles").select("id, name, role, vacation_days_total, vacation_days_used, overtime_hours, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
       supabase.from("time_entries").select("*").is("clock_out", null).order("clock_in", { ascending: false }),
     ]);
     if (profilesError) throw profilesError;
