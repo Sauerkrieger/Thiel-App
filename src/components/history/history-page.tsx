@@ -12,6 +12,7 @@ import {
   Search,
   Truck,
   User as UserIcon,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -143,7 +144,9 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
         tour.driver_name ?? "",
         ...(tour.delivered_objects ?? []),
         ...(tour.delivered_addresses ?? []),
-        ...(tour.delivered_customers ?? []),
+        // Kunden-Infos sind Admin-Daten – nur Admins können danach suchen.
+        ...(isAdmin ? (tour.delivered_customers ?? []) : []),
+        ...(tour.undeliverable ?? []).flatMap((u) => [u.object_name, u.reason ?? ""]),
         ...(tour.key_numbers ?? []).flatMap((key) => [`nr. ${key}`, String(key)]),
         tour.start_time ? `start ${tour.start_time.slice(0, 5)}` : "",
         tour.date,
@@ -323,6 +326,22 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                     <p className="text-sm text-muted-foreground">
                       Noch keine Objekte beliefert.
                     </p>
+                  )}
+                  {(tour.undeliverable ?? []).length > 0 && (
+                    <div className="mt-2">
+                      <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                        Nicht lieferbar ({tour.undeliverable.length})
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(tour.undeliverable ?? []).map((u, i) => (
+                          <Badge key={`${u.object_name}-${i}`} variant="warning" className="gap-1">
+                            <XCircle className="h-3 w-3" />
+                            {u.object_name}
+                            {u.reason ? ` – ${u.reason}` : ""}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
                   )}
                   {(tour.key_numbers ?? []).length > 0 && (
                     <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">

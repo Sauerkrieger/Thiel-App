@@ -636,6 +636,8 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         .filter((s) => s.tour_id === tour.id)
         .sort((a, b) => Number(a.stop_order) - Number(b.stop_order));
       const delivered = tourStops.filter((s) => s.is_delivered === true);
+      const undeliverable = tourStops.filter((s) => s.is_undeliverable === true);
+      const isAdminRole = getCurrentUserRole() === "admin";
       return {
         id: tour.id,
         date: tour.date,
@@ -652,14 +654,25 @@ async function readOffline(req: OfflineRead): Promise<Response> {
           .filter((n): n is string => typeof n === "string"),
         // Parallel zu delivered_objects – gleiche Reihenfolge wie in der
         // Online-API, damit die Historie-Suche (Adresse/Kunde) auch offline
-        // genauso funktioniert.
+        // genauso funktioniert. Kunden nur für Admins (Admin-Daten).
         delivered_addresses: delivered
           .map((s) => objectAddress.get(s.object_id as string))
           .filter((a): a is string => typeof a === "string" && a.length > 0),
-        delivered_customers: delivered
-          .map((s) => objectCustomer.get(s.object_id as string))
-          .filter((c): c is string => typeof c === "string" && c.length > 0),
+        delivered_customers: isAdminRole
+          ? delivered
+              .map((s) => objectCustomer.get(s.object_id as string))
+              .filter((c): c is string => typeof c === "string" && c.length > 0)
+          : [],
         delivered_count: delivered.length,
+        undeliverable_count: undeliverable.length,
+        undeliverable: undeliverable.map((s) => ({
+          object_name:
+            objectName.get(s.object_id as string) ?? "Unbekanntes Objekt",
+          reason:
+            typeof s.undeliverable_reason === "string"
+              ? s.undeliverable_reason
+              : null,
+        })),
         key_numbers: [...new Set(
           tourStops
             .map((s) => s.key_number)
@@ -699,6 +712,11 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         stop_order: stop.stop_order,
         arrival_time: stop.arrival_time,
         is_delivered: stop.is_delivered === true,
+        is_undeliverable: stop.is_undeliverable === true,
+        undeliverable_reason:
+          typeof stop.undeliverable_reason === "string"
+            ? stop.undeliverable_reason
+            : null,
         key_number: typeof stop.key_number === "number" ? stop.key_number : null,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
         delivered_items: parseDeliveredItems(stop.delivered_items),
@@ -1002,6 +1020,8 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       "stop_order",
       "arrival_time",
       "is_delivered",
+      "is_undeliverable",
+      "undeliverable_reason",
       "next_delivery_items",
       "delivered_items",
     ]));

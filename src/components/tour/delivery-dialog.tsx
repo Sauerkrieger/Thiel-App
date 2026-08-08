@@ -14,6 +14,7 @@ import {
   MessageSquareText,
   PackageCheck,
   Truck,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -118,6 +119,9 @@ export function DeliveryDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  /** „Nicht lieferbar“-Eingabe: Formular sichtbar + eingegebener Grund. */
+  const [undeliverableMode, setUndeliverableMode] = useState(false);
+  const [undeliverableReason, setUndeliverableReason] = useState("");
 
   const load = useCallback(async () => {
     if (!stop?.object?.id) return;
@@ -161,6 +165,12 @@ export function DeliveryDialog({
   useEffect(() => {
     if (open && stop) void load();
   }, [open, stop, load]);
+
+  // Bei Stopp-Wechsel die „Nicht lieferbar“-Eingabe zurücksetzen.
+  useEffect(() => {
+    setUndeliverableMode(false);
+    setUndeliverableReason(stop?.undeliverable_reason ?? "");
+  }, [stop]);
 
   function toggle(itemName: string, checked: boolean) {
     setExtras((prev) => {
@@ -232,6 +242,65 @@ export function DeliveryDialog({
     }
   }
 
+  /** Stopp als „nicht lieferbar“ markieren (optional mit Grund). */
+  async function handleUndeliverable() {
+    if (!stop) return;
+    setSaving(true);
+    try {
+      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_delivered: false,
+          is_undeliverable: true,
+          undeliverable_reason: undeliverableReason.trim() || null,
+          next_delivery_items: extras,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        toast.error(body.error ?? "Speichern fehlgeschlagen.");
+        return;
+      }
+      toast.success(
+        `„${stop.object?.name ?? "Unbekanntes Objekt"}" als nicht lieferbar markiert.`,
+      );
+      onDelivered();
+      onOpenChange(false);
+    } catch {
+      toast.error("Speichern fehlgeschlagen.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** „Nicht lieferbar“-Markierung aufheben (Stopp wieder offen). */
+  async function handleUndoUndeliverable() {
+    if (!stop) return;
+    setSaving(true);
+    try {
+      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_undeliverable: false, undeliverable_reason: null }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        toast.error(body.error ?? "Speichern fehlgeschlagen.");
+        return;
+      }
+      toast.success(
+        `„${stop.object?.name ?? "Unbekanntes Objekt"}" wieder als offen markiert.`,
+      );
+      onDelivered();
+      onOpenChange(false);
+    } catch {
+      toast.error("Speichern fehlgeschlagen.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const standardItems = items.filter((item) => item.is_always_required);
   const variableItems = items.filter((item) => !item.is_always_required);
   const staleExtras = previousExtras.filter(
@@ -261,6 +330,15 @@ export function DeliveryDialog({
             <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
               <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="whitespace-pre-wrap">{stop.object.remark}</span>
+            </p>
+          )}
+          {stop?.is_undeliverable && (
+            <p className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+              <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Als nicht lieferbar markiert
+                {stop.undeliverable_reason ? `: ${stop.undeliverable_reason}` : ""}
+              </span>
             </p>
           )}
         </DialogHeader>
@@ -443,6 +521,40 @@ export function DeliveryDialog({
           </div>
         )}
 
+        {/* „Nicht lieferbar“-Eingabe (nur bei offenen Stopps) */}
+        {undeliverableMode && !stop?.is_delivered && !stop?.is_undeliverable && (
+          <div className="space-y-2 rounded-md border border-dashed p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Als nicht lieferbar markieren
+            </p>
+            <Input
+              value={undeliverableReason}
+              onChange={(e) => setUndeliverableReason(e.target.value)}
+              placeholder="Grund (optional), z. B. Objekt geschlossen"
+              maxLength={500}
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => void handleUndeliverable()}
+                disabled={saving || loading}
+                className="gap-1"
+              >
+                <XCircle className="h-4 w-4" />
+                Bestätigen
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setUndeliverableMode(false)}
+                disabled={saving}
+              >
+                Abbrechen
+              </Button>
+            </div>
+          </div>
+        )}
+
         <DialogFooter className="sm:justify-between">
           {stop?.is_delivered ? (
             <Button
@@ -453,8 +565,25 @@ export function DeliveryDialog({
             >
               Als offen markieren
             </Button>
+          ) : stop?.is_undeliverable ? (
+            <Button
+              variant="ghost"
+              onClick={() => void handleUndoUndeliverable()}
+              disabled={saving || loading}
+              className="text-muted-foreground"
+            >
+              Als offen markieren
+            </Button>
           ) : (
-            <span />
+            <Button
+              variant="ghost"
+              onClick={() => setUndeliverableMode((v) => !v)}
+              disabled={saving || loading}
+              className="text-muted-foreground"
+            >
+              <XCircle className="h-4 w-4" />
+              Nicht lieferbar
+            </Button>
           )}
           <div className="flex gap-2">
             <Button

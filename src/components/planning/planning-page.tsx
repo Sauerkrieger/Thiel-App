@@ -18,6 +18,7 @@ import {
   Save,
   Search,
   Store,
+  Truck,
 } from "lucide-react";
 import { cleanAddressLabel } from "@/lib/address";
 import { toast } from "sonner";
@@ -52,6 +53,7 @@ import type {
   PhotoMatch,
   PlanningObject,
   RouteOptimizationResult,
+  TourHistoryItem,
 } from "@/types/api";
 
 const WEEKDAY_NAMES = [
@@ -100,6 +102,12 @@ export function PlanningPage() {
     objectName: string | null;
   }>({ open: false, objectId: null, objectName: null });
   const [startingTour, setStartingTour] = useState(false);
+  // Laufende Tour (in_transit) – damit der Fahrer seine Tour auch nach
+  // Tab-/App-Neustart sofort wiederfindet.
+  const [activeTour, setActiveTour] = useState<
+    | { id: string; date: string; start_time: string | null }
+    | null
+  >(null);
   const [photoOpen, setPhotoOpen] = useState(false);
   // Warnung „noch nicht eingestempelt“ vor der Routenberechnung
   const [clockWarningOpen, setClockWarningOpen] = useState(false);
@@ -156,6 +164,41 @@ export function PlanningPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Laufende Tour laden (nur eigene Touren, stale-while-revalidate).
+  const loadActiveTour = useCallback(async () => {
+    const url = "/api/tours";
+    const cached = await offlineReadCached(url);
+    const cachedTours = (cached?.tours ?? []) as TourHistoryItem[];
+    const cachedActive = cachedTours.find((t) => t.status === "in_transit");
+    if (cachedActive) {
+      setActiveTour({
+        id: cachedActive.id,
+        date: cachedActive.date,
+        start_time: cachedActive.start_time,
+      });
+      return;
+    }
+    try {
+      const res = await offlineFetch(url, { cache: "no-store" });
+      if (!res.ok) return;
+      const body = await res.json();
+      const active = (body.tours ?? []).find(
+        (t: TourHistoryItem) => t.status === "in_transit",
+      );
+      setActiveTour(
+        active
+          ? { id: active.id, date: active.date, start_time: active.start_time }
+          : null,
+      );
+    } catch {
+      // Offline ohne Cache: kein Banner – die Planung selbst funktioniert weiter.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadActiveTour();
+  }, [loadActiveTour]);
 
   const dirty = useMemo(() => {
     if (selected.size !== savedIds.length) return true;
@@ -442,6 +485,37 @@ export function PlanningPage() {
           )}
         </div>
       </div>
+
+      {/* Laufende Tour: direkter Einstieg, auch nach Tab-/App-Neustart */}
+      {activeTour && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Truck className="h-5 w-5 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Laufende Tour</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {new Date(
+                  activeTour.date + "T00:00:00",
+                ).toLocaleDateString("de-DE", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                })}
+                {activeTour.start_time
+                  ? ` · Start ${activeTour.start_time.slice(0, 5)} Uhr`
+                  : ""}
+                {" "}– weiterfahren und abschließen
+              </p>
+            </div>
+          </div>
+          <Button size="sm" asChild>
+            <Link href={`/tour/${activeTour.id}`} className="gap-1.5">
+              <Play className="h-4 w-4" />
+              Zur Tour
+            </Link>
+          </Button>
+        </div>
+      )}
 
       {/* Vorauswahl-Hinweis (nur im Auswahl-Modus) */}
       {!route && !loading && !error && (

@@ -14,6 +14,7 @@ import {
   MapPin,
   PartyPopper,
   Truck,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -109,7 +110,15 @@ export function TourPage({ tourId }: Props) {
   );
   const total = stops.length;
   const deliveredCount = stops.filter((stop) => stop.is_delivered).length;
+  const undeliverableCount = stops.filter(
+    (stop) => stop.is_undeliverable === true,
+  ).length;
+  // „Abgearbeitet“ = beliefert ODER nicht lieferbar. Erst wenn alle Stopps
+  // abgearbeitet sind, darf die Tour abgeschlossen werden – ohne falsche
+  // „beliefert“-Haken für nicht lieferbare Objekte.
   const allDelivered = total > 0 && deliveredCount === total;
+  const allResolved = total > 0 && deliveredCount + undeliverableCount === total;
+  const openCount = total - deliveredCount - undeliverableCount;
   const progress = total > 0 ? Math.round((deliveredCount / total) * 100) : 0;
   const completed = tour?.status === "completed";
 
@@ -216,6 +225,14 @@ export function TourPage({ tourId }: Props) {
                 <p className="text-sm">
                   <span className="font-semibold">{deliveredCount}</span> von{" "}
                   {total} Objekten beliefert
+                  {undeliverableCount > 0 && (
+                    <>
+                      {" · "}
+                      <span className="font-medium text-amber-700 dark:text-amber-400">
+                        {undeliverableCount} nicht lieferbar
+                      </span>
+                    </>
+                  )}
                 </p>
                 <p className="text-sm font-semibold tabular-nums">{progress}%</p>
               </div>
@@ -240,6 +257,7 @@ export function TourPage({ tourId }: Props) {
             <ol className="space-y-2">
               {stops.map((stop, index) => {
                 const delivered = stop.is_delivered;
+                const undeliverable = stop.is_undeliverable === true;
                 return (
                   <li key={stop.id}>
                     <div
@@ -260,7 +278,9 @@ export function TourPage({ tourId }: Props) {
                         "flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
                         delivered
                           ? "border-success/30 bg-success/5 hover:bg-success/10"
-                          : "border-transparent bg-card hover:border-primary/40 hover:bg-accent/40",
+                          : undeliverable
+                            ? "border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10"
+                            : "border-transparent bg-card hover:border-primary/40 hover:bg-accent/40",
                       ].join(" ")}
                     >
                       <span
@@ -268,15 +288,27 @@ export function TourPage({ tourId }: Props) {
                           "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
                           delivered
                             ? "bg-success text-success-foreground"
-                            : "bg-foreground text-background",
+                            : undeliverable
+                              ? "bg-amber-500 text-amber-50"
+                              : "bg-foreground text-background",
                         ].join(" ")}
                       >
-                        {delivered ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
+                        {delivered ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : undeliverable ? (
+                          <XCircle className="h-4 w-4" />
+                        ) : (
+                          index + 1
+                        )}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span
-                            className={delivered ? "font-medium text-muted-foreground" : "font-medium"}
+                            className={
+                              delivered
+                                ? "font-medium text-muted-foreground"
+                                : "font-medium"
+                            }
                           >
                             {stop.object?.name ?? "Unbekanntes Objekt"}
                           </span>
@@ -286,6 +318,12 @@ export function TourPage({ tourId }: Props) {
                               beliefert
                             </Badge>
                           )}
+                          {undeliverable && (
+                            <Badge variant="warning" className="gap-1">
+                              <XCircle className="h-3 w-3" />
+                              nicht lieferbar
+                            </Badge>
+                          )}
                         </span>
                         <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                           <MapPin className="h-3 w-3 shrink-0" />
@@ -293,6 +331,11 @@ export function TourPage({ tourId }: Props) {
                             stop.object?.address ?? "Adresse unbekannt",
                           )}
                         </span>
+                        {undeliverable && stop.undeliverable_reason && (
+                          <span className="mt-0.5 block text-xs font-medium text-amber-700 dark:text-amber-400">
+                            Grund: {stop.undeliverable_reason}
+                          </span>
+                        )}
                         {stop.object?.remark && (
                           <ObjectRemark
                             remark={stop.object.remark}
@@ -361,13 +404,15 @@ export function TourPage({ tourId }: Props) {
               <p className="min-w-0 text-sm text-muted-foreground">
                 {allDelivered
                   ? "Alle Stopps beliefert – Tour abschließen."
-                  : `Noch ${total - deliveredCount} Stopp${total - deliveredCount === 1 ? "" : "s"} offen`}
+                  : allResolved
+                    ? `Alle Stopps abgearbeitet – ${undeliverableCount} nicht lieferbar.`
+                    : `Noch ${openCount} Stopp${openCount === 1 ? "" : "s"} offen`}
               </p>
               <Button
                 size="lg"
-                variant={allDelivered ? "default" : "outline"}
+                variant={allDelivered ? "default" : allResolved ? "default" : "outline"}
                 onClick={() => void handleFinishTour()}
-                disabled={!allDelivered || finishing}
+                disabled={!allResolved || finishing}
                 className="gap-2"
               >
                 <Flag />

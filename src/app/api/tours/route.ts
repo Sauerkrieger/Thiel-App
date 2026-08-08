@@ -24,6 +24,18 @@ type StopInput = {
   next_delivery_items?: unknown;
 };
 
+// Stopp-Zeile der Historie. Die „Nicht lieferbar“-Spalten existieren erst nach
+// Migration 20260811000000 – die Fallback-Query (ohne Migration) liefert Zeilen
+// ohne sie, deshalb sind die neuen Felder optional.
+type HistoryStopRow = {
+  tour_id: string;
+  object_id: string;
+  is_delivered: boolean;
+  key_number: number | null;
+  is_undeliverable?: boolean;
+  undeliverable_reason?: string | null;
+};
+
 /** GET /api/tours?user_id=xxx -> Tourenhistorie. Fahrer: nur eigene Touren. Admin: alle (optional gefiltert). */
 export async function GET(request: Request) {
   const auth = await requireUser();
@@ -81,15 +93,32 @@ export async function GET(request: Request) {
             .select("id, name")
             .in("id", driverIds)
         : Promise.resolve({ data: null, error: null });
+    const stopsQuery = getSupabaseAdmin()
+      .from("tour_stops")
+      .select("tour_id, object_id, is_delivered, is_undeliverable, undeliverable_reason, key_number")
+      .in("tour_id", tourIds)
+      .order("stop_order");
     const [stopsResult, profilesResult] = await Promise.all([
-      getSupabaseAdmin()
+      stopsQuery,
+      profilesPromise,
+    ]);
+    let stops: HistoryStopRow[] | null = stopsResult.data;
+    let stopsError = stopsResult.error;
+    if (
+      stopsError &&
+      (stopsError.code === "PGRST204" ||
+        String(stopsError.message ?? "").includes("is_undeliverable"))
+    ) {
+      // Migration 20260811000000 noch nicht angewendet → ohne die neuen
+      // Spalten lesen („Nicht lieferbar“-Infos fehlen dann bis dahin).
+      const fallback = await getSupabaseAdmin()
         .from("tour_stops")
         .select("tour_id, object_id, is_delivered, key_number")
         .in("tour_id", tourIds)
-        .order("stop_order"),
-      profilesPromise,
-    ]);
-    const { data: stops, error: stopsError } = stopsResult;
+        .order("stop_order");
+      stops = fallback.data;
+      stopsError = fallback.error;
+    }
     if (stopsError) throw stopsError;
     const { data: profiles, error: profilesError } = profilesResult;
     if (profilesError) throw profilesError;
@@ -98,11 +127,17 @@ export async function GET(request: Request) {
     const objectIds = [
       ...new Set((stops ?? []).map((s) => s.object_id)),
     ];
-    const { data: objectRows, error: objectsError } = objectIds.length
-      ? await getSupabaseAdmin()
+    // Kunden-Infos sind Admin-Daten (wie in der Objektverwaltung) – sie
+    // werden in der Historie nur Admins geliefert, nicht an Fahrer/Springer.
+    const objectQuery = admin
+      ? getSupabaseAdmin()
           .from("objects")
           .select("id, name, address, customer")
-          .in("id", objectIds)
+      : getSupabaseAdmin()
+          .from("objects")
+          .select("id, name, address");
+    const { data: objectRows, error: objectsError } = objectIds.length
+      ? await objectQuery.in("id", objectIds)
       : { data: [], error: null };
     if (objectsError) throw objectsError;
     const nameByObjectId = new Map(
@@ -111,11 +146,16 @@ export async function GET(request: Request) {
     const addressByObjectId = new Map(
       (objectRows ?? []).map((o) => [o.id, o.address]),
     );
-    const customerByObjectId = new Map(
-      (objectRows ?? []).map((o) => [o.id, o.customer ?? ""]),
-    );
+    const customerByObjectId = admin
+      ? new Map(
+          (objectRows ?? []).map((o) => [
+            o.id,
+            (o as { customer?: string | null }).customer ?? "",
+          ]),
+        )
+      : new Map<string, string>();
 
-    const stopsByTour = new Map<string, typeof stops>();
+    const stopsByTour = new Map<string, HistoryStopRow[]>();
     for (const stop of stops ?? []) {
       const list = stopsByTour.get(stop.tour_id) ?? [];
       list.push(stop);
@@ -125,6 +165,7 @@ export async function GET(request: Request) {
     const history: TourHistoryItem[] = (tours ?? []).map((tour) => {
       const tourStops = stopsByTour.get(tour.id) ?? [];
       const delivered = tourStops.filter((s) => s.is_delivered);
+      const undeliverable = tourStops.filter((s) => s.is_undeliverable === true);
       return {
         id: tour.id,
         date: tour.date,
@@ -138,15 +179,26 @@ export async function GET(request: Request) {
         delivered_addresses: delivered
           .map((s) => addressByObjectId.get(s.object_id) ?? "")
           .filter((a): a is string => a.length > 0),
-        delivered_customers: delivered
-          .map((s) => customerByObjectId.get(s.object_id) ?? "")
-          .filter((c): c is string => c.length > 0),
+        // Kunden nur für Admins (dürfen in der Historie danach suchen).
+        delivered_customers: admin
+          ? delivered
+              .map((s) => customerByObjectId.get(s.object_id) ?? "")
+              .filter((c): c is string => c.length > 0)
+          : [],
+        delivered_count: delivered.length,
+        undeliverable_count: undeliverable.length,
+        undeliverable: undeliverable.map((s) => ({
+          object_name: nameByObjectId.get(s.object_id) ?? "Unbekanntes Objekt",
+          reason:
+            typeof s.undeliverable_reason === "string"
+              ? s.undeliverable_reason
+              : null,
+        })),
         key_numbers: [...new Set(
           tourStops
             .map((s) => s.key_number)
             .filter((key): key is number => typeof key === "number"),
         )].sort((a, b) => a - b),
-        delivered_count: delivered.length,
         total_stops: tourStops.length,
       };
     });

@@ -139,6 +139,10 @@ export type TourStopWithObject = {
   stop_order: number;
   arrival_time: string | null;
   is_delivered: boolean;
+  /** true = Stopp konnte nicht beliefert werden (schließt is_delivered aus). */
+  is_undeliverable: boolean;
+  /** Optionaler Grund, warum der Stopp nicht beliefert werden konnte. */
+  undeliverable_reason: string | null;
   key_number: number | null;
   next_delivery_items: DeliveryItem[];
   delivered_items: DeliveredItem[];
@@ -359,6 +363,13 @@ export type TourHistoryItem = {
   delivered_customers: string[];
   /** Anzahl der belieferten Stopps. */
   delivered_count: number;
+  /** Anzahl der Stopps, die nicht beliefert werden konnten. */
+  undeliverable_count: number;
+  /** Nicht belieferte Stopps mit optionalem Grund (parallel zu undeliverable_count). */
+  undeliverable: Array<{
+    object_name: string;
+    reason: string | null;
+  }>;
   /** Gesamtzahl der Stopps. */
   total_stops: number;
   /** Schlüsselnummern, die für diese Tour eingeplant waren. */

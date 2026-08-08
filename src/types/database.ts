@@ -538,6 +538,10 @@ export interface Database {
           next_delivery_items: Json;
           /** Snapshot der tatsächlich gelieferten Items dieses Stopps. */
           delivered_items: Json;
+          /** true = Stopp konnte nicht beliefert werden (schließt is_delivered aus). */
+          is_undeliverable: boolean;
+          /** Optionaler Grund, warum der Stopp nicht beliefert werden konnte. */
+          undeliverable_reason: string | null;
           created_at: string;
           updated_at: string;
           /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
@@ -555,6 +559,8 @@ export interface Database {
           key_number?: number | null;
           next_delivery_items?: Json;
           delivered_items?: Json;
+          is_undeliverable?: boolean;
+          undeliverable_reason?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -570,6 +576,8 @@ export interface Database {
           key_number?: number | null;
           next_delivery_items?: Json;
           delivered_items?: Json;
+          is_undeliverable?: boolean;
+          undeliverable_reason?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
