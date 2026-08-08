@@ -47,7 +47,7 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - `weekly_target_hours` (numeric, default 40) – **Wochen-Sollstunden** fürs Überstundenkonto (Auto-Fill: Vollzeit 40 / Teilzeit 20 / Minijob 10; bei `custom` frei)
 - `working_days_per_week` (numeric, default 5) – geplante Arbeitstage pro Woche (Auto-Fill: 5/5/2; bei `custom` frei, Basis für den Urlaubsanspruch)
 - `vacation_days_per_year` (integer, default 30) – **individuelle Jahresurlaubstage**; Resturlaub überall = `vacation_days_per_year − vacation_days_used` (Auto-Fill: 30/30/12, in allen Vertragsarten manuell überschreibbar)
-- Auto-Fill beim Anlegen/Bearbeiten: Vollzeit → 40 h / 5 Tage / 30 Tage, Teilzeit → 20 h / 5 Tage / 30 Tage, Minijob → 10 h / 2 Tage / 12 Tage; `custom` zeigt Soll-Stunden & Arbeitstage als Eingabefelder, Urlaubsanspruch wird als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen
+- Auto-Fill beim Anlegen/Bearbeiten: Vollzeit → 40 h / 5 Tage / 30 Tage, Teilzeit → 20 h / 5 Tage / 30 Tage, Minijob → 10 h / 2 Tage / 12 Tage; **Soll-Stunden & Arbeitstage sind in allen Vertragsarten anpassbar** (Defaults vorbefüllt), Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen
 - Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an (inkl. Vertrags-Defaults)
 - **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
 
@@ -190,7 +190,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 ### 5.8 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
 - **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob/Individuell – bestimmt das Soll im Überstundenkonto)
-- **Vertrags-Auto-Fill:** Die Vertragsart befüllt Soll-Stunden, Arbeitstage und Urlaubstage automatisch (Vollzeit 40/5/30, Teilzeit 20/5/30, Minijob 10/2/12); `custom` („Individuell“) blendet **Soll-Stunden/Woche** und **Arbeitstage/Woche** ein, der Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen. **`vacation_days_per_year` bleibt in allen Vertragsarten manuell anpassbar.** Bei bestehenden Nutzern öffnet die Wahl „Individuell“ einen Dialog mit den drei Feldern; der Wechsel auf Vollzeit/Teilzeit/Minijob übernimmt die Auto-Fill-Werte serverseitig
+- **Vertrags-Auto-Fill:** Die Vertragsart befüllt Soll-Stunden, Arbeitstage und Urlaubstage automatisch (Vollzeit 40/5/30, Teilzeit 20/5/30, Minijob 10/2/12) – **Arbeitstage/Woche und Urlaubstage/Jahr sind in allen Vertragsarten direkt anpassbar** (Defaults vorbefüllt), **Soll-Stunden/Woche** zeigt nur `custom` („Individuell“) als Eingabefeld. Der Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen. Bei bestehenden Nutzern öffnet die Wahl „Individuell“ einen Dialog mit den drei Feldern; der Wechsel auf Vollzeit/Teilzeit/Minijob übernimmt die Auto-Fill-Werte serverseitig
 - **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
 ### 5.9 Zeiterfassung & Urlaubsverwaltung

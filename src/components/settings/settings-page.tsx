@@ -842,6 +842,40 @@ function UsersSection({
               </Select>
             </div>
             <div className="space-y-1.5">
+              <Label htmlFor="nu-days">Arbeitstage / Woche</Label>
+              <Input
+                id="nu-days"
+                type="number"
+                min={1}
+                step="0.5"
+                max={7}
+                value={workingDaysPerWeek}
+                onChange={(e) => handleDaysChange(e.target.value, setWorkingDaysPerWeek, setVacationDaysPerYear)}
+                disabled={creating}
+              />
+              <p className="text-xs text-muted-foreground">
+                Urlaubsanspruch wird automatisch vorgeschlagen.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {contractType === "custom" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="nu-weekly">Soll-Stunden / Woche</Label>
+                <Input
+                  id="nu-weekly"
+                  type="number"
+                  min={0.5}
+                  step="0.5"
+                  max={168}
+                  value={weeklyTargetHours}
+                  onChange={(e) => setWeeklyTargetHours(e.target.value)}
+                  disabled={creating}
+                />
+              </div>
+            )}
+            <div className={contractType === "custom" ? "space-y-1.5" : "space-y-1.5 sm:col-span-2"}>
               <Label htmlFor="nu-vacation">Urlaubstage / Jahr</Label>
               <Input
                 id="nu-vacation"
@@ -857,41 +891,6 @@ function UsersSection({
               </p>
             </div>
           </div>
-
-          {/* Individueller Vertrag: Soll-Stunden & Arbeitstage (custom) */}
-          {contractType === "custom" && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="nu-weekly">Soll-Stunden / Woche</Label>
-                <Input
-                  id="nu-weekly"
-                  type="number"
-                  min={0.5}
-                  step="0.5"
-                  max={168}
-                  value={weeklyTargetHours}
-                  onChange={(e) => setWeeklyTargetHours(e.target.value)}
-                  disabled={creating}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="nu-days">Arbeitstage / Woche</Label>
-                <Input
-                  id="nu-days"
-                  type="number"
-                  min={1}
-                  step="0.5"
-                  max={7}
-                  value={workingDaysPerWeek}
-                  onChange={(e) => handleDaysChange(e.target.value, setWorkingDaysPerWeek, setVacationDaysPerYear)}
-                  disabled={creating}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Urlaubsanspruch wird automatisch vorgeschlagen.
-                </p>
-              </div>
-            </div>
-          )}
 
           {/* Reinigungskraft: Objektzuweisung (mindestens 1) beim Anlegen */}
           {role === "facility_manager" && (
