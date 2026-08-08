@@ -952,28 +952,28 @@ function UsersSection({
         ) : (
           <div className="space-y-2">
             {users.map((u) => (
-              <div
-                key={u.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
-              >
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <Shield className="h-4 w-4 text-muted-foreground" />
-                    <span className="truncate">{u.name}</span>
-                    <Badge variant="secondary">{ROLE_LABELS[u.role] ?? u.role}</Badge>
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    @{u.username} · Seit{" "}
-                    {new Date(u.created_at).toLocaleDateString("de-DE")}
-                  </p>
+              <div key={u.id} className="space-y-1.5 rounded-md border p-3">
+                {/* Name + Rollen-Badge (immer voll sichtbar) */}
+                <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                  <Shield className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{u.name}</span>
+                  <Badge variant="secondary" className="shrink-0 whitespace-nowrap">
+                    {ROLE_LABELS[u.role] ?? u.role}
+                  </Badge>
                 </div>
-                <div className="flex items-center gap-2">
+                <p className="text-xs text-muted-foreground">
+                  @{u.username} · Seit{" "}
+                  {new Date(u.created_at).toLocaleDateString("de-DE")}
+                </p>
+                {/* Bedienelemente – für alle Rollen identisch aufgebaut */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Select
                     value={u.role}
                     onValueChange={(v) => handleRoleSelect(u.id, v)}
                     disabled={savingId === u.id}
                   >
-                    <SelectTrigger className="h-8 w-32">
+                    {/* w-36, damit „Reinigungskraft“ im Trigger nicht abgeschnitten wird */}
+                    <SelectTrigger className="h-8 w-36">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1003,22 +1003,24 @@ function UsersSection({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-8 gap-1 text-xs"
+                      className="h-8 gap-1 px-2 text-xs"
                       onClick={() => {
                         setEditTarget(u);
                         setEditObjectIds(u.object_ids ?? []);
                       }}
                       title={`${(u.object_ids ?? []).length} Objekte zugewiesen`}
+                      aria-label={`${(u.object_ids ?? []).length} Objekte zugewiesen`}
                     >
-                      <ListChecks className="h-3.5 w-3.5" />
-                      {(u.object_ids ?? []).length} Objekte
+                      <ListChecks className="h-3.5 w-3.5 shrink-0" />
+                      <span className="tabular-nums">{(u.object_ids ?? []).length}</span>
                     </Button>
                   )}
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive"
+                    className="px-2 text-destructive hover:text-destructive"
                     onClick={() => setDeleteTarget(u)}
+                    aria-label={`${u.name} löschen`}
                   >
                     <Trash2 />
                   </Button>
