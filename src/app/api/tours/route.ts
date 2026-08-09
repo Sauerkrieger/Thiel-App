@@ -52,6 +52,26 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const filterUserId = url.searchParams.get("user_id");
 
+    // Nicht abgeschlossene Touren von VORHEUTE automatisch löschen: Zurückkehren
+    // zur Tour ist nur am selben Tag sinnvoll. Der Cleanup folgt dem Scope der
+    // Query (Fahrer: eigene; Admin: alle bzw. der gefilterten Person).
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const staleTours = getSupabaseAdmin()
+        .from("active_tours")
+        .delete()
+        .in("status", ["packing", "in_transit"])
+        .lt("date", today);
+      if (!admin) {
+        staleTours.eq("driver_id", user.id);
+      } else if (filterUserId) {
+        staleTours.eq("driver_id", filterUserId);
+      }
+      await staleTours;
+    } catch {
+      // Bereinigung darf das Laden der Liste nicht blockieren.
+    }
+
     // Fahrer sehen nur ihre eigenen Touren; Admins alle (optional pro Person).
     let query = getSupabaseAdmin()
       .from("active_tours")
@@ -282,6 +302,15 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
+
+    // Eine neue Tour ersetzt die bisherige laufende Tour desselben Fahrers
+    // (packing oder in_transit) – alte Touren werden automatisch gelöscht.
+    await supabase
+      .from("active_tours")
+      .delete()
+      .eq("driver_id", auth.user.id)
+      .in("status", ["packing", "in_transit"]);
+
     const today = new Date().toISOString().slice(0, 10);
     const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
 
@@ -306,16 +335,21 @@ export async function POST(request: Request) {
 
     if (tourError) throw tourError;
 
-    const { error: stopsError } = await supabase.from("tour_stops").insert(
-      stopInputs.map((stop) => ({
-        tour_id: tour.id,
-        object_id: stop.object_id,
-        stop_order: stop.stop_order,
-        arrival_time: stop.arrival_time,
-        next_delivery_items: stop.next_delivery_items,
-        key_number: stop.key_number,
-      })),
-    );
+    // Stopps mit ihren IDs zurückgeben, damit der Client beim Start die
+    // Ankunftszeiten an den tatsächlichen Start anpassen kann.
+    const { data: createdStops, error: stopsError } = await supabase
+      .from("tour_stops")
+      .insert(
+        stopInputs.map((stop) => ({
+          tour_id: tour.id,
+          object_id: stop.object_id,
+          stop_order: stop.stop_order,
+          arrival_time: stop.arrival_time,
+          next_delivery_items: stop.next_delivery_items,
+          key_number: stop.key_number,
+        })),
+      )
+      .select("id, arrival_time");
 
     if (stopsError) {
       // Tour bereinigen, wenn das Anlegen der Stopps fehlschlägt
@@ -323,7 +357,10 @@ export async function POST(request: Request) {
       throw stopsError;
     }
 
-    return NextResponse.json({ tour }, { status: 201 });
+    return NextResponse.json(
+      { tour, stops: createdStops ?? [] },
+      { status: 201 },
+    );
   } catch (e) {
     return apiErrorResponse(e);
   }

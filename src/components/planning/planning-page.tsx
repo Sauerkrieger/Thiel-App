@@ -18,6 +18,7 @@ import {
   Save,
   Search,
   Store,
+  Trash2,
   Truck,
 } from "lucide-react";
 import { cleanAddressLabel } from "@/lib/address";
@@ -46,6 +47,7 @@ import {
   toMinutes,
 } from "@/lib/routing/time";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { getCurrentUserId } from "@/lib/offline/sync";
 import type { DayOfWeek } from "@/types/database";
 import type {
   ApiError,
@@ -78,6 +80,72 @@ const shortDateFormatter = new Intl.DateTimeFormat("de-DE", {
   month: "long",
 });
 
+// Lokaler Zwischenspeicher für den Pack-Modus: Die berechnete Route wird
+// (nur für denselben Tag) in localStorage gehalten, damit ein Wechsel zu
+// Einstellungen/Inventar und zurück nicht die Routenberechnung erfordert.
+// Eine echte Tour entsteht erst mit „Ausfahren beginnen“. Der Speicher ist
+// pro Nutzer gescoped (geteilte Geräte – wie die übrigen Offline-Daten).
+const PACK_DRAFT_KEY = "planning-pack-draft";
+
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** localStorage-Schlüssel für den aktuellen Nutzer (null, wenn unbekannt). */
+function packDraftKey(): string | null {
+  const userId = getCurrentUserId();
+  return userId ? `${PACK_DRAFT_KEY}:${userId}` : null;
+}
+
+function savePackDraft(route: RouteOptimizationResult) {
+  const key = packDraftKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ date: todayUtc(), route }));
+  } catch {
+    // Speicher blockiert/überfüllt – der Pack-Modus funktioniert trotzdem.
+  }
+}
+
+function loadPackDraft(): RouteOptimizationResult | null {
+  const key = packDraftKey();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      date?: unknown;
+      route?: Partial<RouteOptimizationResult>;
+    };
+    // Veraltete Entwürfe (anderer Tag) sofort aufräumen.
+    if (parsed.date !== todayUtc()) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    if (
+      !parsed.route ||
+      !Array.isArray(parsed.route.stops) ||
+      !Array.isArray(parsed.route.warnings) ||
+      typeof parsed.route.mode !== "string"
+    ) {
+      return null;
+    }
+    return parsed.route as RouteOptimizationResult;
+  } catch {
+    return null;
+  }
+}
+
+function clearPackDraft() {
+  const key = packDraftKey();
+  if (!key) return;
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignorieren
+  }
+}
+
 export function PlanningPage() {
   const router = useRouter();
 
@@ -102,12 +170,24 @@ export function PlanningPage() {
     objectName: string | null;
   }>({ open: false, objectId: null, objectName: null });
   const [startingTour, setStartingTour] = useState(false);
-  // Laufende Tour (in_transit) – damit der Fahrer seine Tour auch nach
-  // Tab-/App-Neustart sofort wiederfindet.
+  // Laufende Tour (packing oder in_transit) – damit der Fahrer seine Tour
+  // auch nach Tab-/App-Neustart sofort wiederfindet. Nur Touren von HEUTE
+  // zählen (ältere werden vom Server automatisch gelöscht).
   const [activeTour, setActiveTour] = useState<
-    | { id: string; date: string; start_time: string | null }
+    | {
+        id: string;
+        date: string;
+        start_time: string | null;
+        status: "packing" | "in_transit";
+      }
     | null
   >(null);
+  // Löschen der laufenden Tour aus dem Banner (Bestätigungsdialog).
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    date: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   // Warnung „noch nicht eingestempelt“ vor der Routenberechnung
   const [clockWarningOpen, setClockWarningOpen] = useState(false);
@@ -165,30 +245,47 @@ export function PlanningPage() {
     void load();
   }, [load]);
 
-  // Laufende Tour laden (nur eigene Touren, stale-while-revalidate).
+  // Berechnete Route aus dem lokalen Zwischenspeicher wiederherstellen
+  // (gleicher Tag), damit der Wechsel zu Einstellungen/Inventar und zurück
+  // den Pack-Modus nicht verwirft.
+  useEffect(() => {
+    const draft = loadPackDraft();
+    if (draft) setRoute(draft);
+  }, []);
+
+  // Laufende Tour laden (nur eigene Touren, stale-while-revalidate). Nur
+  // Touren von HEUTE mit Status packing/in_transit gelten als „laufend“.
   const loadActiveTour = useCallback(async () => {
     const url = "/api/tours";
+    const today = new Date().toISOString().slice(0, 10);
+    const isActive = (t: TourHistoryItem) =>
+      (t.status === "in_transit" || t.status === "packing") &&
+      t.date === today;
     const cached = await offlineReadCached(url);
     const cachedTours = (cached?.tours ?? []) as TourHistoryItem[];
-    const cachedActive = cachedTours.find((t) => t.status === "in_transit");
+    const cachedActive = cachedTours.find(isActive);
     if (cachedActive) {
       setActiveTour({
         id: cachedActive.id,
         date: cachedActive.date,
         start_time: cachedActive.start_time,
+        status:
+          cachedActive.status === "in_transit" ? "in_transit" : "packing",
       });
-      return;
     }
     try {
       const res = await offlineFetch(url, { cache: "no-store" });
       if (!res.ok) return;
       const body = await res.json();
-      const active = (body.tours ?? []).find(
-        (t: TourHistoryItem) => t.status === "in_transit",
-      );
+      const active = (body.tours ?? []).find(isActive);
       setActiveTour(
         active
-          ? { id: active.id, date: active.date, start_time: active.start_time }
+          ? {
+              id: active.id,
+              date: active.date,
+              start_time: active.start_time,
+              status: active.status === "in_transit" ? "in_transit" : "packing",
+            }
           : null,
       );
     } catch {
@@ -261,13 +358,17 @@ export function PlanningPage() {
         toast.error(body.error ?? "Routenberechnung fehlgeschlagen.");
         return;
       }
-      setRoute(body as RouteOptimizationResult);
+      const routeBody = body as RouteOptimizationResult;
+      setRoute(routeBody);
       window.scrollTo({ top: 0, behavior: "smooth" });
-      if ((body as RouteOptimizationResult).warnings.length > 0) {
+      if (routeBody.warnings.length > 0) {
         toast.info("Route berechnet – bitte Hinweise beachten.");
       } else {
         toast.success("Route optimiert & sortiert.");
       }
+      // Pack-Modus lokal zwischenspeichern: „Ausfahren beginnen“ legt die
+      // echte Tour erst beim Start an (status „in_transit“).
+      savePackDraft(routeBody);
     } catch {
       toast.error("Routenberechnung fehlgeschlagen.");
     } finally {
@@ -320,10 +421,10 @@ export function PlanningPage() {
       // (nicht die geschätzte Abfahrtszeit aus der Routenberechnung).
       const now = new Date();
       const actualStart = formatMinutes(now.getHours() * 60 + now.getMinutes());
-      // Alle Ankunftszeiten um die Differenz zur geschätzten Abfahrtszeit
-      // verschieben, damit das Auslieferungsfenster dem echten Start entspricht.
-      const delta = toMinutes(actualStart) - toMinutes(route.departure_time);
 
+      // „Ausfahren beginnen“ legt die Tour direkt an (status „in_transit“).
+      // Der Server ersetzt dabei automatisch eine alte laufende Tour.
+      const delta = toMinutes(actualStart) - toMinutes(route.departure_time);
       const res = await offlineFetch("/api/tours", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -342,12 +443,35 @@ export function PlanningPage() {
         toast.error(body.error ?? "Tour konnte nicht gestartet werden.");
         return;
       }
+      clearPackDraft();
       toast.success("Tour gestartet – los geht's!");
       router.push(`/tour/${body.tour.id}`);
     } catch {
       toast.error("Tour konnte nicht gestartet werden.");
     } finally {
       setStartingTour(false);
+    }
+  }
+
+  async function handleDeleteActiveTour() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await offlineFetch(`/api/tours/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(body.error ?? "Tour konnte nicht gelöscht werden.");
+        return;
+      }
+      toast.success("Laufende Tour gelöscht.");
+      setActiveTour(null);
+      setDeleteTarget(null);
+    } catch {
+      toast.error("Tour konnte nicht gelöscht werden.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -446,7 +570,7 @@ export function PlanningPage() {
           </h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             {route
-              ? "Prüfe die Packlisten und starte die Ausfahrt, wenn alles verstaut ist."
+              ? "Prüfe die Packlisten und starte die Ausfahrt, wenn alles verstaut ist. Dein Zwischenstand wird automatisch gespeichert – du kannst später hier weitermachen."
               : `Wähle die Objekte für deine Tour. Die Auswahl wird gespeichert und am nächsten ${WEEKDAY_NAMES[dayOfWeek]} automatisch vorgeschlagen.`}
           </p>
           <p className="mt-2 flex items-center gap-1.5 text-sm font-medium">
@@ -476,7 +600,10 @@ export function PlanningPage() {
           {route && (
             <Button
               variant="outline"
-              onClick={() => setRoute(null)}
+              onClick={() => {
+                clearPackDraft();
+                setRoute(null);
+              }}
               disabled={startingTour}
             >
               <ArrowLeft />
@@ -486,7 +613,8 @@ export function PlanningPage() {
         </div>
       </div>
 
-      {/* Laufende Tour: direkter Einstieg, auch nach Tab-/App-Neustart */}
+      {/* Laufende Tour: direkter Einstieg, auch nach Tab-/App-Neustart.
+          Nur Touren von heute (ältere löscht der Server automatisch). */}
       {activeTour && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -504,16 +632,32 @@ export function PlanningPage() {
                 {activeTour.start_time
                   ? ` · Start ${activeTour.start_time.slice(0, 5)} Uhr`
                   : ""}
-                {" "}– weiterfahren und abschließen
+                {" "}–
+                {activeTour.status === "packing"
+                  ? " packen und dann starten"
+                  : " weiterfahren und abschließen"}
               </p>
             </div>
           </div>
-          <Button size="sm" asChild>
-            <Link href={`/tour/${activeTour.id}`} className="gap-1.5">
-              <Play className="h-4 w-4" />
-              Zur Tour
-            </Link>
-          </Button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              aria-label="Laufende Tour löschen"
+              onClick={() =>
+                setDeleteTarget({ id: activeTour.id, date: activeTour.date })
+              }
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+            <Button size="sm" asChild>
+              <Link href={`/tour/${activeTour.id}`} className="gap-1.5">
+                <Play className="h-4 w-4" />
+                Zur Tour
+              </Link>
+            </Button>
+          </div>
         </div>
       )}
 
@@ -644,6 +788,54 @@ export function PlanningPage() {
         }
       />
 
+      {/* Laufende Tour löschen (Bestätigung) */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Laufende Tour löschen?</DialogTitle>
+            <DialogDescription>
+              {deleteTarget && (
+                <>
+                  Die Tour vom{" "}
+                  <strong>
+                    {new Date(
+                      deleteTarget.date + "T00:00:00",
+                    ).toLocaleDateString("de-DE", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </strong>{" "}
+                  wird zusammen mit ihren Stopps gelöscht. Danach kannst du eine
+                  neue Route berechnen.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Abbrechen
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteActiveTour()}
+              disabled={deleting}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleting ? "Wird gelöscht…" : "Löschen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Warnung: nicht eingestempelt, bevor die Route berechnet wird */}
       <Dialog open={clockWarningOpen} onOpenChange={setClockWarningOpen}>
         <DialogContent className="sm:max-w-md">
@@ -685,7 +877,7 @@ export function PlanningPage() {
               <Button
                 size="lg"
                 onClick={() => void handleStartTour()}
-                disabled={startingTour}
+                disabled={startingTour || optimizing}
                 className="gap-2"
               >
                 <Play />

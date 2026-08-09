@@ -19,6 +19,7 @@ const TOUR_STATUSES: readonly TourStatus[] = [
   "in_transit",
   "completed",
 ];
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Lager-Koordinaten für die Kartenanzeige (einmal pro Prozess geocodiert). */
 type WarehouseCoords = {
@@ -140,10 +141,17 @@ export async function PATCH(request: Request, { params }: Context) {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const status = body.status as unknown;
+    const startTime = body.start_time as unknown;
 
     if (!TOUR_STATUSES.includes(status as TourStatus)) {
       return NextResponse.json(
         { error: "Ungültiger Tour-Status." },
+        { status: 400 },
+      );
+    }
+    if (startTime !== undefined && (typeof startTime !== "string" || !TIME_PATTERN.test(startTime))) {
+      return NextResponse.json(
+        { error: "Ungültige Startzeit (Format HH:MM erwartet)." },
         { status: 400 },
       );
     }
@@ -175,6 +183,9 @@ export async function PATCH(request: Request, { params }: Context) {
     const updatePayload: Database["public"]["Tables"]["active_tours"]["Update"] = {
       status: status as TourStatus,
     };
+    if (typeof startTime === "string") {
+      updatePayload.start_time = startTime;
+    }
     if (lww.status === "apply") {
       updatePayload.client_updated_at = lww.clientUpdatedAt;
     }
@@ -202,7 +213,11 @@ export async function PATCH(request: Request, { params }: Context) {
   }
 }
 
-/** DELETE /api/tours/[id] -> Tour (inkl. Stopps per Cascade) löschen – nur Admins. */
+/**
+ * DELETE /api/tours/[id] -> Tour (inkl. Stopps per Cascade) löschen.
+ * Admins dürfen alles löschen; Fahrer/Springer dürfen ihre eigene, noch
+ * nicht abgeschlossene Tour löschen (z. B. das „Laufende Tour“-Fenster).
+ */
 export async function DELETE(_request: Request, { params }: Context) {
   const auth = await requireUser();
   if (!auth.user) {
@@ -211,16 +226,36 @@ export async function DELETE(_request: Request, { params }: Context) {
       { status: auth.status },
     );
   }
-  if (!isAdmin(auth.user)) {
-    return NextResponse.json(
-      { error: "Nur Admins dürfen Touren löschen." },
-      { status: 403 },
-    );
-  }
 
   try {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
+
+    const { data: existing } = await supabase
+      .from("active_tours")
+      .select("driver_id, status")
+      .eq("id", id)
+      .maybeSingle();
+    if (!existing) {
+      return NextResponse.json({ error: "Tour nicht gefunden." }, { status: 404 });
+    }
+
+    const isOwner = existing.driver_id === auth.user.id;
+    if (!isAdmin(auth.user)) {
+      if (!isOwner) {
+        return NextResponse.json(
+          { error: "Nur Admins oder der Fahrer der Tour dürfen Touren löschen." },
+          { status: 403 },
+        );
+      }
+      if (existing.status === "completed") {
+        return NextResponse.json(
+          { error: "Abgeschlossene Touren können nur Admins löschen." },
+          { status: 403 },
+        );
+      }
+    }
+
     const { error } = await supabase
       .from("active_tours")
       .delete()

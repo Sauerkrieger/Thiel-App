@@ -103,6 +103,13 @@ export type RouteObject = {
   opens_at: string | null;
   /** Bemerkung zum Objekt (für alle sichtbar). */
   remark: string | null;
+  /**
+   * Verifizierte Koordinaten aus der DB (beim Speichern geocodiert).
+   * Werden genutzt, damit die Routenberechnung nicht jede Adresse
+   * erneut geocoden muss (sonst ~4 s Zusatzzeit + ORS-Rate-Limits).
+   */
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type OptimizedStop = {
@@ -768,8 +775,26 @@ export async function optimizeRoute(
 
   const warehouseGeo = await geocodeAddress(WAREHOUSE_ADDRESS);
   const warehouseCoord = warehouseGeo.coord;
-  const objectGeos = await Promise.all(
-    objects.map((o) => geocodeAddress(o.address)),
+  // Objekte: gespeicherte (verifizierte) Koordinaten aus der DB direkt
+  // übernehmen – nur Adressen ohne gespeicherte Koordinaten müssen (noch)
+  // geocodiert werden. Das spart den größten Zeitanteil der Berechnung
+  // (~4 s für alle Objekte) und umgeht ORS-Rate-Limits bei großen Touren.
+  const needsGeocode = objects.map(
+    (o) =>
+      !(typeof o.latitude === "number" && typeof o.longitude === "number"),
+  );
+  const geocoded = await Promise.all(
+    objects.map((o, index) =>
+      needsGeocode[index] ? geocodeAddress(o.address) : Promise.resolve(null),
+    ),
+  );
+  const objectGeos = objects.map((o, index): GeocodeResult =>
+    needsGeocode[index]
+      ? (geocoded[index] as GeocodeResult)
+      : {
+          coord: { lat: o.latitude as number, lng: o.longitude as number },
+          fallback: false,
+        },
   );
   const objectCoords = objectGeos.map((g) => g.coord);
   const coords: Coordinate[] = [warehouseCoord, ...objectCoords];

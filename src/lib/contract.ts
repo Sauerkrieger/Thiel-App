@@ -60,6 +60,34 @@ export function isContractType(value: unknown): value is ContractType {
 }
 
 /**
+ * Soll-Tagesarbeitszeit in Minuten (Netto) für einen Mitarbeiter:
+ * Wochen-Soll (Profil bzw. Vertragsart) ÷ Arbeitstage (Profil bzw.
+ * Vertrags-Default). Beispiel: Minijob (10 h/Woche, 2 Tage) → 5 h/Tag.
+ * null, wenn nicht berechenbar (z. B. 0 Arbeitstage).
+ */
+export function dailyTargetMinutes(employee: {
+  contract_type?: ContractType | null;
+  weekly_target_hours?: number | null;
+  working_days_per_week?: number | null;
+}): number | null {
+  const weekly = weeklyMinutesForContract(
+    employee.contract_type,
+    employee.weekly_target_hours,
+  );
+  const type = isContractType(employee.contract_type)
+    ? employee.contract_type
+    : "full_time";
+  const profileDays = employee.working_days_per_week;
+  const days =
+    typeof profileDays === "number" &&
+    Number.isFinite(profileDays) &&
+    profileDays > 0
+      ? profileDays
+      : CONTRACT_DEFAULTS[type].working_days_per_week;
+  return Math.round(weekly / days);
+}
+
+/**
  * Soll-Arbeitszeit je Woche in Minuten.
  * - Liefert `weeklyTargetHours` (Profil, für `custom`), wenn gesetzt.
  * - Sonst Fallback auf die feste Wochenarbeitszeit der Vertragsart

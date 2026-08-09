@@ -16,6 +16,7 @@ const MAX_ITEMS = 500;
 const MAX_ITEM_LENGTH = 200;
 const MAX_NOTE_LENGTH = 300;
 const MAX_REASON_LENGTH = 500;
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** PATCH /api/tours/[id]/stops/[stopId] -> is_delivered / is_undeliverable + next_delivery_items. */
 export async function PATCH(request: Request, { params }: Context) {
@@ -53,7 +54,22 @@ export async function PATCH(request: Request, { params }: Context) {
       undeliverable_reason?: string | null;
       next_delivery_items?: DeliveryItem[];
       delivered_items?: ReturnType<typeof parseDeliveredItems>;
+      arrival_time?: string | null;
     } = {};
+
+    // Ankunftszeit anpassen (z. B. beim Tour-Start, wenn die Abfahrt
+    // gegenüber der Planung verschoben wurde).
+    if (typeof body.arrival_time === "string") {
+      if (!TIME_PATTERN.test(body.arrival_time)) {
+        return NextResponse.json(
+          { error: "Ungültige Ankunftszeit (Format HH:MM erwartet)." },
+          { status: 400 },
+        );
+      }
+      update.arrival_time = body.arrival_time;
+    } else if (body.arrival_time === null) {
+      update.arrival_time = null;
+    }
 
     // „Beliefert“ und „nicht lieferbar“ schließen sich gegenseitig aus:
     // Echte Belieferung hebt eine „nicht lieferbar“-Markierung auf (und

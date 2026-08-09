@@ -13,6 +13,7 @@ import {
   Flag,
   MapPin,
   PartyPopper,
+  Play,
   Truck,
   XCircle,
 } from "lucide-react";
@@ -35,9 +36,11 @@ const RouteMap = dynamic(
   },
 );
 import { cleanAddressLabel } from "@/lib/address";
+import { formatMinutes } from "@/lib/routing/time";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { startTour } from "@/lib/offline/start-tour";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
@@ -58,6 +61,7 @@ export function TourPage({ tourId }: Props) {
     stop: TourStopWithObject | null;
   }>({ open: false, stop: null });
   const [finishing, setFinishing] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   // Stale-while-revalidate: gecachte Tour sofort anzeigen, frische Daten
   // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
@@ -121,6 +125,36 @@ export function TourPage({ tourId }: Props) {
   const openCount = total - deliveredCount - undeliverableCount;
   const progress = total > 0 ? Math.round((deliveredCount / total) * 100) : 0;
   const completed = tour?.status === "completed";
+
+  // Tour aus dem Packmodus starten (status packing → in_transit).
+  // Ankunftszeiten werden an den tatsächlichen Start angepasst.
+  async function handleStartPackingTour() {
+    if (!tour) return;
+    setStarting(true);
+    try {
+      const now = new Date();
+      const actualStart = formatMinutes(now.getHours() * 60 + now.getMinutes());
+      const result = await startTour({
+        tourId: tour.id,
+        actualStart,
+        plannedStart: tour.start_time ?? actualStart,
+        stops: tour.tour_stops.map((stop) => ({
+          id: stop.id,
+          arrival_time: stop.arrival_time,
+        })),
+      });
+      if (!result.ok) {
+        toast.error(result.error ?? "Tour konnte nicht gestartet werden.");
+        return;
+      }
+      toast.success("Tour gestartet – los geht's!");
+      await load(true);
+    } catch {
+      toast.error("Tour konnte nicht gestartet werden.");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   async function handleFinishTour() {
     if (!tour) return;
@@ -387,7 +421,22 @@ export function TourPage({ tourId }: Props) {
           (bottom-14), am Desktop am unteren Rand. */}
       <div className="fixed inset-x-0 bottom-14 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:bottom-0">
         <div className="container flex h-16 items-center justify-between gap-3">
-          {completed ? (
+          {tour?.status === "packing" ? (
+            <>
+              <p className="min-w-0 text-sm text-muted-foreground">
+                Tour ist noch nicht gestartet – packen, dann Ausfahrt beginnen.
+              </p>
+              <Button
+                size="lg"
+                onClick={() => void handleStartPackingTour()}
+                disabled={starting}
+                className="gap-2"
+              >
+                <Play />
+                {starting ? "Wird gestartet…" : "Ausfahren beginnen"}
+              </Button>
+            </>
+          ) : completed ? (
             <>
               <p className="min-w-0 text-sm text-muted-foreground">
                 Tour abgeschlossen

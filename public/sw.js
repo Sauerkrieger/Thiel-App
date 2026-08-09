@@ -26,7 +26,7 @@
  *   (ein Service Worker braucht einmal Internet).
  */
 
-const CACHE_NAME = "thiel-shell-v1";
+const CACHE_NAME = "thiel-shell-v3";
 
 self.addEventListener("install", (event) => {
   // Startseite vorab cachen – letzte Ausweichmöglichkeit für Navigationen.

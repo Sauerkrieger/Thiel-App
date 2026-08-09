@@ -55,10 +55,11 @@ export async function PATCH(request: Request, { params }: Context) {
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const hasApproval = typeof body.is_approved === "boolean";
+    const hasStart = typeof body.clock_in === "string";
     const hasEnd = typeof body.clock_out === "string";
     const hasBreak = body.break_duration_minutes !== undefined;
     const hasNote = typeof body.note === "string";
-    if (!hasApproval && !hasEnd && !hasBreak && !hasNote) {
+    if (!hasApproval && !hasStart && !hasEnd && !hasBreak && !hasNote) {
       return NextResponse.json({ error: "Keine Änderungen übergeben." }, { status: 400 });
     }
 
@@ -79,12 +80,22 @@ export async function PATCH(request: Request, { params }: Context) {
     const payload: Database["public"]["Tables"]["time_entries"]["Update"] = {
       synced_at: new Date().toISOString(),
     };
-    let effectiveEnd: string | null = null;
-    if (hasApproval) {
-      payload.is_approved = body.is_approved === true;
-      // Freigabe löst den Prüfbedarf auf.
-      if (payload.is_approved) payload.requires_review = false;
+    // Effektive Start-/Endzeit (auch für die Reihenfolge- und Pausenprüfung),
+    // damit z. B. eine reine Startzeit-Korrektur korrekt validiert wird.
+    let effectiveStart: string = existing.clock_in;
+    if (hasStart) {
+      const startRaw = body.clock_in;
+      if (
+        typeof startRaw !== "string" ||
+        !ISO_DATETIME.test(startRaw) ||
+        Number.isNaN(new Date(startRaw).getTime())
+      ) {
+        return NextResponse.json({ error: "Ungültige Startzeit." }, { status: 400 });
+      }
+      effectiveStart = new Date(new Date(startRaw).getTime()).toISOString();
+      payload.clock_in = effectiveStart;
     }
+    let effectiveEnd: string | null = existing.clock_out;
     if (hasEnd) {
       const endRaw = body.clock_out;
       if (
@@ -94,15 +105,23 @@ export async function PATCH(request: Request, { params }: Context) {
       ) {
         return NextResponse.json({ error: "Ungültige Endzeit." }, { status: 400 });
       }
-      const endMs = new Date(endRaw).getTime();
-      if (endMs <= Date.parse(existing.clock_in)) {
-        return NextResponse.json(
-          { error: "Die Endzeit muss nach der Einstempelzeit liegen." },
-          { status: 400 },
-        );
-      }
-      effectiveEnd = new Date(endMs).toISOString();
+      effectiveEnd = new Date(new Date(endRaw).getTime()).toISOString();
       payload.clock_out = effectiveEnd;
+    }
+    if (hasApproval) {
+      payload.is_approved = body.is_approved === true;
+      // Freigabe löst den Prüfbedarf auf.
+      if (payload.is_approved) payload.requires_review = false;
+    }
+    // Reihenfolge immer prüfen (auch wenn nur die Startzeit geändert wurde).
+    if (
+      effectiveEnd &&
+      new Date(effectiveEnd).getTime() <= new Date(effectiveStart).getTime()
+    ) {
+      return NextResponse.json(
+        { error: "Die Endzeit muss nach der Startzeit liegen." },
+        { status: 400 },
+      );
     }
     if (hasBreak) {
       const value = Number(body.break_duration_minutes);
@@ -111,12 +130,13 @@ export async function PATCH(request: Request, { params }: Context) {
       }
       payload.break_duration_minutes = value;
     }
-    // Mindestpause nach § 4 ArbZG ergänzen, sobald eine Endzeit vorliegt.
+    // Mindestpause nach § 4 ArbZG ergänzen, sobald eine Endzeit vorliegt
+    // (mit den effektiven Zeiten, nicht nur bei geänderter Endzeit).
     if (effectiveEnd) {
       payload.break_duration_minutes = enforcedBreakMinutes(
-        existing.clock_in,
+        effectiveStart,
         effectiveEnd,
-        payload.break_duration_minutes ?? 0,
+        payload.break_duration_minutes ?? existing.break_duration_minutes,
       );
     }
     if (hasNote) {
@@ -143,16 +163,22 @@ export async function PATCH(request: Request, { params }: Context) {
       .single();
     if (error) throw error;
 
-    // Revisionssicheres Änderungsprotokoll (nur bei tatsächlicher Änderung).
+    // Revisionssicheres Änderungsprotokoll: bei tatsächlicher Änderung ODER
+    // wenn der Admin eine explizite Begründung übergeben hat (jede manuelle
+    // Admin-Aktion muss im Audit-Log landen – auch ein No-Op-Speichern).
     const updated = data as EntryRow;
     const oldSnapshot = auditSnapshotOf(existing as EntryRow);
     const newSnapshot: TimeEntryAuditSnapshot = auditSnapshotOf(updated);
-    if (JSON.stringify(oldSnapshot) !== JSON.stringify(newSnapshot)) {
-      const rawReason = body.change_reason;
-      const reason =
-        typeof rawReason === "string" && rawReason.trim()
-          ? rawReason.trim().slice(0, MAX_NOTE_LENGTH)
-          : defaultChangeReason(payload);
+    const rawReason = body.change_reason;
+    const explicitReason =
+      typeof rawReason === "string" && rawReason.trim()
+        ? rawReason.trim().slice(0, MAX_NOTE_LENGTH)
+        : null;
+    if (
+      JSON.stringify(oldSnapshot) !== JSON.stringify(newSnapshot) ||
+      explicitReason !== null
+    ) {
+      const reason = explicitReason ?? defaultChangeReason(payload);
       await logTimeEntryChange(supabase, {
         timeEntryId: id,
         changedByUserId: auth.user.id,

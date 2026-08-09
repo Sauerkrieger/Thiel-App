@@ -607,6 +607,16 @@ async function readOffline(req: OfflineRead): Promise<Response> {
 
   if (path === "/api/tours") {
     let tours = await cacheRowsOf("active_tours");
+    // Nicht abgeschlossene Touren von VORHEUTE automatisch ausblenden – analog
+    // zur Online-API, die sie beim Laden löscht (Zurückkehren ist nur am selben
+    // Tag sinnvoll).
+    const today = new Date().toISOString().slice(0, 10);
+    tours = tours.filter(
+      (t) =>
+        t.status === "completed" ||
+        typeof t.date !== "string" ||
+        t.date >= today,
+    );
     // Fahrer/Springer sehen offline nur ihre eigenen Touren – analog zur
     // Online-API (eq driver_id). Ohne driver_id (eigene, noch nicht
     // synchronisierte Offline-Tour) wird die Tour mit einbezogen.
@@ -1069,6 +1079,20 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     return jsonResponse(201, { entry: { id } });
   }
 
+  // POST /api/admin/time-tracking/entries – Stempelung manuell nacherfassen
+  // (Admin, offline queuen; Sync übernimmt LWW + Pflicht-Audit-Log).
+  if (path === "/api/admin/time-tracking/entries" && method === "POST") {
+    const id = newRecordId();
+    await queueMutation("time_entries", id, {
+      ...pick(body, TIME_ENTRY_FIELDS as readonly string[]),
+      user_id: typeof body.user_id === "string" ? body.user_id : "",
+      is_approved: true,
+      requires_review: false,
+      source: "submitted",
+    });
+    return jsonResponse(201, { entry: { id } });
+  }
+
   // Zeiterfassung: Online bleibt die Clock-Route autoritativ; bei einem
   // Netzwerkausfall werden Creates/Updates direkt im Sync-Store gehalten.
   if (path === "/api/time-tracking/clock" && method === "POST") {
@@ -1197,6 +1221,7 @@ function isQueueableMutation(path: string, method: string): boolean {
     /^\/api\/auth\/users\/[^/]+$/.test(path) ||
     path === "/api/time-tracking/clock" ||
     path === "/api/time-tracking/entries" ||
+    path === "/api/admin/time-tracking/entries" ||
     /^\/api\/time-tracking\/entries\/[^/]+$/.test(path) ||
     path === "/api/time-tracking/requests" ||
     /^\/api\/time-tracking\/requests\/[^/]+$/.test(path) ||
@@ -1227,7 +1252,7 @@ function serverKeyFor(path: string, method: string): string | null {
   if (/^\/api\/tours\/[^/]+$/.test(path)) return "tour";
   if (/^\/api\/tours\/[^/]+\/stops\/[^/]+$/.test(path)) return "stop";
   if (path === "/api/time-tracking/clock") return "entry";
-  if (path === "/api/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
+  if (path === "/api/time-tracking/entries" || path === "/api/admin/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   if (/^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "request";
   if (/^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "entry";
   return null; // auth: me-profile/users → Antwort ist kein Tabellen-Row
@@ -1246,7 +1271,7 @@ function tableFor(path: string, method: string): SyncTable | null {
   if (path === "/api/auth/me-profile" || /^\/api\/auth\/users\/[^/]+$/.test(path)) {
     return "profiles";
   }
-  if (path === "/api/time-tracking/clock" || path === "/api/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path) || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
+  if (path === "/api/time-tracking/clock" || path === "/api/time-tracking/entries" || path === "/api/admin/time-tracking/entries" || /^\/api\/time-tracking\/entries\/[^/]+$/.test(path) || /^\/api\/admin\/time-tracking\/entries\/[^/]+$/.test(path)) return "time_entries";
   if (path === "/api/time-tracking/requests" || /^\/api\/time-tracking\/requests\/[^/]+$/.test(path)) return "time_off_requests";
   return null;
 }

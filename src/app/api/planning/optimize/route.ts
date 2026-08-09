@@ -7,6 +7,12 @@ import type { RouteObject } from "@/lib/routing/optimizer";
 
 export const dynamic = "force-dynamic";
 
+// Die Berechnung kann mit vielen Objekten länger als die Standard-10s
+// (Vercel Hobby) dauern – besonders wenn externe APIs (ORS/TomTom) langsam
+// sind. Mit gespeicherten Koordinaten ist sie zwar meist < 1s, das erhöhte
+// Limit schützt aber vor Timeouts (504) bei großen Touren.
+export const maxDuration = 60;
+
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function POST(request: Request) {
@@ -50,7 +56,7 @@ export async function POST(request: Request) {
     const { data: objects, error } = await supabase
       .from("objects")
       .select(
-        "id, name, address, category, is_pedestrian_zone_until_11, key_number, opens_at, remark",
+        "id, name, address, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, latitude, longitude",
       )
       .in("id", objectIds as string[]);
 
@@ -72,6 +78,8 @@ export async function POST(request: Request) {
         key_number: obj.key_number,
         opens_at: obj.opens_at,
         remark: obj.remark ?? null,
+        latitude: obj.latitude ?? null,
+        longitude: obj.longitude ?? null,
       }),
     );
 
