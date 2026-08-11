@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cleanAddressLabel } from "@/lib/address";
+import { normalizeImageForAnalysis } from "@/lib/image-upload";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,7 +24,8 @@ import {
 } from "@/components/ui/dialog";
 import type { PhotoMatch, PhotoSelectResult } from "@/types/api";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB nach Optimierung
+const MAX_INPUT_FILE_SIZE = 40 * 1024 * 1024; // Schutz vor extrem großen Rohfotos
 
 type Props = {
   open: boolean;
@@ -57,19 +59,37 @@ export function PhotoSelectDialog({ open, onOpenChange, onApply }: Props) {
 
   function handleFile(next: File | null) {
     if (!next) return;
-    if (!next.type.startsWith("image/")) {
+    if (!next.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif)$/i.test(next.name)) {
       toast.error("Bitte ein Bild (JPG/PNG/HEIC) auswählen.");
       return;
     }
-    if (next.size > MAX_FILE_SIZE) {
-      toast.error("Das Bild ist größer als 10 MB.");
+    if (next.size > MAX_INPUT_FILE_SIZE) {
+      toast.error("Das Rohfoto ist größer als 40 MB.");
       return;
     }
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(next);
-    setResult(null);
-    setError(null);
-    setPreview(URL.createObjectURL(next));
+    // Bild browserseitig normalisieren (Größe reduzieren, HEIC→JPEG),
+    // damit mobile Kameraaufnahmen zuverlässig analysiert werden können.
+    void (async () => {
+      try {
+        const normalized = await normalizeImageForAnalysis(next);
+        if (normalized.size > MAX_FILE_SIZE) {
+          toast.error("Das Bild ist auch nach der Optimierung größer als 10 MB.");
+          return;
+        }
+        if (preview) URL.revokeObjectURL(preview);
+        setFile(normalized);
+        setResult(null);
+        setError(null);
+        setPreview(URL.createObjectURL(normalized));
+      } catch {
+        // Fallback: Original-Datei verwenden
+        if (preview) URL.revokeObjectURL(preview);
+        setFile(next);
+        setResult(null);
+        setError(null);
+        setPreview(URL.createObjectURL(next));
+      }
+    })();
   }
 
   async function handleAnalyze() {

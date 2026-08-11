@@ -459,7 +459,10 @@ export function AdminTimeTrackingPage() {
   const reviewEntries = overview?.entries.filter((entry) => entry.requires_review && !entry.clock_out) ?? [];
   // Freigabe-Feed: abgeschlossene, aber noch nicht freigegebene Stempelungen
   // (nachgereichte Arbeitszeit ODER markiert & vom Mitarbeiter/Admin geschlossen).
-  const pendingEntries = overview?.entries.filter((entry) => !entry.is_approved && entry.clock_out !== null && (entry.requires_review || entry.source === "submitted")) ?? [];
+  // Alle abgeschlossenen, aber noch nicht freigegebenen Stempelungen
+  // (unabhängig von source/requires_review – auch manuell vom Admin
+  // ausgestempelte Clock-Einträge müssen im Freigabe-Feed erscheinen).
+  const pendingEntries = overview?.entries.filter((entry) => !entry.is_approved && entry.clock_out !== null) ?? [];
 
   // Live-Dauer im Prüfbedarf-Abschnitt aktualisieren (alle 30 s).
   useEffect(() => {

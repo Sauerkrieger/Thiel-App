@@ -218,6 +218,27 @@ export async function PATCH(request: Request, { params }: Context) {
       }
       throw error;
     }
+
+    // Nach erfolgreicher Belieferung alle Vormerkungen (is_reserved) der
+    // Objekt-Items zurücksetzen – sie wurden gepackt und geliefert.
+    // Bei "nicht lieferbar" bleiben sie dagegen bestehen.
+    if (update.is_delivered === true && data) {
+      const objectId = (data as Record<string, unknown>).object_id;
+      if (typeof objectId === "string") {
+        const { error: resetError } = await supabase
+          .from("object_items")
+          .update({ is_reserved: false })
+          .eq("object_id", objectId)
+          .eq("is_reserved", true);
+        if (resetError) {
+          console.warn(
+            "[Tour-Stopp] Vormerkungen konnten nicht zurückgesetzt werden:",
+            resetError.message,
+          );
+        }
+      }
+    }
+
     return NextResponse.json({ stop: data });
   } catch (e) {
     return apiErrorResponse(e);

@@ -16,8 +16,8 @@ export function prepMinutesForCount(count: number): number {
 }
 
 /** Haltzeit an einem Ziel: Objekt 5 Min, Treppenhaus 3 Min. */
-export const SERVICE_MINUTES_OBJECT = 5;
-export const SERVICE_MINUTES_TREPPENHAUS = 3;
+export const SERVICE_MINUTES_OBJECT = 7;
+export const SERVICE_MINUTES_TREPPENHAUS = 5;
 
 /** Haltzeit (Servicezeit) je Kategorie. */
 export function serviceMinutesForCategory(category: ObjectCategory): number {

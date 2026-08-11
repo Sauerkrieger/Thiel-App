@@ -31,6 +31,8 @@ import {
   orsAuthorizationHeader,
   orsGeocodeSearch,
 } from "@/lib/ors";
+import { photonGeocodeSearch } from "@/lib/photon";
+import { fetchStadiaMatrix } from "@/lib/stadia-matrix";
 import {
   findNearestDrivablePoint,
   type DrivablePoint,
@@ -147,7 +149,7 @@ export type RouteOptimizationResult = {
   warehouse_arrival: string;
   warnings: string[];
   /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
-  traffic_matrix_provider: "tomtom" | null;
+  traffic_matrix_provider: "tomtom" | "stadia" | null;
   /** Lager (Start/Ziel der Rundtour) mit verifizierten Koordinaten (null im Demo-Modus). */
   warehouse: {
     name: string;
@@ -215,10 +217,16 @@ function hashCoordinate(address: string): Coordinate {
 
 async function geocodeAddress(address: string): Promise<GeocodeResult> {
   const normalized = normalizeAddressForGeocoding(address);
+  // 1. Photon (Fuzzy, toleriert Tippfehler – läuft immer zuerst)
+  const photon = await photonGeocodeSearch(normalized);
+  if (photon) return { coord: { lat: photon.latitude, lng: photon.longitude }, fallback: false };
+  // 2. ORS (exakte Suche – Fallback wenn Photon nichts findet)
   const ors = await geocodeWithOrs(normalized);
   if (ors) return { coord: ors, fallback: false };
+  // 3. Google Maps
   const google = await geocodeWithGoogle(normalized);
   if (google) return { coord: google, fallback: false };
+  // 4. Demo-Modus (Hash-Koordinaten)
   return { coord: hashCoordinate(address), fallback: true };
 }
 
@@ -482,6 +490,17 @@ async function matrixWithOrs(
   }
 }
 
+async function matrixWithStadia(
+  coords: Coordinate[],
+): Promise<number[][] | null> {
+  const result = await fetchStadiaMatrix(coords);
+  if (!result) return null;
+  // Sekunden → Minuten
+  return result.durations.map((row) =>
+    row.map((sec) => (Number.isFinite(sec) && sec >= 0 ? sec / 60 : Number.NaN)),
+  );
+}
+
 async function matrixWithGoogle(
   coords: Coordinate[],
 ): Promise<number[][] | null> {
@@ -550,16 +569,31 @@ async function resolveMatrix(
 
 /**
  * Fallback-Fahrzeitmatrix (Sekunden) für Zellen, die TomTom nicht routen
- * kann (z. B. NO_ROUTE_FOUND): bevorzugt die ORS-Matrix (straßengenau),
- * sonst die Haversine-Luftlinie. Hält die Live-Verkehrsmatrix vollständig,
- * damit VROOM keine Lücken bekommt und EINE unerreichbare Koordinate nicht
- * den kompletten Live-Verkehr ausfallen lässt.
+ * kann (z. B. NO_ROUTE_FOUND): ORS-Matrix → Stadia-Matrix → Haversine.
+ * Hält die Live-Verkehrsmatrix vollständig, damit VROOM keine Lücken
+ * bekommt und EINE unerreichbare Koordinate nicht den kompletten
+ * Live-Verkehr ausfallen lässt.
  */
 async function fallbackDurationsSeconds(
   coords: Coordinate[],
 ): Promise<number[][] | null> {
-  const ors = await matrixWithOrs(coords); // Minuten
+  // 1. ORS-Matrix (straßengenau)
+  const ors = await matrixWithOrs(coords);
   if (ors) return ors.map((row) => row.map((minutes) => minutes * 60));
+  // 2. Stadia Maps Valhalla (kostenloser Fallback)
+  const stadia = await matrixWithStadia(coords);
+  if (stadia) {
+    const haversine = haversineMinutes(coords);
+    // NaN-Zellen durch Haversine füllen
+    return stadia.map((row, i) =>
+      row.map((minutes, j) =>
+        Number.isFinite(minutes) && minutes >= 0
+          ? Math.round(minutes * 60)
+          : Math.round((haversine[i]?.[j] ?? 0) * 60),
+      ),
+    );
+  }
+  // 3. Haversine (Luftlinie)
   return haversineMinutes(coords).map((row) =>
     row.map((minutes) => minutes * 60),
   );
@@ -584,11 +618,24 @@ async function tryOrsWithTraffic(
 ): Promise<{
   solution: OrsSolution | null;
   trafficUsed: boolean;
-  provider: "tomtom" | null;
+  provider: "tomtom" | "stadia" | null;
 }> {
-  const traffic = useTraffic
-    ? await fetchTomTomTrafficMatrix(coords, () => fallbackDurationsSeconds(coords))
-    : null;
+  let traffic: TrafficMatrix | null = null;
+  let provider: "tomtom" | "stadia" | null = null;
+  if (useTraffic) {
+    // TomTom (Live-Verkehr) zuerst
+    traffic = await fetchTomTomTrafficMatrix(coords, () => fallbackDurationsSeconds(coords));
+    if (traffic) {
+      provider = traffic.provider;
+    } else {
+      // TomTom komplett fehlgeschlagen (z. B. keine Credits) → Stadia als Ersatz
+      const stadiaResult = await fetchStadiaMatrix(coords);
+      if (stadiaResult) {
+        traffic = { durations: stadiaResult.durations, provider: "stadia" };
+        provider = "stadia";
+      }
+    }
+  }
 
   const withMatrix = await solveWithOrsOptimization(
     coords,
@@ -602,7 +649,7 @@ async function tryOrsWithTraffic(
     return {
       solution: withMatrix,
       trafficUsed: Boolean(traffic),
-      provider: traffic?.provider ?? null,
+      provider,
     };
   }
 
@@ -638,7 +685,7 @@ type VariantResult = {
   totalMinutes: number;
   departureMinutes: number;
   mode: RoutingMode;
-  trafficProvider: "tomtom" | null;
+  trafficProvider: "tomtom" | "stadia" | null;
   /** true, wenn alle Zeitfenster der Variante eingehalten wurden. */
   feasible: boolean;
   /** true, wenn ORS-Optimierung versucht wurde, aber keine Lösung lieferte. */
@@ -662,7 +709,7 @@ async function solveVariant(
 ): Promise<VariantResult> {
   const { coords, deadline } = input;
   const startSec = startMinutes * 60;
-  let trafficProvider: "tomtom" | null = null;
+  let trafficProvider: "tomtom" | "stadia" | null = null;
   let orsSolution: OrsSolution | null = null;
   const hasOrsKey = Boolean(process.env.ORS_API_KEY);
   const hasTomTomKey = Boolean(process.env.TOMTOM_API_KEY);
@@ -849,31 +896,35 @@ export async function optimizeRoute(
     }
   }
 
-  // Variante A: direkt zum Objekt fahren (Fußgängerzone: nur bis 11:00 Uhr).
-  // Fußgängerzonen-Objekte werden dabei über den befahrbaren Haltepunkt
-  // geroutet (ORS driving-car kann nicht in eine Fußgängerzone fahren),
-  // behalten aber ihr 11-Uhr-Zeitfenster – entspricht der direkten Anfahrt
-  // vor 11:00 Uhr, wenn sie zeitlich möglich ist.
-  const variantA = await solveVariant(
-    { coords: detourCoords ?? coords, deadline: deadlineDirect },
-    earliest,
-    start,
-    serviceMinutes,
-    warnings,
-  );
-  // Variante B: über den befahrbaren Haltepunkt von außen anfahren + Restweg
-  // zu Fuß (kein Zeitfenster). Nur wenn für mindestens ein Fußgängerzonen-
-  // Objekt ein Haltepunkt gefunden wurde.
-  const variantB =
+  // Variante A + B parallelisieren: beide Varianten sind unabhängig
+  // voneinander (unterschiedliche Deadline-Arrays, gleiche Coords).
+  // Separate Warning-Arrays verhindern Racing auf dem geteilten Array.
+  const warningsA: string[] = [];
+  const warningsB: string[] = [];
+  const [variantA, variantB] = await Promise.all([
+    // Variante A: direkt zum Objekt fahren (Fußgängerzone: nur bis 11:00 Uhr).
+    solveVariant(
+      { coords: detourCoords ?? coords, deadline: deadlineDirect },
+      earliest,
+      start,
+      serviceMinutes,
+      warningsA,
+    ),
+    // Variante B: über den befahrbaren Haltepunkt von außen anfahren + Restweg
+    // zu Fuß (kein Zeitfenster). Nur wenn für mindestens ein Fußgängerzonen-
+    // Objekt ein Haltepunkt gefunden wurde.
     detourCoords && deadlineDetour
-      ? await solveVariant(
+      ? solveVariant(
           { coords: detourCoords, deadline: deadlineDetour },
           earliest,
           start,
           serviceMinutes,
-          warnings,
+          warningsB,
         )
-      : null;
+      : Promise.resolve(null),
+  ]);
+  warnings.push(...warningsA);
+  if (variantB) warnings.push(...warningsB);
 
   // Die schnellere Variante gewinnt: Die Fußweg-Zeit (≈ 5 km/h) wird beim
   // Vergleich von Variante B berücksichtigt. Ist A nicht machbar, gewinnt B
@@ -900,11 +951,11 @@ export async function optimizeRoute(
   // die Fußgängerzonen-Variante A an ORS scheitert, Variante B aber ORS nutzt).
   if (chosen.orsFailed) {
     warnings.push(
-      "Die ORS-Optimierung konnte keine Lösung finden (Details siehe Server-Log) – Fallback auf Matrix + lokalen Solver.",
+      "Optimierung fehlgeschlagen – Fallback auf Matrix + lokalen Solver.",
     );
   } else if (chosen.trafficFailed) {
     warnings.push(
-      "TomTom-Live-Verkehr konnte nicht angewendet werden (Details siehe Server-Log) – Route ohne Live-Verkehr berechnet.",
+      "Live-Verkehr fehlgeschlagen – Route ohne Live-Verkehr berechnet.",
     );
   }
   if (!chosen.feasible) {

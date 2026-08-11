@@ -5,6 +5,7 @@ import {
   orsGeocodeSearch,
   WUERZBURG_BOUNDARY,
 } from "@/lib/ors";
+import { photonGeocodeSearch } from "@/lib/photon";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,11 @@ export const dynamic = "force-dynamic";
  * liefert den vermutlich passenden Treffer (normalisiertes Label + Koordinaten).
  * Der Client nutzt das, wenn der Nutzer eine Adresse tippt, ohne einen
  * Autocomplete-Vorschlag anzuklicken.
+ *
+ * Fallback: Wenn ORS nichts findet (z. B. bei Tippfehlern wie
+ * "Hörleinsgasse" statt "Hörleingasse"), wird die Photon-API von Komoot
+ * als Fuzzy-Suche verwendet. Photon ist toleranter gegenüber
+ * Rechtschreibfehlern und kostenlos (kein API-Key nötig).
  */
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
@@ -25,14 +31,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ verified: false });
   }
 
-  const apiKey = process.env.ORS_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "ORS_API_KEY ist nicht konfiguriert.", code: "ORS_NOT_CONFIGURED" },
-      { status: 503 },
-    );
-  }
-
   // Würzburg-Regel: Nennt die Adresse explizit eine andere Stadt, wird ohne
   // Begrenzung gesucht. Ohne Ortsangabe (oder mit Würzburg) wird die Suche auf
   // das Würzburger Stadtgebiet begrenzt – so landet eine getippte Adresse ohne
@@ -40,9 +38,16 @@ export async function POST(request: Request) {
   const city = analyzeAddressCity(address);
   const boundary =
     city.hasCity && !city.isWuerzburg ? undefined : WUERZBURG_BOUNDARY;
-  const hit = await orsGeocodeSearch(normalizeAddressForGeocoding(address), {
-    boundary,
-  });
+  const normalized = normalizeAddressForGeocoding(address);
+
+  // 1. Photon (Fuzzy, toleriert Tippfehler – läuft immer zuerst)
+  let hit = await photonGeocodeSearch(normalized, { boundary });
+
+  // 2. ORS (exakte Suche – Fallback wenn Photon nichts findet)
+  if (!hit) {
+    hit = await orsGeocodeSearch(normalized, { boundary });
+  }
+
   if (!hit) {
     return NextResponse.json({ verified: false });
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { orsAuthorizationHeader } from "@/lib/ors";
 import { cleanAddressLabel } from "@/lib/address";
+import { photonAutocomplete } from "@/lib/photon";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,14 @@ export const dynamic = "force-dynamic";
  *
  * Proxy-Route, damit der ORS_API_KEY nicht im Client landet.
  * Ergebnisse werden standardmäßig auf Deutschland (DEU) begrenzt.
+ *
+ * Hinweis: Die Boundary-Filterung (Würzburg-Rechteck) findet bewusst erst
+ * beim Verifizieren (Blur/POST verify) statt – das Autocomplete soll alle
+ * deutschen Treffer zeigen, damit der Nutzer beim Tippen nicht ins Leere
+ * läuft und die Vorschläge trotzdem vollständig sieht.
+ *
+ * Fallback: Wenn ORS nicht verfügbar ist oder keine Ergebnisse liefert,
+ * wird die Photon-API (Komoot) als Fuzzy-Autocomplete verwendet.
  */
 
 const ORS_AUTOCOMPLETE_URL = "https://api.openrouteservice.org/geocode/autocomplete";
@@ -47,14 +56,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ suggestions: [] });
   }
 
+  // 1. Photon-Autocomplete (Fuzzy, toleriert Tippfehler – läuft immer zuerst)
+  const photonSuggestions = await photonAutocomplete(q, { limit: MAX_RESULTS });
+
+  // Wenn kein ORS-Key konfiguriert ist, direkt Photon-Ergebnisse zurückgeben
   const apiKey = process.env.ORS_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "ORS_API_KEY ist nicht konfiguriert.", code: "ORS_NOT_CONFIGURED" },
-      { status: 503 },
-    );
+    return NextResponse.json({ suggestions: photonSuggestions });
   }
 
+  // 2. ORS-Autocomplete (exakte Suche – ergänzt Photon-Ergebnisse)
   try {
     const url = new URL(ORS_AUTOCOMPLETE_URL);
     url.searchParams.set("text", q);
@@ -68,23 +79,20 @@ export async function GET(request: Request) {
     });
 
     if (!res.ok) {
-      return NextResponse.json(
-        { error: "Geocoding-Dienst ist gerade nicht erreichbar." },
-        { status: 502 },
-      );
+      // ORS nicht erreichbar – Photon-Ergebnisse verwenden
+      return NextResponse.json({ suggestions: photonSuggestions });
     }
 
     const json: { features?: OrsFeature[] } = await res.json();
     const features = Array.isArray(json.features) ? json.features : [];
 
-    const suggestions: AddressSuggestion[] = features
+    const orsSuggestions: AddressSuggestion[] = features
       .map((f): AddressSuggestion | null => {
         const coords = f.geometry?.coordinates;
         const [lng, lat] = Array.isArray(coords) ? coords : [];
         const label = f.properties?.label?.trim();
         if (!label || !isNumber(lat) || !isNumber(lng)) return null;
         return {
-          // Redundante Teile (z. B. "By, Deutschland") aus dem Label entfernen
           label: cleanAddressLabel(label),
           name: f.properties?.name?.trim() ?? "",
           latitude: lat,
@@ -93,11 +101,17 @@ export async function GET(request: Request) {
       })
       .filter((s): s is AddressSuggestion => s !== null);
 
-    return NextResponse.json({ suggestions });
+    // Photon + ORS zusammenführen: Photon zuerst, ORS-Ergebnisse anhängen
+    // (Dubletten anhand Label entfernen)
+    const seen = new Set(photonSuggestions.map((s) => s.label.toLowerCase()));
+    const merged = [
+      ...photonSuggestions,
+      ...orsSuggestions.filter((s) => !seen.has(s.label.toLowerCase())),
+    ].slice(0, MAX_RESULTS);
+
+    return NextResponse.json({ suggestions: merged });
   } catch {
-    return NextResponse.json(
-      { error: "Geocoding-Dienst ist gerade nicht erreichbar." },
-      { status: 502 },
-    );
+    // ORS-Fehler – Photon-Ergebnisse verwenden
+    return NextResponse.json({ suggestions: photonSuggestions });
   }
 }

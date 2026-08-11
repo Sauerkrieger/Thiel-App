@@ -46,7 +46,7 @@ export type TrafficMatrix = {
    * aufgefüllt (ORS/Haversine) – Live-Verkehr also „wo verfügbar".
    */
   durations: number[][];
-  provider: "tomtom";
+  provider: "tomtom" | "stadia";
 };
 
 type TomTomCell = {
@@ -182,7 +182,7 @@ export async function fetchTomTomTrafficMatrix(
       }),
       cache: "no-store",
       // Verhindert, dass ein hängender TomTom-Call die Routenberechnung blockiert
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) {
       console.error(

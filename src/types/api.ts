@@ -110,7 +110,7 @@ export type RouteOptimizationResult = {
   warehouse_arrival: string;
   warnings: string[];
   /** Live-Verkehrsanbieter, dessen Fahrzeitmatrix in die Optimierung eingeflossen ist (null = ohne). */
-  traffic_matrix_provider: "tomtom" | null;
+  traffic_matrix_provider: "tomtom" | "stadia" | null;
   /** Lager (Start/Ziel der Rundtour) mit verifizierten Koordinaten (null im Demo-Modus). */
   warehouse: {
     name: string;

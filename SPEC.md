@@ -29,11 +29,11 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 | **Auth** | Supabase Auth (Passwort) + WebAuthn-Passkeys (`@simplewebauthn`) | Login per Benutzername/Passwort **und** Fingerabdruck/Face ID |
 | **Routen-Optimierung** | ORS Optimization API (VROOM) mit Custom-Matrix | Optimale Rundtour unter Zeitfenstern & Restriktionen |
 | **Live-Verkehr** | TomTom Routing Matrix API | Aktuelle Fahrzeiten (inkl. Stau) als VROOM-Custom-Matrix |
-| **Geocoding** | OpenRouteService Geocode Search | Adress-Autocomplete & Koordinaten-Verifizierung |
+| **Geocoding** | Photon (Komoot, OSM) → OpenRouteService Geocode Search | Fuzzy-Adresssuche mit Tippfehler-Toleranz + exakter ORS-Fallback |
 | **Fußgängerzonen** | Overpass API (OpenStreetMap) | Automatische Erkennung + nächster befahrbarer Haltepunkt |
 | **Karten** | Leaflet (imperativ, ohne react-leaflet), OSM-Tiles, ORS-Directions | Routen-Geometrie in Pack- & Tour-Modus |
 | **OCR / Vision** | Gemini Vision API | Erkennung von abfotografierten Listen (Objekte, Schlüssel, Items) |
-| **Routen-Fallback** | ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver | Optimierung läuft auch ohne Primär-API |
+| **Routen-Fallback** | ORS-Matrix → Stadia Maps Matrix (Valhalla) → Google-Matrix → Haversine + eigener TSP-Solver | Optimierung läuft auch ohne Primär-API; Stadia dient als kostenloser TomTom-Ersatz bei erschöpften Credits |
 
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
@@ -160,20 +160,23 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
 
 1. **Primär: ORS Optimization API (VROOM)** – Jobs mit Zeitfenstern, Fahrzeug vom Lager
    - **Live-Verkehr:** Ist `TOMTOM_API_KEY` gesetzt, wird vorab die **TomTom Routing Matrix** (Custom Matrix) für alle Koordinaten abgefragt und als `matrix`-Feld direkt an VROOM übergeben (Reihenfolge der Koordinaten exakt passend zur Job-/Depot-ID-Zuordnung). Ergebnis: `traffic_matrix_provider: "tomtom"`
-   - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`
-2. **Fallback:** ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
-3. **Zeitfenster:**
+   - **TomTom-Fallback:** Sind TomTom-Credits erschöpft (403), springt automatisch **Stadia Maps Valhalla** (`STADIA_API_KEY`) als Ersatz-Matrix ein. Ergebnis: `traffic_matrix_provider: "stadia"`
+   - **Einzelne NaN-Zellen** (z. B. NO_ROUTE_FOUND) werden aus ORS/Stadia/Haversine aufgefüllt, damit eine unerreichbare Koordinate nicht den kompletten Live-Verkehr kippt
+   - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`; TomTom-Timeout 5 s
+2. **Geocoding-Kette:** Photon (Fuzzy, Tippfehler-tolerant) → ORS (exakt) → Google → Hash (Demo)
+   - Photon läuft **immer zuerst** mit Standort-Bias Würzburg (lat=49.79, lon=9.95) – kein API-Key nötig
+3. **Fallback:** ORS-Matrix → Stadia-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
+4. **Zeitfenster:**
    - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
    - Fußgängerzone → **zwei Varianten werden berechnet**: (A) direkt zum Objekt, nur bis 11:00 Uhr möglich (Deadline 11:00); (B) über den per Overpass gesuchten **nächstgelegenen befahrbaren Haltepunkt** (`findNearestDrivablePoint`) + Restweg **zu Fuß** (keine Deadline)
-4. **Die schnellere Variante gewinnt:** Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
-5. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
-6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 3 Min, Objekt 5 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
-7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
+5. **Die schnellere Variante gewinnt:** Variante A und B werden **parallel** berechnet (halbe Optimierungszeit bei Fußgängerzonen-Routen). Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
+6. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
+7. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 5 Min, Objekt 7 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)8. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]` – drei Zustände: „Optimierung erfolgreich" / „Live-Verkehr fehlgeschlagen – Route ohne Live-Verkehr berechnet" / „Optimierung fehlgeschlagen – Fallback auf Matrix + lokalen Solver"
 
-Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
+Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`), `traffic_matrix_provider` (`tomtom` | `stadia` | null). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
 
 ### 5.5 Pack-Modus (`/planung` nach Optimierung)
-- Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
+- Stopp-Timeline mit Ankunftszeiten, **Status-Warnungen** („Optimierung erfolgreich" / „Live-Verkehr fehlgeschlagen" / „Optimierung fehlgeschlagen")
 - **Geschätztes Arbeitsende** wird angezeigt (Lager-Rückkehr + Aufräumzeit: 3 Min/Stopp + 5 Min) – bewusst ohne Rechnungsweg
 - Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht)
 - **Karte unten** (Leaflet): Rundtour Lager → alle Stopps → Lager inkl. Rückweg, nummerierte Marker, Fußweg-Anteile
@@ -242,10 +245,11 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 | Variable | Pflicht | Zweck |
 | :--- | :--- | :--- |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase-Client & Middleware |
-| `ORS_API_KEY` | ✅ | Geocoding, Directions, VROOM-Optimierung (Premium-Key = JWT → `Bearer`, sonst `apikey`) |
-| `TOMTOM_API_KEY` | – | Live-Verkehrs-Matrix (Custom Matrix für VROOM); ohne → Standard-Fahrzeiten |
+| `ORS_API_KEY` | ✅ | Geocoding-Fallback (exakt), Directions, VROOM-Optimierung (Premium-Key = JWT → `Bearer`, sonst `apikey`) |
+| `TOMTOM_API_KEY` | – | Live-Verkehrs-Matrix (Custom Matrix für VROOM); ohne → Stadia/Standard-Fahrzeiten |
+| `STADIA_API_KEY` | – | Kostenloser TomTom-Ersatz (Valhalla-Matrix, 200k Credits/Monat); greift bei erschöpften TomTom-Credits |
 | `TOMTOM_MAX_CELLS` | – | Limit der Matrix-Zellen (Default 2500) |
-| `GOOGLE_MAPS_API_KEY` | – | Optionaler Matrix-Fallback |
+| `GOOGLE_MAPS_API_KEY` | – | Optionaler Matrix- & Geocoding-Fallback |
 | `GEMINI_API_KEY` | – | OCR (Foto-Import) |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | – | Passkey-Relaying-Party (Default: Host / „Thiel Dienstleistungen") |
 | `WAREHOUSE_ADDRESS` | – | Lager-Adresse (Default: Sartoriusstraße 14, 97072 Würzburg) |
@@ -273,7 +277,7 @@ src/
     settings/ · history/ · auth/ · ui/
   lib/
     auth.ts                         # requireUser, Rollen, Username↔Email
-    ors.ts · overpass.ts · ocr.ts · traffic-matrix.ts · warehouse.ts · polyline.ts
+    ors.ts · photon.ts · overpass.ts · ocr.ts · traffic-matrix.ts · stadia-matrix.ts · warehouse.ts · polyline.ts
     time-tracking.ts                # Profil-Referenzen, flagOverdueTimeEntries (Housekeeping),
                                     # logTimeEntryChange + auditSnapshotOf (Audit-Log)
     contract.ts · time-format.ts    # Soll/Ist, Überstundenkonto, Zeit-Formatierung,

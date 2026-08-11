@@ -6,9 +6,28 @@ import { loadProfileRefs } from "@/lib/time-tracking";
 
 export const dynamic = "force-dynamic";
 
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  driver: "Fahrer",
+  facility_manager: "Reinigungskraft",
+  substitute: "Springer",
+};
+
 function csvCell(value: unknown): string {
   const text = value == null ? "" : String(value);
   return `"${text.replace(/"/g, '""')}"`;
+}
+
+/** Datum im deutschen Format (TT.MM.JJJJ). */
+function dateLabel(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** Uhrzeit im deutschen Format (HH:MM). */
+function timeLabel(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 }
 
 /** GET /api/admin/time-tracking/export – Lohn-CSV für Admins. */
@@ -45,7 +64,7 @@ export async function GET(request: Request) {
     const profileById = await loadProfileRefs(userIds);
 
     const rows = [
-      ["Mitarbeiter", "Rolle", "Von", "Bis", "Pause (Min)", "Arbeitszeit (h)", "Freigegeben", "Bemerkung"],
+      ["Datum", "Mitarbeiter", "Rolle", "Von", "Bis", "Pause (Min)", "Arbeitszeit (h)", "Status", "Bemerkung"],
       ...exportEntries.map((entry) => {
         const profile = profileById.get(entry.user_id);
         const start = new Date(entry.clock_in).getTime();
@@ -54,13 +73,14 @@ export async function GET(request: Request) {
           ? Math.max(0, (end - start) / 3_600_000 - Number(entry.break_duration_minutes ?? 0) / 60)
           : null;
         return [
+          dateLabel(entry.clock_in),
           profile?.name ?? entry.user_id,
-          profile?.role ?? "",
-          entry.clock_in,
-          entry.clock_out ?? "",
+          profile?.role ? (ROLE_LABELS[profile.role] ?? profile.role) : "",
+          timeLabel(entry.clock_in),
+          entry.clock_out ? timeLabel(entry.clock_out) : "offen",
           entry.break_duration_minutes,
           hours === null ? "offen" : hours.toFixed(2),
-          entry.is_approved ? "ja" : "nein",
+          entry.is_approved ? "Freigegeben" : "Ausstehend",
           entry.note ?? "",
         ];
       }),
