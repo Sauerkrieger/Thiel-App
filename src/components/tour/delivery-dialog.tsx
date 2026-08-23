@@ -317,6 +317,7 @@ export function DeliveryDialog({
               Belieferung – {stop?.object?.name ?? "Unbekanntes Objekt"}
             </span>
             <NavigateButton
+              address={stop?.object?.address ?? null}
               latitude={stop?.object?.latitude ?? null}
               longitude={stop?.object?.longitude ?? null}
               label={stop?.object?.name ?? "Objekt"}

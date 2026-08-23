@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CONTRACT_LABELS, dailyTargetMinutes, overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { useRealtimeRefresh } from "@/lib/realtime";
 import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
 import type { TimeEntry, TimeEntryAuditLog, TimeOffRequest } from "@/types/time-tracking";
@@ -176,7 +177,22 @@ export function AdminTimeTrackingPage() {
     try {
       const res = await offlineFetch(url, { cache: "no-store" });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? "Übersicht konnte nicht geladen werden.");
+      if (!res.ok) {
+        // 401/403 = die Session-Cookies gehören nicht (mehr) einem Admin –
+        // z. B. wenn im selben Browser ein Mitarbeiter-Login (zweiter Tab)
+        // die geteilten Cookies überschrieben hat. Die Seite rendert dann
+        // zwar noch, bekommt aber keine Daten mehr. Das soll laut und klar
+        // sichtbar sein, statt still zu scheitern.
+        if (res.status === 401 || res.status === 403) {
+          console.error(
+            `[Zeitadmin] Keine Admin-Sitzung (HTTP ${res.status}) – Session-Cookie überschrieben?`,
+          );
+          throw new Error(
+            "Keine Admin-Sitzung mehr. Falls du im selben Browser als Mitarbeiter eingeloggt bist: Für den Realtime-Test zwei verschiedene Browser (oder Inkognito) nutzen.",
+          );
+        }
+        throw new Error(body.error ?? "Übersicht konnte nicht geladen werden.");
+      }
       setOverview(body as Overview);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Übersicht konnte nicht geladen werden.");
@@ -184,6 +200,14 @@ export function AdminTimeTrackingPage() {
   }, [role, debouncedQuery]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Realtime: Bei Änderungen an Stempelungen, Anträgen oder Profilen die
+  // Übersicht automatisch neu laden (nur Push, kein Polling).
+  useRealtimeRefresh(
+    true,
+    ["time_entries", "time_off_requests", "profiles"],
+    () => { void load(true); },
+  );
 
   // Debounce der Freitext-Suche (siehe oben): sobald der Nutzer kurz pausiert.
   useEffect(() => {

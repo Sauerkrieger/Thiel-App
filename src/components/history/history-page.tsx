@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { SetupHint } from "@/components/setup-hint";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { useRealtimeRefresh } from "@/lib/realtime";
 import type { ApiError, TourHistoryItem, UserListItem } from "@/types/api";
 
 const STATUS_LABELS: Record<TourHistoryItem["status"], string> = {
@@ -96,6 +97,14 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
     void load();
   }, [load]);
 
+
+  // Realtime (nur Admins): Bei Touren-Aenderungen (Abschluss, neuer Start,
+  // Statuswechsel) die Historie automatisch neu laden.
+  useRealtimeRefresh(
+    isAdmin,
+    ["active_tours"],
+    () => { void load(true); },
+  );
   // Für Admins: Liste aller Nutzer laden (Filter „pro Person").
   useEffect(() => {
     if (!isAdmin) return;

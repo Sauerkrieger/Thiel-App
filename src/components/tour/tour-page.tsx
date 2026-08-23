@@ -384,6 +384,7 @@ export function TourPage({ tourId }: Props) {
                         </span>
                       )}
                       <NavigateButton
+                        address={stop.object?.address ?? null}
                         latitude={stop.object?.latitude ?? null}
                         longitude={stop.object?.longitude ?? null}
                         label={stop.object?.name ?? "Objekt"}

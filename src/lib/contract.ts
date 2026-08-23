@@ -124,12 +124,14 @@ export type OvertimeEntryLike = {
 };
 
 /**
- * Automatisches Überstundenkonto in Minuten (kann negativ sein = Minusstunden).
+ * Automatisches Überstundenkonto in Minuten (nur Guthaben, keine Minusstunden).
  *
  * Summiert pro abgeschlossener ISO-Woche die Differenz aus tatsächlicher
  * Arbeitszeit (Ist, nur freigegebene, abgeschlossene Einträge) und
- * Soll-Arbeitszeit der Vertragsart. Laufende Wochen zählen erst, wenn sie
- * vollständig vorbei sind – so schwankt das Konto nicht im Tagesverlauf.
+ * Soll-Arbeitszeit der Vertragsart. Nur Mehrarbeit (>Soll) wird als
+ * Guthaben aufgebaut; Minderleistung (<Soll) wird ignoriert (keine
+ * Minusstunden). Laufende Wochen zählen erst, wenn sie vollständig
+ * vorbei sind – so schwankt das Konto nicht im Tagesverlauf.
  */
 export function computeOvertimeBalanceMinutes(
   entries: OvertimeEntryLike[],
@@ -157,12 +159,24 @@ export function computeOvertimeBalanceMinutes(
     byWeek.set(weekStart, (byWeek.get(weekStart) ?? 0) + minutes);
   }
 
+  // TODO: Minusstunden-Berechnung aktuell deaktiviert (Stundenbasis/Minijob-Fokus).
+  // Später reaktivieren, sobald ein Parameter `has_overtime_account` oder `is_fixed_salary`
+  // im Profil existiert (z. B. für Vollzeit-/Teilzeitkräfte mit festem Monatsgehalt):
+  //
+  // if (profile.has_overtime_account) {
+  //   balance += minutes - target; // Vollständige Verrechnung inkl. Minusstunden
+  // } else {
+  //   balance += Math.max(0, minutes - target); // Nur Plusstunden zulassen, kein Minus
+  // }
   let balance = 0;
-  for (const minutes of byWeek.values()) balance += minutes - target;
+  for (const minutes of byWeek.values()) {
+    // Nur Mehrarbeit (>Soll) als Guthaben aufbauen, keine Minusstunden
+    balance += Math.max(0, minutes - target);
+  }
   return Math.round(balance);
 }
 
-/** Automatisches Überstundenkonto in Stunden (2 Dezimalstellen). */
+/** Automatisches Überstundenkonto in Stunden (2 Dezimalstellen, nur Guthaben). */
 export function overtimeBalanceHours(
   entries: OvertimeEntryLike[],
   contractType: ContractType | null | undefined,

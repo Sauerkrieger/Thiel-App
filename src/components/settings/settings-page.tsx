@@ -176,10 +176,12 @@ export function SettingsPage({
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Einstellungen</h1>
-          <p className="text-sm text-muted-foreground">
+          {/* div statt p: Badge rendert ein <div>, und <div> darf nicht in <p> stehen
+              (sonst React-Hydration-Fehler „<div> cannot be a descendant of <p>“). */}
+          <div className="text-sm text-muted-foreground">
             Angemeldet als <span className="font-medium text-foreground">{user.name}</span>{" "}
             · <Badge variant="secondary">{ROLE_LABELS[user.role] ?? user.role}</Badge>
-          </p>
+          </div>
         </div>
         <Button variant="outline" onClick={handleLogout}>
           <LogOut /> Abmelden
