@@ -15,6 +15,7 @@ Die App unterstützt den kompletten Arbeitsablauf einer Reinigungs-/Liefer-Rundt
 4. **Ausliefern** – Stopps in optimierter Reihenfolge, Items vorab gecheckt, Belieferung abhaken
 5. **Historie & Einstellungen** – vergangene Touren, Profil, Passwort, Passkeys
 6. **Zeiterfassung & Urlaubsverwaltung** – Stempeluhr, Arbeitszeit-Nachreichung, Abwesenheitsanträge, Zeitadmin mit Prüfbedarf (Auto-Timeout für vergessene Ausstempelungen)
+7. **Chat** – Mitarbeiter-/Admin-Kommunikation mit Medien, Broadcasts, Übersetzung, Push und Offline-Unterstützung
 
 Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 **Thiel Dienstleistungen** (Standard: *Sartoriusstraße 14, 97072 Würzburg*, per Env
@@ -29,11 +30,11 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 | **Auth** | Supabase Auth (Passwort) + WebAuthn-Passkeys (`@simplewebauthn`) | Login per Benutzername/Passwort **und** Fingerabdruck/Face ID |
 | **Routen-Optimierung** | ORS Optimization API (VROOM) mit Custom-Matrix | Optimale Rundtour unter Zeitfenstern & Restriktionen |
 | **Live-Verkehr** | TomTom Routing Matrix API | Aktuelle Fahrzeiten (inkl. Stau) als VROOM-Custom-Matrix |
-| **Geocoding** | Photon (Komoot, OSM) → OpenRouteService Geocode Search | Fuzzy-Adresssuche mit Tippfehler-Toleranz + exakter ORS-Fallback |
+| **Geocoding** | OpenRouteService Geocode Search | Adress-Autocomplete & Koordinaten-Verifizierung |
 | **Fußgängerzonen** | Overpass API (OpenStreetMap) | Automatische Erkennung + nächster befahrbarer Haltepunkt |
 | **Karten** | Leaflet (imperativ, ohne react-leaflet), OSM-Tiles, ORS-Directions | Routen-Geometrie in Pack- & Tour-Modus |
 | **OCR / Vision** | Gemini Vision API | Erkennung von abfotografierten Listen (Objekte, Schlüssel, Items) |
-| **Routen-Fallback** | ORS-Matrix → Stadia Maps Matrix (Valhalla) → Google-Matrix → Haversine + eigener TSP-Solver | Optimierung läuft auch ohne Primär-API; Stadia dient als kostenloser TomTom-Ersatz bei erschöpften Credits |
+| **Routen-Fallback** | ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver | Optimierung läuft auch ohne Primär-API |
 
 ## 3. Datenmodell (Supabase/PostgreSQL)
 
@@ -47,7 +48,7 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - `weekly_target_hours` (numeric, default 40) – **Wochen-Sollstunden** fürs Überstundenkonto (Auto-Fill: Vollzeit 40 / Teilzeit 20 / Minijob 10; bei `custom` frei)
 - `working_days_per_week` (numeric, default 5) – geplante Arbeitstage pro Woche (Auto-Fill: 5/5/2; bei `custom` frei, Basis für den Urlaubsanspruch)
 - `vacation_days_per_year` (integer, default 30) – **individuelle Jahresurlaubstage**; Resturlaub überall = `vacation_days_per_year − vacation_days_used` (Auto-Fill: 30/30/12, in allen Vertragsarten manuell überschreibbar)
-- Auto-Fill beim Anlegen/Bearbeiten: Vollzeit → 40 h / 5 Tage / 30 Tage, Teilzeit → 20 h / 5 Tage / 30 Tage, Minijob → 10 h / 2 Tage / 12 Tage; **Soll-Stunden & Arbeitstage sind in allen Vertragsarten anpassbar** (Defaults vorbefüllt), Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen
+- Auto-Fill beim Anlegen/Bearbeiten: Vollzeit → 40 h / 5 Tage / 30 Tage, Teilzeit → 20 h / 5 Tage / 30 Tage, Minijob → 10 h / 2 Tage / 12 Tage; `custom` zeigt Soll-Stunden & Arbeitstage als Eingabefelder, Urlaubsanspruch wird als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen
 - Trigger `on_auth_user_created` legt das Profil bei Auth-Registrierung automatisch an (inkl. Vertrags-Defaults)
 - **Login-Kennung:** Benutzername wird auf `{name}@thiel.local` gemappt
 
@@ -100,6 +101,19 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 ### `weekly_default_routes` – Wochentags-Vorauswahl (pro Benutzer)
 - `id`, `user_id` (FK auth.users, **jeder Nutzer hat eigene Defaults**), `day_of_week` (0–6, 0 = Sonntag), `object_id`, `selection_order`
 - Unique `(user_id, day_of_week, object_id)`; Ersetzung transaktional über RPC `save_weekly_defaults(user_id, day_of_week, object_ids)`
+
+### `chat_threads`, `chat_messages` & `chat_translations` – Kommunikation
+- `chat_threads` verbindet jeweils einen Mitarbeiter mit einem Admin; pro Teilnehmerpaar genau ein Thread
+- `chat_messages` unterstützt Text, Bild und Audio mit Status `sent`/`delivered`/`read`, Eilmeldungen, Transkript und Medienpfad
+- `chat_translations` cached Übersetzungen je Nachricht und Zielsprache
+- Storage-Bucket `chat-media` ist privat; Medien werden beim Lesen per kurzlebiger Signed URL ausgeliefert
+- Realtime-Publication umfasst Threads, Nachrichten und Übersetzungen; die Summary-Abfrage liefert Kontakte, Threads und ungelesene Anzahl
+- Performance: gezielte Spaltenauswahl, Indizes für Thread-/Zeit- und Unread-Abfragen sowie Debouncing der Realtime-Refreshes
+
+### `push_subscriptions` & `company_settings` – Chat-Unterstützung
+- `push_subscriptions` speichert Web-Push-Endpunkte je Benutzer; ungültige Endpunkte werden beim Versand entfernt
+- `company_settings` enthält die optionale Support-Telefonnummer
+- `profiles.chat_preferred_language` speichert die persönliche Übersetzungssprache; `profiles.phone` die Telefonnummer
 
 ### `active_tours` + `tour_stops` – Touren
 - `active_tours`: `id`, `driver_id`, `date`, `status` (packing → in_transit → completed), `start_time`, `total_duration_minutes`
@@ -160,23 +174,20 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
 
 1. **Primär: ORS Optimization API (VROOM)** – Jobs mit Zeitfenstern, Fahrzeug vom Lager
    - **Live-Verkehr:** Ist `TOMTOM_API_KEY` gesetzt, wird vorab die **TomTom Routing Matrix** (Custom Matrix) für alle Koordinaten abgefragt und als `matrix`-Feld direkt an VROOM übergeben (Reihenfolge der Koordinaten exakt passend zur Job-/Depot-ID-Zuordnung). Ergebnis: `traffic_matrix_provider: "tomtom"`
-   - **TomTom-Fallback:** Sind TomTom-Credits erschöpft (403), springt automatisch **Stadia Maps Valhalla** (`STADIA_API_KEY`) als Ersatz-Matrix ein. Ergebnis: `traffic_matrix_provider: "stadia"`
-   - **Einzelne NaN-Zellen** (z. B. NO_ROUTE_FOUND) werden aus ORS/Stadia/Haversine aufgefüllt, damit eine unerreichbare Koordinate nicht den kompletten Live-Verkehr kippt
-   - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`; TomTom-Timeout 5 s
-2. **Geocoding-Kette:** Photon (Fuzzy, Tippfehler-tolerant) → ORS (exakt) → Google → Hash (Demo)
-   - Photon läuft **immer zuerst** mit Standort-Bias Würzburg (lat=49.79, lon=9.95) – kein API-Key nötig
-3. **Fallback:** ORS-Matrix → Stadia-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
-4. **Zeitfenster:**
+   - Grenzen: 100 Orte, 2500 Zellen (Free-Tier), steuerbar über `TOMTOM_MAX_CELLS`
+2. **Fallback:** ORS-Matrix → Google-Matrix → Haversine + eigener TSP-Solver (`solveTspWithWindows`)
+3. **Zeitfenster:**
    - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
    - Fußgängerzone → **zwei Varianten werden berechnet**: (A) direkt zum Objekt, nur bis 11:00 Uhr möglich (Deadline 11:00); (B) über den per Overpass gesuchten **nächstgelegenen befahrbaren Haltepunkt** (`findNearestDrivablePoint`) + Restweg **zu Fuß** (keine Deadline)
-5. **Die schnellere Variante gewinnt:** Variante A und B werden **parallel** berechnet (halbe Optimierungszeit bei Fußgängerzonen-Routen). Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
-6. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
-7. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 5 Min, Objekt 7 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)8. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]` – drei Zustände: „Optimierung erfolgreich" / „Live-Verkehr fehlgeschlagen – Route ohne Live-Verkehr berechnet" / „Optimierung fehlgeschlagen – Fallback auf Matrix + lokalen Solver"
+4. **Die schnellere Variante gewinnt:** Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
+5. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
+6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 3 Min, Objekt 5 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
+7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
 
-Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`), `traffic_matrix_provider` (`tomtom` | `stadia` | null). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
+Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
 
 ### 5.5 Pack-Modus (`/planung` nach Optimierung)
-- Stopp-Timeline mit Ankunftszeiten, **Status-Warnungen** („Optimierung erfolgreich" / „Live-Verkehr fehlgeschlagen" / „Optimierung fehlgeschlagen")
+- Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
 - **Geschätztes Arbeitsende** wird angezeigt (Lager-Rückkehr + Aufräumzeit: 3 Min/Stopp + 5 Min) – bewusst ohne Rechnungsweg
 - Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht)
 - **Karte unten** (Leaflet): Rundtour Lager → alle Stopps → Lager inkl. Rückweg, nummerierte Marker, Fußweg-Anteile
@@ -190,13 +201,20 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 ### 5.7 Historie (`/historie`)
 - Vergangene Touren mit Datum, Fahrer, Anzahl belieferter Stopps und belieferten Objekten (`GET /api/tours`)
 
-### 5.8 Einstellungen (`/einstellungen`)
+### 5.8 Chat (`/chat`)
+- Kontaktliste mit Suche, Rollenfilter und Admin-Broadcast an mehrere Mitarbeiter
+- Nachrichten mit Text, Bild- und Audioanhängen, Eilmeldungen, Statushaken, Uhrzeit und Übersetzung
+- Thread-Ansicht ist auf mobilen Geräten als Master-Detail-Navigation umgesetzt: Liste oder Verlauf, mit Zurück-Navigation
+- Eigene Nachrichten sind rechts als blaue Bubbles mit maximal 75 % Breite, empfangene Nachrichten links neutral dargestellt; der aktive Kontakt ist in der Liste markiert
+- Offline-First: Nachrichten werden lokal in IndexedDB zwischengespeichert bzw. aus der Upload-Warteschlange synchronisiert; der Thread-Index und Batch-Schreibvorgänge reduzieren die Ladezeit
+- Push-Benachrichtigungen sind optional und werden nur nach Browser-Zustimmung eingerichtet
+
+### 5.9 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
 - **Benutzerverwaltung (Admin):** Konten anlegen, Rollen vergeben, **Vertragsart** (Vollzeit/Teilzeit/Minijob/Individuell – bestimmt das Soll im Überstundenkonto)
-- **Vertrags-Auto-Fill:** Die Vertragsart befüllt Soll-Stunden, Arbeitstage und Urlaubstage automatisch (Vollzeit 40/5/30, Teilzeit 20/5/30, Minijob 10/2/12) – **Arbeitstage/Woche und Urlaubstage/Jahr sind in allen Vertragsarten direkt anpassbar** (Defaults vorbefüllt), **Soll-Stunden/Woche** zeigt nur `custom` („Individuell“) als Eingabefeld. Der Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen. Bei bestehenden Nutzern öffnet die Wahl „Individuell“ einen Dialog mit den drei Feldern; der Wechsel auf Vollzeit/Teilzeit/Minijob übernimmt die Auto-Fill-Werte serverseitig
-- **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
+- **Vertrags-Auto-Fill:** Die Vertragsart befüllt Soll-Stunden, Arbeitstage und Urlaubstage automatisch (Vollzeit 40/5/30, Teilzeit 20/5/30, Minijob 10/2/12); `custom` („Individuell“) blendet **Soll-Stunden/Woche** und **Arbeitstage/Woche** ein, der Urlaubsanspruch wird beim Ändern der Arbeitstage als `round(30 × Arbeitstage ÷ 5)` vorgeschlagen. **`vacation_days_per_year` bleibt in allen Vertragsarten manuell anpassbar.** Bei bestehenden Nutzern öffnet die Wahl „Individuell“ einen Dialog mit den drei Feldern; der Wechsel auf Vollzeit/Teilzeit/Minijob übernimmt die Auto-Fill-Werte serverseitig und **Objekte zuweisen** – beim Anlegen einer Reinigungskraft erscheint die Objektauswahl (Pflicht, mind. 1); bestehende Reinigungskräfte haben einen „Objekte"-Button zum Nachbearbeiten der Zuweisung
 
-### 5.9 Zeiterfassung & Urlaubsverwaltung
+### 5.10 Zeiterfassung & Urlaubsverwaltung
 **Stempeluhr (auf allen Seiten sichtbar):** ClockWidget im Header (Desktop) bzw. in der unteren Leiste (Handy). Ein-/Ausstempeln, Pausen-Toggle + feste Pausen-Presets (+15/30/45/60 Min.), Live-Zähler, Browser-Erinnerung „Vergessen auszustempeln?“ (nach 8 h oder ab 17:00 Uhr mit ≥ 1 h, einmalig je Stempelung). **Offline-First** über IndexedDB + LWW (`client_updated_at`, Serverzeit-Ausrichtung via `nowServerAligned`).
 
 **Mitarbeiter-Dashboard (`/zeiterfassung`):**
@@ -245,11 +263,10 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 | Variable | Pflicht | Zweck |
 | :--- | :--- | :--- |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase-Client & Middleware |
-| `ORS_API_KEY` | ✅ | Geocoding-Fallback (exakt), Directions, VROOM-Optimierung (Premium-Key = JWT → `Bearer`, sonst `apikey`) |
-| `TOMTOM_API_KEY` | – | Live-Verkehrs-Matrix (Custom Matrix für VROOM); ohne → Stadia/Standard-Fahrzeiten |
-| `STADIA_API_KEY` | – | Kostenloser TomTom-Ersatz (Valhalla-Matrix, 200k Credits/Monat); greift bei erschöpften TomTom-Credits |
+| `ORS_API_KEY` | ✅ | Geocoding, Directions, VROOM-Optimierung (Premium-Key = JWT → `Bearer`, sonst `apikey`) |
+| `TOMTOM_API_KEY` | – | Live-Verkehrs-Matrix (Custom Matrix für VROOM); ohne → Standard-Fahrzeiten |
 | `TOMTOM_MAX_CELLS` | – | Limit der Matrix-Zellen (Default 2500) |
-| `GOOGLE_MAPS_API_KEY` | – | Optionaler Matrix- & Geocoding-Fallback |
+| `GOOGLE_MAPS_API_KEY` | – | Optionaler Matrix-Fallback |
 | `GEMINI_API_KEY` | – | OCR (Foto-Import) |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | – | Passkey-Relaying-Party (Default: Host / „Thiel Dienstleistungen") |
 | `WAREHOUSE_ADDRESS` | – | Lager-Adresse (Default: Sartoriusstraße 14, 97072 Würzburg) |
@@ -259,13 +276,12 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 ```
 src/
   middleware.ts                     # Session-Refresh + Seiten-/API-Schutz
-  app/
-    page.tsx                        # Redirect → /objects
-    login/ · objects/ · inventar/ · planung/ · tour/[id]/ · historie/ · einstellungen/
+  app/page.tsx                      # Redirect → /objects
+    login/ · objects/ · inventar/ · planung/ · tour/[id]/ · historie/ · chat/ · einstellungen/
                                     · zeiterfassung/ · admin/zeiterfassung/
-    api/                            # auth, users, passkeys, geocoding, items,
+  api/                              # auth, users, passkeys, geocoding, items,
                                     # objects (inkl. import/*), inventory, planning,
-                                    # tours, time-tracking (+ admin/time-tracking)
+                                    # tours, chat, time-tracking (+ admin/time-tracking)
   components/
     app-shell.tsx                   # Header-Navigation (rollenabhängig)
     map/route-map.tsx               # Leaflet-Route
@@ -273,25 +289,26 @@ src/
     inventory/                      # Inventar (Item-Katalog, Admin)
     planning/                       # Planung, Pack-Modus, Foto-Auswahl
     tour/                           # Tour-Modus, Liefer-Dialog
+    chat/                           # Kontaktliste, Thread-Verlauf, Medien, Push, Offline-Queue
     time-tracking/                  # Stempeluhr, Zeiterfassung, Zeitadmin, Prüfbedarf-Popup
     settings/ · history/ · auth/ · ui/
   lib/
     auth.ts                         # requireUser, Rollen, Username↔Email
-    ors.ts · photon.ts · overpass.ts · ocr.ts · traffic-matrix.ts · stadia-matrix.ts · warehouse.ts · polyline.ts
+    ors.ts · overpass.ts · ocr.ts · traffic-matrix.ts · warehouse.ts · polyline.ts
     time-tracking.ts                # Profil-Referenzen, flagOverdueTimeEntries (Housekeeping),
                                     # logTimeEntryChange + auditSnapshotOf (Audit-Log)
     contract.ts · time-format.ts    # Soll/Ist, Überstundenkonto, Zeit-Formatierung,
                                     # requiredBreakMinutes/enforcedBreakMinutes (§ 4 ArbZG)
-    offline/                        # db, fetch (offlineFetch), sync, clock (Serverzeit-Offset)
+    offline/                        # db, fetch (offlineFetch), sync, clock (Serverzeit-Offset), chat
     routing/optimizer.ts            # VROOM + Matrix + TSP + Zeitfenster
     routing/tsp.ts · time.ts
     supabase/                       # server/admin/middleware-Client
     webauthn.ts                     # Passkey-Verifikation
-supabase/migrations/                # 26 Migrationen (Schema von Grund auf)
+supabase/migrations/                # versionierte Schema- und Performance-Migrationen
 ```
 
 ## 10. Entwicklung
 
 - `npm run dev` – Dev-Server · `npm run build` – Produktions-Build · `npm run typecheck` – `tsc --noEmit` · `npm start` – Produktions-Server
-- Migrationen werden in `supabase/migrations/` versioniert (laufen auf dem Supabase-Projekt)
+- Migrationen werden in `supabase/migrations/` versioniert (laufen auf dem Supabase-Projekt); der Chat benötigt die Chat-, Push- und Performance-Migrationen bis `20260825000000_chat_performance.sql`
 - Deployment über Git-Push nach `main` (Vercel/GitHub Actions), Migrationen vor dem ersten Request einspielen

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Clock3, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import { Building2, MessageCircle, Clock3, CloudOff, LoaderCircle, RefreshCw, Settings } from "lucide-react";
 import { ClockWidget } from "@/components/time-tracking/clock-widget";
 import { TimeReviewDialog } from "@/components/time-tracking/review-dialog";
 import { cn } from "@/lib/utils";
@@ -31,6 +31,7 @@ const DATA_ENDPOINTS: Record<string, () => string> = {
   "/historie": () => "/api/tours",
   "/zeiterfassung": () => "/api/time-tracking/summary",
   "/admin/zeiterfassung": () => "/api/admin/time-tracking/overview",
+  "/chat": () => "/api/chat/summary",
 };
 
 // Debounce + Dedupe: nur der zuletzt überfahrene Link wird (kurz) vorgewärmt,
@@ -119,8 +120,26 @@ export function AppShell({
   // Direkt im Effekt registrieren – ein window-„load“-Listener kann bei
   // schnellen Seiten bereits gefeuert haben, bevor der Effekt lief.
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    if (process.env.NODE_ENV !== "production") {
+      // Ein alter Service Worker aus einem früheren Production-Build
+      // (npm run build && npm start) überlebt Browser-Reloads, Dev-Server-
+      // Neustarts und Fenster-Neustarts und liefert veraltete
+      // _next/static-Chunks aus dem Cache aus – das täuscht im Dev-Modus
+      // einen „alten Stand“ vor. Deshalb im Dev-Modus registrierte Worker
+      // entfernen, damit immer der frische Build ausgeliefert wird.
+      void navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => {
+          for (const registration of registrations) {
+            void registration.unregister();
+          }
+        })
+        .catch(() => {
+          /* Service Worker ist optional – App funktioniert auch ohne. */
+        });
+      return;
+    }
     const id = window.setTimeout(() => {
       void navigator.serviceWorker.register("/sw.js").catch((error) => {
         // Service Worker ist optional – App funktioniert auch ohne.
@@ -191,6 +210,7 @@ export function AppShell({
               <ClockWidget userId={userId} />
             </div>
           )}
+          {userRole && <ChatHeaderLink />}
           <SyncBadge sync={sync} />
         </div>
       </header>
@@ -223,6 +243,20 @@ export function AppShell({
  * synchronisiert ist – sonst: Offline, laufender Sync, ausstehende
  * Änderungen oder ein Fehler.
  */
+function ChatHeaderLink() {
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    let active = true;
+    const load = () => void fetch("/api/chat/summary", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((data) => { if (active) setUnread(Number(data?.unreadCount ?? 0)); }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 30_000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, []);
+  return <Link href="/chat" aria-label={`Chat${unread ? `, ${unread} ungelesen` : ""}`} title="Chat" className="relative shrink-0 rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"><MessageCircle className="h-5 w-5" />{unread > 0 && <span className="absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">{unread > 99 ? "99+" : unread}</span>}</Link>;
+}
+
 function SyncBadge({ sync }: { sync: ReturnType<typeof useSyncState> }) {
   if (
     sync.online &&

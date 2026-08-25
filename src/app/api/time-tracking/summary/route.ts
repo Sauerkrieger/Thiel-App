@@ -20,7 +20,7 @@ export async function GET() {
     const supabase = getSupabaseAdmin();
     // Überfällige offene Stempelungen (12 h / Mitternacht) als prüfbedürftig markieren.
     await flagOverdueTimeEntries(supabase);
-    const [{ data: profile, error: profileError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }] = await Promise.all([
+    const [{ data: profile, error: profileError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: colleagues, error: colleaguesError }] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, name, role, vacation_days_total, vacation_days_used, overtime_hours, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year")
@@ -36,15 +36,18 @@ export async function GET() {
         .select("*")
         .eq("user_id", auth.user.id)
         .order("start_date", { ascending: false }),
+      supabase.from("profiles").select("id, name, role").order("name"),
     ]);
     if (profileError) throw profileError;
     if (entriesError) throw entriesError;
     if (requestsError) throw requestsError;
+    if (colleaguesError) throw colleaguesError;
 
     return NextResponse.json({
       profile,
       entries: entries ?? [],
       requests: requests ?? [],
+      colleagues: colleagues ?? [],
     });
   } catch (error) {
     return apiErrorResponse(error);

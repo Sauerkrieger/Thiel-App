@@ -28,12 +28,16 @@ export async function PATCH(request: Request) {
     const username =
       typeof body.username === "string" ? body.username.trim() : null;
     const name = typeof body.name === "string" ? body.name.trim() : null;
+    const phone = typeof body.phone === "string" ? body.phone.trim() : null;
 
-    if (!username && !name) {
+    if (!username && !name && phone === null) {
       return NextResponse.json(
         { error: "Keine Änderungen übermittelt." },
         { status: 400 },
       );
+    }
+    if (phone && !/^[0-9 +\-]+$/.test(phone)) {
+      return NextResponse.json({ error: "Ungültige Telefonnummer. Erlaubt sind Zahlen, Leerzeichen, + und -." }, { status: 400 });
     }
     if (username && !/^[a-zA-Z0-9_.-]+$/.test(username)) {
       return NextResponse.json(
@@ -82,9 +86,11 @@ export async function PATCH(request: Request) {
     const update: {
       name?: string;
       email?: string;
+      phone?: string | null;
     } = {};
     if (name) update.name = name;
     if (newEmail) update.email = newEmail;
+    if (phone !== null) update.phone = phone || null;
 
     const updatePayload: Database["public"]["Tables"]["profiles"]["Update"] = {
       ...update,
@@ -98,7 +104,7 @@ export async function PATCH(request: Request) {
       .from("profiles")
       .update(updatePayload)
       .eq("id", user.id)
-      .select("id, name, role, email")
+      .select("id, name, role, email, phone")
       .single();
     if (error) throw error;
 
@@ -111,6 +117,7 @@ export async function PATCH(request: Request) {
         id: profile.id,
         email: profile.email,
         name: profile.name,
+        phone: profile.phone ?? null,
         role: profile.role,
         username: emailToUsername(profile.email),
       },

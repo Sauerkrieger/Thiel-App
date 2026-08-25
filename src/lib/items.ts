@@ -121,7 +121,7 @@ export function correctItemNameFromInventory(
 /** true für die sechs Foto-Import-Standardgruppen (inkl. OCR-Varianten). */
 export function isPhotoImportStandardItem(itemName: string): boolean {
   const words = itemName
-    .split(/[^\\p{L}\\p{N}]+/u)
+    .split(/[^\p{L}\p{N}]+/u)
     .map(normalizeItemName)
     .filter(Boolean);
   if (words.length === 0) return false;

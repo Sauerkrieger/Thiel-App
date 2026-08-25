@@ -36,8 +36,7 @@ export async function GET() {
     const { data, error } = await query;
     if (error) throw error;
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const userIds = rows
-      .map((row) => row.user_id)
+    const userIds = rows.flatMap((row) => [row.user_id, row.substitute_id])
       .filter((id): id is string => typeof id === "string");
     const profileById = await loadProfileRefs(userIds);
     const requests = rows.map((row) => ({
@@ -75,6 +74,10 @@ export async function POST(request: Request) {
     const employeeNote = typeof body.employee_note === "string"
       ? body.employee_note.trim().slice(0, MAX_NOTE) || null
       : null;
+    const requestedSubstituteId = typeof body.substitute_id === "string" && body.substitute_id.trim()
+      ? body.substitute_id.trim()
+      : null;
+    const requestedStatus = isAdmin(auth.user) && body.status === "approved" ? "approved" : "pending";
 
     const requestedUserId = typeof body.user_id === "string" ? body.user_id : null;
     let targetUserId = auth.user.id;
@@ -94,14 +97,29 @@ export async function POST(request: Request) {
       }
       targetUserId = requestedUserId;
     }
+    if (requestedSubstituteId === targetUserId) {
+      return NextResponse.json({ error: "Die Vertretung darf nicht der Antragsteller sein." }, { status: 400 });
+    }
+    if (requestedSubstituteId) {
+      const { data: substitute, error: substituteError } = await getSupabaseAdmin()
+        .from("profiles")
+        .select("id")
+        .eq("id", requestedSubstituteId)
+        .maybeSingle();
+      if (substituteError) throw substituteError;
+      if (!substitute) {
+        return NextResponse.json({ error: "Der gewählte Vertreter existiert nicht." }, { status: 400 });
+      }
+    }
     const payload: Database["public"]["Tables"]["time_off_requests"]["Insert"] = {
       user_id: targetUserId,
       type: type as TimeOffType,
       start_date: startDate,
       end_date: endDate,
-      status: "pending",
+      status: requestedStatus,
       reviewer_note: reviewerNote,
       employee_note: employeeNote,
+      substitute_id: requestedSubstituteId,
       synced_at: new Date().toISOString(),
     };
     if (clientUpdatedAt) {

@@ -53,6 +53,7 @@ type CurrentUser = {
   name: string;
   role: UserRole;
   username: string;
+  phone?: string | null;
 };
 
 type PasskeyInfo = {
@@ -93,12 +94,14 @@ export function SettingsPage({
   users,
   objects,
   isAdmin,
+  supportPhone,
 }: {
   user: CurrentUser;
   passkeys: PasskeyInfo[];
   users: UserListItem[];
   objects: ObjectOption[];
   isAdmin: boolean;
+  supportPhone: string | null;
 }) {
   const router = useRouter();
   const [passkeysState, setPasskeysState] = useState(passkeys);
@@ -201,16 +204,35 @@ export function SettingsPage({
             onDelete={handleDeletePasskey}
           />
           {isAdmin ? (
-            <UsersSection
+            <>
+              <CompanySettingsSection supportPhone={supportPhone} />
+              <UsersSection
               users={users}
               objects={objects}
               onChanged={() => router.refresh()}
             />
+            </>
           ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function CompanySettingsSection({ supportPhone }: { supportPhone: string | null }) {
+  const [phone, setPhone] = useState(supportPhone ?? "");
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    if (phone.trim() && !/^[0-9 +\-]+$/.test(phone.trim())) { toast.error("Ungültige Supportnummer."); return; }
+    setSaving(true);
+    try {
+      const response = await fetch("/api/chat/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ support_phone_number: phone.trim() }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { toast.error(data.error ?? "Supportnummer konnte nicht gespeichert werden."); return; }
+      setPhone(data.supportPhoneNumber ?? ""); toast.success("Supportnummer gespeichert.");
+    } finally { setSaving(false); }
+  }
+  return <Card><CardHeader><CardTitle>Firmenkontakt</CardTitle><CardDescription>Zentrale Supportnummer für direkte Anrufe aus dem Mitarbeiter-Chat.</CardDescription></CardHeader><CardContent className="space-y-3"><Label htmlFor="support-phone">Supportnummer</Label><Input id="support-phone" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="z. B. +49 931 123456" disabled={saving} /><Button onClick={() => void save()} disabled={saving}>Speichern</Button></CardContent></Card>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,6 +242,7 @@ export function SettingsPage({
 function ProfileSection({ user }: { user: CurrentUser }) {
   const [username, setUsername] = useState(user.username);
   const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone ?? "");
   const [loading, setLoading] = useState(false);
 
   async function handleSave() {
@@ -227,12 +250,16 @@ function ProfileSection({ user }: { user: CurrentUser }) {
       toast.error("Bitte einen Benutzernamen eingeben.");
       return;
     }
+    if (phone.trim() && !/^[0-9 +\-]+$/.test(phone.trim())) {
+      toast.error("Ungültige Telefonnummer. Erlaubt sind Zahlen, Leerzeichen, + und -.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await offlineFetch("/api/auth/me-profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), name: name.trim() }),
+        body: JSON.stringify({ username: username.trim(), name: name.trim(), phone: phone.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -281,6 +308,11 @@ function ProfileSection({ user }: { user: CurrentUser }) {
             placeholder="z. B. Leon"
             disabled={loading}
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="phone">Handy-/Telefonnummer</Label>
+          <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="z. B. +49 171 1234567" disabled={loading} />
+          <p className="text-xs text-muted-foreground">Wird im Chat für direkte Anrufe angezeigt.</p>
         </div>
         <Button onClick={handleSave} disabled={loading}>
           {loading ? <Loader2 className="animate-spin" /> : null}

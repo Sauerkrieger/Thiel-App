@@ -12,10 +12,11 @@
 import { SYNC_TABLES, type SyncTable } from "@/lib/sync-tables";
 
 const DB_NAME = "thiel-offline";
-// Version erhöhen, damit bestehende Installationen die neuen
-// time_entries/time_off_requests-Stores beim nächsten Öffnen anlegen.
-const DB_VERSION = 2;
+// Version erhöhen, damit bestehende Installationen neue Stores und
+// Indizes beim nächsten Öffnen anlegen.
+const DB_VERSION = 5;
 
+export type OfflineTable = SyncTable | "chat_messages";
 export type SyncStatus = "synced" | "pending_upload";
 
 export type StoredRecord = {
@@ -36,10 +37,14 @@ function openDb(): Promise<IDBDatabase> {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        for (const table of SYNC_TABLES) {
-          const store = storeName(table);
-          if (!db.objectStoreNames.contains(store)) {
-            db.createObjectStore(store, { keyPath: "id" });
+        const transaction = request.transaction;
+        for (const table of [...SYNC_TABLES, "chat_messages" as const]) {
+          const storeNameValue = storeName(table);
+          const store = db.objectStoreNames.contains(storeNameValue)
+            ? transaction?.objectStore(storeNameValue)
+            : db.createObjectStore(storeNameValue, { keyPath: "id" });
+          if (table === "chat_messages" && store && !store.indexNames.contains("thread_id")) {
+            store.createIndex("thread_id", "data.thread_id", { unique: false });
           }
         }
       };
@@ -55,13 +60,13 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-function storeName(table: SyncTable): string {
+function storeName(table: OfflineTable): string {
   return `sync_${table}`;
 }
 
 /** Schreib-Transaktion: wartet auf den Abschluss der Transaktion. */
 async function writeTx(
-  table: SyncTable,
+  table: OfflineTable,
   action: (store: IDBObjectStore) => void,
 ): Promise<void> {
   const db = await openDb();
@@ -76,7 +81,7 @@ async function writeTx(
 
 /** Lese-Transaktion: löst mit dem Ergebnis des Requests auf. */
 async function readTx<T>(
-  table: SyncTable,
+  table: OfflineTable,
   action: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
   const db = await openDb();
@@ -89,19 +94,28 @@ async function readTx<T>(
   });
 }
 
+/** Legt einen oder mehrere Datensätze in einer Transaktion ab. */
+export async function putRecords(
+  table: OfflineTable,
+  records: StoredRecord[],
+): Promise<void> {
+  if (records.length === 0) return;
+  await writeTx(table, (store) => {
+    for (const record of records) store.put(record);
+  });
+}
+
 /** Legt einen Datensatz ab (überschreibt vorhandenen mit gleicher id). */
 export async function putRecord(
-  table: SyncTable,
+  table: OfflineTable,
   record: StoredRecord,
 ): Promise<void> {
-  await writeTx(table, (store) => {
-    store.put(record);
-  });
+  await putRecords(table, [record]);
 }
 
 /** Holt einen einzelnen Datensatz (oder null). */
 export async function getRecord(
-  table: SyncTable,
+  table: OfflineTable,
   id: string,
 ): Promise<StoredRecord | null> {
   const result = await readTx(table, (store) => store.get(id));
@@ -109,21 +123,31 @@ export async function getRecord(
 }
 
 /** Alle Datensätze einer Tabelle. */
-export async function getAllRecords(table: SyncTable): Promise<StoredRecord[]> {
+export async function getAllRecords(table: OfflineTable): Promise<StoredRecord[]> {
   const result = await readTx(table, (store) => store.getAll());
+  return result ?? [];
+}
+
+/** Datensätze über einen vorhandenen IndexedDB-Index. */
+export async function getRecordsByIndex(
+  table: OfflineTable,
+  indexName: string,
+  key: IDBValidKey,
+): Promise<StoredRecord[]> {
+  const result = await readTx(table, (store) => store.index(indexName).getAll(key));
   return result ?? [];
 }
 
 /** Alle noch nicht hochgeladenen Datensätze einer Tabelle. */
 export async function getPendingRecords(
-  table: SyncTable,
+  table: OfflineTable,
 ): Promise<StoredRecord[]> {
   const all = await getAllRecords(table);
   return all.filter((record) => record.sync_status === "pending_upload");
 }
 
 /** Löscht einen Datensatz. */
-export async function deleteRecord(table: SyncTable, id: string): Promise<void> {
+export async function deleteRecord(table: OfflineTable, id: string): Promise<void> {
   await writeTx(table, (store) => {
     store.delete(id);
   });

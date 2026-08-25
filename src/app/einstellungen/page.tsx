@@ -13,6 +13,8 @@ export default async function EinstellungenPage() {
   if (!user) redirect("/login");
 
   const admin = getSupabaseAdmin();
+  const { data: currentProfile } = await admin.from("profiles").select("phone").eq("id", user.id).maybeSingle();
+  const userWithPhone = { ...user, phone: currentProfile?.phone ?? null };
 
   // Eigene Passkeys (lädt parallel zu den Admin-Queries – ein Roundtrip weniger).
   const passkeysPromise = admin
@@ -37,20 +39,23 @@ export default async function EinstellungenPage() {
     object_ids: string[];
   }[] = [];
   let objects: { id: string; name: string }[] = [];
+  let supportPhone: string | null = null;
   let passkeys: {
     id: string;
     created_at: string;
     last_used_at: string | null;
   }[] = [];
   if (isAdmin(user)) {
-    const [{ data: profileData }, { data: objectData }, { data: assignmentData }, { data: passkeysData }] =
+    const [{ data: profileData }, { data: objectData }, { data: assignmentData }, { data: passkeysData }, { data: companyData }] =
       await Promise.all([
         admin.from("profiles").select("id, name, role, email, created_at, contract_type, weekly_target_hours, working_days_per_week, vacation_days_per_year").order("name"),
         admin.from("objects").select("id, name").order("name"),
         admin.from("object_assignments").select("user_id, object_id"),
         passkeysPromise,
+        admin.from("company_settings").select("support_phone_number").eq("id", true).maybeSingle(),
       ]);
     passkeys = passkeysData ?? [];
+    supportPhone = companyData?.support_phone_number ?? null;
     const objectIdsByUser = new Map<string, string[]>();
     for (const assignment of assignmentData ?? []) {
       const list = objectIdsByUser.get(assignment.user_id) ?? [];
@@ -78,11 +83,12 @@ export default async function EinstellungenPage() {
 
   return (
     <SettingsPage
-      user={user}
+      user={userWithPhone}
       passkeys={passkeys ?? []}
       users={users}
       objects={objects}
       isAdmin={isAdmin(user)}
+      supportPhone={supportPhone}
     />
   );
 }

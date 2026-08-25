@@ -26,7 +26,7 @@
  *   (ein Service Worker braucht einmal Internet).
  */
 
-const CACHE_NAME = "thiel-shell-v3";
+const CACHE_NAME = "thiel-shell-v4";
 
 self.addEventListener("install", (event) => {
   // Startseite vorab cachen – letzte Ausweichmöglichkeit für Navigationen.
@@ -117,6 +117,26 @@ async function networkFirst(request) {
     return shell ?? Response.error();
   }
 }
+
+self.addEventListener("push", (event) => {
+  event.waitUntil((async () => {
+    let data = { title: "Neue Chatnachricht", body: "Neue Nachricht", url: "/chat" };
+    try { data = { ...data, ...(event.data ? event.data.json() : {}) }; } catch { /* Fallback verwenden */ }
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    if (windows.some((client) => client.visibilityState === "visible")) return;
+    await self.registration.showNotification(data.title, { body: data.body, data: { url: data.url }, tag: "chat-message" });
+  })());
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/chat";
+  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+    const existing = windows.find((window) => "focus" in window);
+    if (existing) { existing.navigate(url); return existing.focus(); }
+    return clients.openWindow(url);
+  }));
+});
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

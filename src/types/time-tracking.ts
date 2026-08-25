@@ -45,6 +45,7 @@ export interface TimeOffRequest {
   status: TimeOffStatus;
   reviewer_note: string | null;
   employee_note: string | null;
+  substitute_id: string | null;
   created_at: string;
   updated_at: string;
   client_updated_at: string | null;

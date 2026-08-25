@@ -11,12 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AbsenceCalendar } from "@/components/time-tracking/absence-calendar";
 import { CONTRACT_LABELS, dailyTargetMinutes, overtimeBalanceHours } from "@/lib/contract";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
-import type { TimeEntry, TimeEntryAuditLog, TimeOffRequest } from "@/types/time-tracking";
+import type { TimeEntry, TimeEntryAuditLog, TimeOffRequest, TimeOffType } from "@/types/time-tracking";
 
 type Employee = { id: string; name: string; role: string; contract_type: ContractType | null; vacation_days_total: number; vacation_days_used: number; overtime_hours: number; weekly_target_hours: number | null; working_days_per_week: number | null; vacation_days_per_year: number | null; current_entry: TimeEntry | null; current_assignment?: { tour_id: string; tour_date: string; object_name: string | null } | null };
 type OverviewEntry = TimeEntry & { profiles?: { name?: string; role?: string } | null; audit_logs?: TimeEntryAuditLog[] };
@@ -124,6 +125,20 @@ export function AdminTimeTrackingPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [statusView, setStatusView] = useState<"list" | "calendar">("list");
+  const [approvalTarget, setApprovalTarget] = useState<(TimeOffRequest & { profiles?: { name?: string; role?: string } | null }) | null>(null);
+  const [approvalSubstitute, setApprovalSubstitute] = useState("");
+  const [approvalNote, setApprovalNote] = useState("");
+  const [createAbsenceOpen, setCreateAbsenceOpen] = useState(false);
+  const [createEmployeeId, setCreateEmployeeId] = useState("");
+  const [createType, setCreateType] = useState<TimeOffType>("vacation");
+  const [createStart, setCreateStart] = useState(currentMonth() + "-01");
+  const [createEnd, setCreateEnd] = useState(currentMonth() + "-01");
+  const [createSubstitute, setCreateSubstitute] = useState("");
+  const [creatingAbsence, setCreatingAbsence] = useState(false);
+  const [editTarget, setEditTarget] = useState<Overview["requests"][number] | null>(null);
+  const [editSubstitute, setEditSubstitute] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   // Monatsübersicht
   const [month, setMonth] = useState(currentMonth());
@@ -417,24 +432,99 @@ export function AdminTimeTrackingPage() {
     }
   }
 
-  async function reviewRequest(request: TimeOffRequest, status: "approved" | "rejected") {
+  function openApproval(request: TimeOffRequest) {
+    setApprovalTarget(request);
+    setApprovalSubstitute(request.substitute_id ?? "");
+    setApprovalNote(request.reviewer_note ?? "");
+  }
+
+  async function reviewRequest(request: TimeOffRequest, status: "approved" | "rejected", substituteId?: string, reviewerNote?: string) {
     setSaving(request.id);
     try {
-      const res = await offlineFetch(`/api/time-tracking/requests/${request.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+      const res = await offlineFetch(`/api/time-tracking/requests/${request.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, substitute_id: substituteId || null, reviewer_note: reviewerNote ?? "" }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Antrag konnte nicht aktualisiert werden.");
+      setApprovalTarget(null);
       await load(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : "Antrag konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
-  async function downloadCsv() {
+  async function approveRequest() {
+    if (!approvalTarget) return;
+    await reviewRequest(approvalTarget, "approved", approvalSubstitute, approvalNote);
+  }
+
+  /** Kalender-Ereignis geklickt → Abwesenheit öffnen, um die Vertretung nachzutragen/zu ändern. */
+  function openEditRequest(requestId: string) {
+    const request = overview?.requests.find((item) => item.id === requestId);
+    if (!request) return;
+    setEditTarget(request);
+    setEditSubstitute(request.substitute_id ?? "");
+  }
+
+  async function saveEditRequest() {
+    if (!editTarget) return;
+    setEditSaving(true);
     try {
-      const res = await fetch("/api/admin/time-tracking/export");
-      if (!res.ok) throw new Error("CSV-Export fehlgeschlagen.");
+      const res = await offlineFetch(`/api/time-tracking/requests/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: editTarget.status, substitute_id: editSubstitute || null }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Vertretung konnte nicht gespeichert werden.");
+      toast.success(editSubstitute ? "Vertretung gespeichert." : "Vertretung entfernt.");
+      setEditTarget(null);
+      await load(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Vertretung konnte nicht gespeichert werden.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function createAbsence() {
+    if (!createEmployeeId || !createStart || !createEnd) {
+      toast.error("Bitte Mitarbeiter und Zeitraum auswählen.");
+      return;
+    }
+    if (createEnd < createStart) {
+      toast.error("Das Enddatum darf nicht vor dem Startdatum liegen.");
+      return;
+    }
+    setCreatingAbsence(true);
+    try {
+      const res = await offlineFetch("/api/time-tracking/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: createEmployeeId, type: createType, start_date: createStart, end_date: createEnd, substitute_id: createSubstitute || null, status: "approved" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Abwesenheit konnte nicht eingetragen werden.");
+      toast.success("Abwesenheit eingetragen.");
+      setCreateAbsenceOpen(false);
+      setCreateSubstitute("");
+      await load(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Abwesenheit konnte nicht eingetragen werden.");
+    } finally {
+      setCreatingAbsence(false);
+    }
+  }
+
+  async function downloadCsv(mode: "details" | "summary" = "details") {
+    try {
+      const selectedMonth = month || currentMonth();
+      const res = await fetch(`/api/admin/time-tracking/export?mode=${mode}&month=${encodeURIComponent(selectedMonth)}`);
+      if (!res.ok) throw new Error("Lohnexport fehlgeschlagen.");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a"); anchor.href = url; anchor.download = `zeiterfassung-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "CSV-Export fehlgeschlagen."); }
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Lohnexport_Thiel_${mode === "summary" ? "Monatsuebersicht" : "Schichtdetails"}_${selectedMonth.replace("-", "_")}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Lohnexport fehlgeschlagen."); }
   }
 
   function openEmployee(employee: Employee) {
@@ -603,19 +693,40 @@ export function AdminTimeTrackingPage() {
 
   return (
     <div className="container py-6 sm:py-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-2 text-sm font-medium text-primary">Verwaltung</p><h1 className="text-3xl font-bold tracking-tight">Zeitadmin</h1><p className="mt-1 text-sm text-muted-foreground">Mitarbeiterstatus, Freigaben, Konten und Monatsübersicht.</p></div><Button variant="outline" onClick={() => void downloadCsv()}><Download /> Lohn-CSV exportieren</Button></div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-2 text-sm font-medium text-primary">Verwaltung</p><h1 className="text-3xl font-bold tracking-tight">Zeitadmin</h1><p className="mt-1 text-sm text-muted-foreground">Mitarbeiterstatus, Freigaben, Konten und Monatsübersicht.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void downloadCsv("details")}><Download /> Schichtdetails (CSV)</Button><Button variant="outline" onClick={() => void downloadCsv("summary")}><Download /> Monatsübersicht (CSV)</Button></div></div>
       <div className="mt-8 grid gap-4 sm:grid-cols-3"><Stat icon={<Users />} label="Mitarbeiter" value={String(overview?.employees.length ?? 0)} /><Stat icon={<UserCheck />} label="Gerade aktiv" value={String(openCount)} /><Stat icon={<ShieldCheck />} label="Offene Freigaben" value={String(pendingRequests.length + pendingEntries.length + reviewEntries.length)} /></div>
       <Card className="mt-6"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mitarbeiter suchen…" /></div><Select value={role} onValueChange={setRole}><SelectTrigger className="sm:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle Rollen</SelectItem>{Object.entries(ROLE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></CardContent></Card>
 
       {loading && !overview ? <div className="mt-8 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" /> Übersicht wird geladen…</div> : overview ? <>
-        <Card className="mt-6"><CardHeader><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? Klicke auf eine Karte für Stempelhistorie und Kontokorrektur.</CardDescription></CardHeader><CardContent><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${vacationRemainingOf(employee)} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div></CardContent></Card>
+        <Card className="mt-6"><CardHeader><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? In der Kalenderansicht siehst du Abwesenheiten und Vertretungen.</CardDescription></div><div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" variant="outline" onClick={() => { setCreateEmployeeId(overview.employees[0]?.id ?? ""); setCreateAbsenceOpen(true); }}><Plus /> Abwesenheit eintragen</Button><div className="flex rounded-md border p-0.5" role="group" aria-label="Mitarbeiterstatus-Ansicht"><Button type="button" size="sm" variant={statusView === "list" ? "secondary" : "ghost"} onClick={() => setStatusView("list")}><Users /> Liste</Button><Button type="button" size="sm" variant={statusView === "calendar" ? "secondary" : "ghost"} onClick={() => setStatusView("calendar")}><CalendarDays /> Kalender</Button></div></div></div></CardHeader><CardContent>{statusView === "calendar" ? <AbsenceCalendar employees={overview.employees} requests={overview.requests} onEditRequest={openEditRequest} /> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${vacationRemainingOf(employee)} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div>}</CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-3"><span>Monatsübersicht</span><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="h-9 w-44" aria-label="Monat wählen" /></CardTitle><CardDescription>Gesamtarbeitszeit aller Mitarbeiter im gewählten Monat (freigegebene, abgeschlossene Einträge).</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Mitarbeiter</TableHead><TableHead>Rolle</TableHead><TableHead className="text-right">Tage</TableHead><TableHead className="text-right">Arbeitszeit</TableHead></TableRow></TableHeader><TableBody>{monthRows.map((row) => <TableRow key={row.employee.id}><TableCell className="font-medium">{row.employee.name}</TableCell><TableCell className="text-muted-foreground">{ROLE_LABELS[row.employee.role] ?? row.employee.role}</TableCell><TableCell className="text-right">{row.days}</TableCell><TableCell className="text-right font-mono">{minutesToLabel(row.total)}</TableCell></TableRow>)}</TableBody><TableFooter><TableRow><TableCell colSpan={3}>Gesamt ({monthRows.length} Mitarbeiter)</TableCell><TableCell className="text-right font-mono">{minutesToLabel(monthTotal)}</TableCell></TableRow></TableFooter></Table></CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Prüfbedarf</CardTitle><CardDescription>Vergessene Ausstempelungen – offene Stempelungen, die automatisch markiert wurden (12 h überschritten oder Mitternacht erreicht). Die Dauer zählt live mit.</CardDescription></CardHeader><CardContent className="space-y-3">{reviewEntries.length === 0 ? <p className="text-sm text-muted-foreground">Keine offenen Prüfbedarf-Einträge.</p> : reviewEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />{entry.profiles?.name ?? entry.user_id}<Badge variant="warning">Prüfbedarf</Badge></div><p className="text-xs text-muted-foreground">Eingestempelt am {new Date(entry.clock_in).toLocaleDateString("de-DE")} um {timeLabel(entry.clock_in)} Uhr · läuft seit {liveDurationLabel(entry, now)}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => openCloseEntry(entry)} disabled={saving === entry.id}><Timer /> Ausstempeln &amp; Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}</CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle>Freigabe-Feed</CardTitle><CardDescription>Nachgereichte Arbeitszeiten und Anträge prüfen.</CardDescription></CardHeader><CardContent className="space-y-3">{pendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Nachgereichte Arbeitszeit · ${entry.profiles?.name ?? entry.user_id}` : `Vergessene Ausstempelung · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Ausstehend</Badge></div><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleDateString("de-DE")} · {timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "offen"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}{entry.clock_out ? ` · ${minutesToLabel(workedMinutesOf(entry))}` : ""}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}
-      {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Ausstehend</Badge></div><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("de-DE")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("de-DE")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => void reviewRequest(request, "approved")} disabled={saving === request.id}>Genehmigen</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected")} disabled={saving === request.id}>Ablehnen</Button></div></div>)}{pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">Keine offenen Freigaben.</p>}</CardContent></Card>
+      {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Ausstehend</Badge></div><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("de-DE")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("de-DE")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => openApproval(request)} disabled={saving === request.id}>Genehmigen</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected", request.substitute_id ?? undefined, request.reviewer_note ?? undefined)} disabled={saving === request.id}>Ablehnen</Button></div></div>)}{pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">Keine offenen Freigaben.</p>}</CardContent></Card>
+
+        <Dialog open={createAbsenceOpen} onOpenChange={setCreateAbsenceOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>Abwesenheit eintragen</DialogTitle><DialogDescription>Der Eintrag wird als genehmigt gespeichert und erscheint sofort im Kalender.</DialogDescription></DialogHeader>
+            <div className="space-y-4"><div className="space-y-2"><Label>Mitarbeiter</Label><Select value={createEmployeeId} onValueChange={setCreateEmployeeId}><SelectTrigger><SelectValue placeholder="Mitarbeiter auswählen" /></SelectTrigger><SelectContent>{[...overview.employees].sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "de")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Art</Label><Select value={createType} onValueChange={(value) => setCreateType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(REQUEST_TYPE).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="create-absence-start">Von</Label><Input id="create-absence-start" type="date" value={createStart} onChange={(event) => setCreateStart(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="create-absence-end">Bis</Label><Input id="create-absence-end" type="date" value={createEnd} onChange={(event) => setCreateEnd(event.target.value)} /></div></div><div className="space-y-2"><Label>Vertretung durch (optional)</Label><Select value={createSubstitute || "none"} onValueChange={(value) => setCreateSubstitute(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Keine Vertretung" /></SelectTrigger><SelectContent><SelectItem value="none">Keine Vertretung</SelectItem>{[...overview.employees].filter((employee) => employee.id !== createEmployeeId).sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "de")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><DialogFooter><Button variant="outline" onClick={() => setCreateAbsenceOpen(false)}>Abbrechen</Button><Button onClick={() => void createAbsence()} disabled={creatingAbsence}>{creatingAbsence ? "Wird gespeichert…" : "Eintragen"}</Button></DialogFooter></div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={approvalTarget !== null} onOpenChange={(open) => { if (!open) setApprovalTarget(null); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>Abwesenheit genehmigen</DialogTitle><DialogDescription>{approvalTarget ? `${REQUEST_TYPE[approvalTarget.type] ?? approvalTarget.type} · ${approvalTarget.profiles?.name ?? approvalTarget.user_id} · ${new Date(`${approvalTarget.start_date}T00:00:00`).toLocaleDateString("de-DE")} – ${new Date(`${approvalTarget.end_date}T00:00:00`).toLocaleDateString("de-DE")}` : ""}</DialogDescription></DialogHeader>
+            {approvalTarget && <div className="space-y-4"><div className="space-y-2"><Label>Vertretung durch (optional)</Label><Select value={approvalSubstitute || "none"} onValueChange={(value) => setApprovalSubstitute(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Keine Vertretung" /></SelectTrigger><SelectContent><SelectItem value="none">Keine Vertretung</SelectItem>{[...overview.employees].filter((employee) => employee.id !== approvalTarget.user_id).sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "de")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="approval-note">Notiz (optional)</Label><Input id="approval-note" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} maxLength={1000} /></div><DialogFooter><Button variant="outline" onClick={() => setApprovalTarget(null)}>Abbrechen</Button><Button onClick={() => void approveRequest()} disabled={saving === approvalTarget.id}>Genehmigen</Button></DialogFooter></div>}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={editTarget !== null} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>Abwesenheit bearbeiten</DialogTitle><DialogDescription>{editTarget ? `${REQUEST_TYPE[editTarget.type] ?? editTarget.type} · ${editTarget.profiles?.name ?? editTarget.user_id} · ${new Date(`${editTarget.start_date}T00:00:00`).toLocaleDateString("de-DE")} – ${new Date(`${editTarget.end_date}T00:00:00`).toLocaleDateString("de-DE")}${editTarget.status === "approved" ? " · Genehmigt" : " · Beantragt"}` : ""}</DialogDescription></DialogHeader>
+            {editTarget && <div className="space-y-4"><div className="space-y-2"><Label>Vertretung durch (optional)</Label><Select value={editSubstitute || "none"} onValueChange={(value) => setEditSubstitute(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Keine Vertretung" /></SelectTrigger><SelectContent><SelectItem value="none">Keine Vertretung</SelectItem>{[...overview.employees].filter((employee) => employee.id !== editTarget.user_id).sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "de")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><DialogFooter><Button variant="outline" onClick={() => setEditTarget(null)}>Abbrechen</Button><Button onClick={() => void saveEditRequest()} disabled={editSaving}>{editSaving ? "Wird gespeichert…" : "Speichern"}</Button></DialogFooter></div>}
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={selectedEmployee !== null} onOpenChange={(open) => { if (!open) setSelectedEmployee(null); }}>
           <DialogContent className="sm:max-w-lg">

@@ -27,6 +27,7 @@ import {
   type StoredRecord,
 } from "./db";
 import { ensureTimeOffset, nowServerAligned } from "./clock";
+import { syncChatMessages } from "./chat";
 
 export type SyncState = {
   online: boolean;
@@ -274,6 +275,7 @@ export async function syncNow(): Promise<void> {
         }
       }
     }
+    await syncChatMessages();
     setState({ lastSyncAt: new Date().toISOString() });
   } catch (e) {
     setState({

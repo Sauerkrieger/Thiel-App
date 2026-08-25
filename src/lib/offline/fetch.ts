@@ -126,6 +126,7 @@ const TIME_OFF_FIELDS = [
   "status",
   "reviewer_note",
   "employee_note",
+  "substitute_id",
 ] as const;
 
 function pick(
@@ -460,6 +461,7 @@ async function cacheResponse(
       ? [body.profile as Record<string, unknown>]
       : (Array.isArray(body.employees) ? body.employees : []) as Array<Record<string, unknown>>;
     await cacheRows("profiles", profiles);
+    if (Array.isArray(body.colleagues)) await cacheRows("profiles", body.colleagues as Array<Record<string, unknown>>);
     await cacheRows("time_entries", stripProfiles((Array.isArray(body.entries) ? body.entries : []) as Array<Record<string, unknown>>));
     await cacheRows("time_off_requests", stripProfiles((Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>));
     return;
@@ -807,7 +809,8 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     const profile = (await cacheRowsOf("profiles")).find((row) => row.id === userId) ?? null;
     const entries = (await cacheRowsOf("time_entries")).filter((row) => userId === null || row.user_id === userId);
     const requests = (await cacheRowsOf("time_off_requests")).filter((row) => userId === null || row.user_id === userId);
-    return jsonResponse(200, { profile, entries, requests });
+    const colleagues = (await cacheRowsOf("profiles")).map((row) => ({ id: row.id, name: row.name, role: row.role }));
+    return jsonResponse(200, { profile, entries, requests, colleagues });
   }
 
   if (path === "/api/admin/time-tracking/overview") {
@@ -1051,7 +1054,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
         error: "Profil-Änderungen sind offline nicht möglich.",
       });
     }
-    await queueMutation("profiles", userId, pick(body, ["name", "role"]));
+    await queueMutation("profiles", userId, pick(body, ["name", "role", "phone"]));
     return jsonResponse(200, { user: { id: userId } });
   }
 
@@ -1133,7 +1136,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     const existing = await getRecord("time_off_requests", params.id);
     await queueMutation("time_off_requests", params.id, {
       ...(existing?.data ?? {}),
-      ...pick(body, ["type", "start_date", "end_date", "status", "reviewer_note", "employee_note"]),
+      ...pick(body, ["type", "start_date", "end_date", "status", "reviewer_note", "employee_note", "substitute_id"]),
     });
     return jsonResponse(200, { request: { ...(existing?.data ?? {}), id: params.id, status: body.status } });
   }
@@ -1163,12 +1166,16 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
 
   if (path === "/api/time-tracking/requests" && method === "POST") {
     const id = newRecordId();
+    const admin = getCurrentUserRole() === "admin";
+    const requestFields = pick(body, TIME_OFF_FIELDS as readonly string[]);
+    const userId = admin && typeof body.user_id === "string" ? body.user_id : getCurrentUserId();
+    const status = admin && body.status === "approved" ? "approved" : "pending";
     await queueMutation("time_off_requests", id, {
-      ...pick(body, TIME_OFF_FIELDS as readonly string[]),
-      user_id: getCurrentUserId(),
-      status: "pending",
+      ...requestFields,
+      user_id: userId,
+      status,
     });
-    return jsonResponse(201, { request: { id, ...pick(body, TIME_OFF_FIELDS as readonly string[]), status: "pending" } });
+    return jsonResponse(201, { request: { id, ...requestFields, user_id: userId, status } });
   }
 
   return jsonResponse(503, { error: "Diese Aktion ist offline nicht verfügbar." });

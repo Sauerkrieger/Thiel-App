@@ -35,9 +35,10 @@ type ProfileSummary = {
 };
 
 type Summary = {
-  profile: ProfileSummary;
+  profile: ProfileSummary & { id: string };
   entries: TimeEntry[];
   requests: TimeOffRequest[];
+  colleagues: Array<{ id: string; name: string; role: string }>;
 };
 
 const TYPE_LABELS: Record<TimeOffType, string> = {
@@ -81,6 +82,7 @@ export function TimeTrackingPage() {
   const [startDate, setStartDate] = useState(dateValue(new Date()));
   const [endDate, setEndDate] = useState(dateValue(new Date()));
   const [note, setNote] = useState("");
+  const [substituteId, setSubstituteId] = useState("");
   const [sending, setSending] = useState(false);
 
   // „Arbeitszeit nachreichen“ (vergessene Stempelung)
@@ -154,6 +156,11 @@ export function TimeTrackingPage() {
       ) + Number(summary.profile.overtime_hours ?? 0)
     : 0;
 
+  const colleagues = summary?.colleagues ?? [];
+  const substituteOptions = [...colleagues]
+    .filter((employee) => employee.id !== summary?.profile?.id)
+    .sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "de"));
+
   async function submitRequest(event: React.FormEvent) {
     event.preventDefault();
     if (endDate < startDate) {
@@ -166,12 +173,13 @@ export function TimeTrackingPage() {
       const res = await offlineFetch("/api/time-tracking/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, start_date: startDate, end_date: endDate, employee_note: note, client_updated_at: timestamp }),
+        body: JSON.stringify({ type, start_date: startDate, end_date: endDate, employee_note: note, substitute_id: substituteId || null, client_updated_at: timestamp }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Antrag konnte nicht gesendet werden.");
       toast.success("Antrag wurde eingereicht.");
       setNote("");
+      setSubstituteId("");
       await load(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Antrag konnte nicht gesendet werden.");
@@ -269,6 +277,7 @@ export function TimeTrackingPage() {
               <CardContent><form className="space-y-4" onSubmit={submitRequest}>
                 <div className="space-y-2"><Label>Art</Label><Select value={type} onValueChange={(value) => setType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TYPE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="absence-start">Von</Label><Input id="absence-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="absence-end">Bis</Label><Input id="absence-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} required /></div></div>
+                <div className="space-y-2"><Label>Vertretung durch (optional)</Label><Select value={substituteId || "none"} onValueChange={(value) => setSubstituteId(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Keine Vertretung" /></SelectTrigger><SelectContent><SelectItem value="none">Keine Vertretung</SelectItem>{substituteOptions.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {employee.role === "substitute" ? "Springer" : employee.role === "facility_manager" ? "Reinigungskraft" : employee.role === "admin" ? "Admin" : "Fahrer"}</SelectItem>)}</SelectContent></Select></div>
                 <div className="space-y-2"><Label htmlFor="absence-note">Notiz (optional)</Label><Input id="absence-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Zusätzliche Information" maxLength={1000} /></div>
                 <Button type="submit" disabled={sending} className="w-full"><Send />{sending ? "Wird gesendet…" : "Antrag einreichen"}</Button>
               </form></CardContent>

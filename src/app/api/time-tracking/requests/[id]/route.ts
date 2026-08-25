@@ -31,6 +31,30 @@ export async function PATCH(request: Request, { params }: Context) {
       reviewer_note: note,
       synced_at: new Date().toISOString(),
     };
+    if (body.substitute_id !== undefined) {
+      const substituteId = typeof body.substitute_id === "string" && body.substitute_id.trim()
+        ? body.substitute_id.trim()
+        : null;
+      const { data: current, error: currentError } = await getSupabaseAdmin()
+        .from("time_off_requests")
+        .select("user_id")
+        .eq("id", id)
+        .single();
+      if (currentError) throw currentError;
+      if (substituteId === current.user_id) {
+        return NextResponse.json({ error: "Die Vertretung darf nicht der Antragsteller sein." }, { status: 400 });
+      }
+      if (substituteId) {
+        const { data: substitute, error: substituteError } = await getSupabaseAdmin()
+          .from("profiles")
+          .select("id")
+          .eq("id", substituteId)
+          .maybeSingle();
+        if (substituteError) throw substituteError;
+        if (!substitute) return NextResponse.json({ error: "Der gewählte Vertreter existiert nicht." }, { status: 400 });
+      }
+      payload.substitute_id = substituteId;
+    }
     const clientUpdatedAt = parseClientUpdatedAt(body.client_updated_at);
     if (clientUpdatedAt) payload.client_updated_at = clientUpdatedAt;
     const { data, error } = await getSupabaseAdmin()

@@ -129,6 +129,7 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "status",
     "reviewer_note",
     "employee_note",
+    "substitute_id",
   ],
 };
 
@@ -240,6 +241,7 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     status: { t: "enum", values: ["pending", "approved", "rejected"] },
     reviewer_note: { t: "text", max: 1000 },
     employee_note: { t: "text", max: 1000 },
+    substitute_id: { t: "text", max: 64 },
   },
 };
 

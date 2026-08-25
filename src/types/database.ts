@@ -40,6 +40,8 @@ export type ContractType = 'full_time' | 'part_time' | 'mini_job' | 'custom';
 
 /** Herkunft eines Zeiterfassungs-Eintrags (Stempeluhr vs. nachgereicht). */
 export type TimeEntrySource = 'clock' | 'submitted';
+export type ChatMessageKind = 'text' | 'image' | 'audio';
+export type ChatMessageStatus = 'sent' | 'delivered' | 'read';
 
 export const CONTRACT_TYPES: readonly ContractType[] = [
   'full_time',
@@ -98,6 +100,8 @@ export interface Database {
           working_days_per_week: number;
           /** Individuelle Jahresurlaubstage. Resturlaub = per_year - used. */
           vacation_days_per_year: number;
+          chat_preferred_language: string | null;
+          phone: string | null;
         };
         Insert: {
           id: string;
@@ -115,6 +119,8 @@ export interface Database {
           weekly_target_hours?: number;
           working_days_per_week?: number;
           vacation_days_per_year?: number;
+          chat_preferred_language?: string | null;
+          phone?: string | null;
         };
         Update: {
           id?: string;
@@ -132,6 +138,8 @@ export interface Database {
           weekly_target_hours?: number;
           working_days_per_week?: number;
           vacation_days_per_year?: number;
+          chat_preferred_language?: string | null;
+          phone?: string | null;
         };
         Relationships: [
           {
@@ -143,6 +151,150 @@ export interface Database {
             referencedSchema: 'auth';
           },
         ];
+      };
+      company_settings: {
+        Row: {
+          id: boolean;
+          support_phone_number: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: boolean;
+          support_phone_number?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          id?: boolean;
+          support_phone_number?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      push_subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          user_agent: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          user_agent?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          endpoint?: string;
+          p256dh?: string;
+          auth?: string;
+          user_agent?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      chat_threads: {
+        Row: {
+          id: string;
+          employee_id: string;
+          admin_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          admin_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          admin_id?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      chat_messages: {
+        Row: {
+          id: string;
+          thread_id: string;
+          sender_id: string;
+          kind: ChatMessageKind;
+          body: string | null;
+          media_path: string | null;
+          media_mime_type: string | null;
+          transcript: string | null;
+          is_urgent: boolean;
+          status: ChatMessageStatus;
+          delivered_at: string | null;
+          read_at: string | null;
+          understood_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          thread_id: string;
+          sender_id: string;
+          kind?: ChatMessageKind;
+          body?: string | null;
+          media_path?: string | null;
+          media_mime_type?: string | null;
+          transcript?: string | null;
+          is_urgent?: boolean;
+          status?: ChatMessageStatus;
+          delivered_at?: string | null;
+          read_at?: string | null;
+          understood_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          thread_id?: string;
+          sender_id?: string;
+          kind?: ChatMessageKind;
+          body?: string | null;
+          media_path?: string | null;
+          media_mime_type?: string | null;
+          transcript?: string | null;
+          is_urgent?: boolean;
+          status?: ChatMessageStatus;
+          delivered_at?: string | null;
+          read_at?: string | null;
+          understood_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      chat_translations: {
+        Row: {
+          id: string;
+          message_id: string;
+          language: string;
+          translated_body: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          message_id: string;
+          language: string;
+          translated_body: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          message_id?: string;
+          language?: string;
+          translated_body?: string;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       time_entries: {
         Row: {
@@ -243,6 +395,7 @@ export interface Database {
           status: 'pending' | 'approved' | 'rejected';
           reviewer_note: string | null;
           employee_note: string | null;
+          substitute_id: string | null;
           created_at: string;
           updated_at: string;
           client_updated_at: string | null;
@@ -257,6 +410,7 @@ export interface Database {
           status?: 'pending' | 'approved' | 'rejected';
           reviewer_note?: string | null;
           employee_note?: string | null;
+          substitute_id?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -271,12 +425,22 @@ export interface Database {
           status?: 'pending' | 'approved' | 'rejected';
           reviewer_note?: string | null;
           employee_note?: string | null;
+          substitute_id?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
           synced_at?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'time_off_requests_substitute_id_fkey';
+            columns: ['substitute_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+            referencedSchema: 'auth';
+          },
+        ];
       };
       objects: {
         Row: {
@@ -760,6 +924,8 @@ export interface Database {
       time_off_status: 'pending' | 'approved' | 'rejected';
       object_category: ObjectCategory;
       tour_status: TourStatus;
+      chat_message_kind: ChatMessageKind;
+      chat_message_status: ChatMessageStatus;
     };
     CompositeTypes: Record<string, never>;
   };
