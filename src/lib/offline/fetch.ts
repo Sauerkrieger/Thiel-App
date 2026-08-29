@@ -1,6 +1,6 @@
 /**
  * offlineFetch – Ersatz für `fetch` in den Daten-Komponenten
- * (siehe OFFLINE_SYNC_PLAN.md, Schritt 5).
+ * (siehe SPEC.md, Abschnitt 6).
  *
  * Verhalten:
  * - **Online:** Der Request läuft normal an den Server. Für „getrackte"
@@ -70,7 +70,7 @@ const CACHEABLE_GETS: ReadonlyArray<{
   { pattern: /^\/api\/objects\/[^/]+\/items$/, tables: ["object_items"] },
   { pattern: /^\/api\/objects\/[^/]+\/pack-info$/, tables: ["object_items"] },
   { pattern: /^\/api\/inventory$/, tables: ["inventory_items"] },
-  { pattern: /^\/api\/planning$/, tables: ["objects", "weekly_default_routes"] },
+  { pattern: /^\/api\/planning$/, tables: ["objects"] },
   { pattern: /^\/api\/tours$/, tables: ["active_tours"] },
   { pattern: /^\/api\/tours\/[^/]+$/, tables: ["active_tours", "tour_stops", "objects"] },
   { pattern: /^\/api\/auth\/users$/, tables: ["profiles"] },
@@ -78,6 +78,7 @@ const CACHEABLE_GETS: ReadonlyArray<{
   { pattern: /^\/api\/time-tracking\/review$/, tables: ["time_entries"] },
   { pattern: /^\/api\/time-tracking\/entries$/, tables: ["time_entries"] },
   { pattern: /^\/api\/time-tracking\/requests$/, tables: ["time_off_requests"] },
+  { pattern: /^\/api\/time-tracking\/substitutes$/, tables: ["time_off_requests", "objects", "profiles"] },
   { pattern: /^\/api\/time-tracking\/summary$/, tables: ["profiles", "time_entries", "time_off_requests"] },
   { pattern: /^\/api\/admin\/time-tracking\/overview$/, tables: ["profiles", "time_entries", "time_off_requests"] },
   { pattern: /^\/api\/admin\/time-tracking\/status$/, tables: ["profiles", "time_entries"] },
@@ -267,6 +268,25 @@ function cachedAssignedObjectIds(): string[] {
   }
 }
 
+/**
+ * Zuordnung Antrag-Id → Objekt-IDs aus dem localStorage (vom letzten
+ * Online-Laden der Vertretungen; leer, wenn nicht vorhanden).
+ */
+function cachedSubstituteObjects(): Record<string, string[]> {
+  const userId = getCurrentUserId();
+  try {
+    const raw = window.localStorage.getItem(
+      `thiel-substitute-objects:${userId ?? "anonymous"}`,
+    );
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+
 /** Prüft, ob die aktuelle Reinigungskraft ein Objekt offline sehen darf. */
 function mayReadObjectOffline(objectId: string): boolean {
   if (getCurrentUserRole() !== "facility_manager") return true;
@@ -348,25 +368,6 @@ async function cacheResponse(
       Record<string, unknown>
     >;
     await cacheRows("objects", objects);
-    const day = body.day_of_week;
-    const selected = (Array.isArray(body.selected_ids)
-      ? body.selected_ids
-      : []) as string[];
-    const baseTs =
-      typeof body.defaults_updated_at === "string"
-        ? body.defaults_updated_at
-        : new Date().toISOString();
-    await cacheRows(
-      "weekly_default_routes",
-      selected.map((objectId, index) => ({
-        id: `wdr-${String(day)}-${objectId}`,
-        user_id: userId ?? null,
-        day_of_week: day,
-        object_id: objectId,
-        selection_order: index,
-        client_updated_at: baseTs,
-      })),
-    );
     return;
   }
   if (path === "/api/tours") {
@@ -454,6 +455,52 @@ async function cacheResponse(
       "time_off_requests",
       stripProfiles((Array.isArray(body.requests) ? body.requests : []) as Array<Record<string, unknown>>),
     );
+    return;
+  }
+  if (path === "/api/time-tracking/substitutes") {
+    // Vertretungs-Zuordnungen: zugrunde liegende Antrags-Zeilen cachen
+    // (absent/objects sind Anreicherungen und werden offline rekonstruiert).
+    const substitutes = (Array.isArray(body.substitutes) ? body.substitutes : []) as Array<Record<string, unknown>>;
+    const requestRows: Array<Record<string, unknown>> = [];
+    const objectRows: Array<Record<string, unknown>> = [];
+    const profileRows: Array<Record<string, unknown>> = [];
+    const objectsByRequest: Record<string, string[]> = {};
+    const userId = getCurrentUserId();
+    for (const substitute of substitutes) {
+      const absent = (substitute.absent ?? {}) as Record<string, unknown>;
+      const requestId = String(substitute.id ?? "");
+      requestRows.push({
+        id: substitute.id,
+        user_id: absent.id,
+        type: substitute.type,
+        start_date: substitute.start_date,
+        end_date: substitute.end_date,
+        status: substitute.status,
+        reviewer_note: substitute.reviewer_note,
+        substitute_id: userId,
+      });
+      if (absent.id) {
+        profileRows.push({ id: absent.id, name: absent.name, role: absent.role });
+      }
+      const objects = (Array.isArray(substitute.objects) ? substitute.objects : []) as Array<Record<string, unknown>>;
+      objectsByRequest[requestId] = objects.map((object) => String(object.id ?? "")).filter(Boolean);
+      for (const object of objects) {
+        objectRows.push({ ...object });
+      }
+    }
+    await cacheRows("time_off_requests", requestRows);
+    await cacheRows("objects", objectRows);
+    await cacheRows("profiles", profileRows);
+    // Zuordnung Antrag → Objekt-IDs merken (object_assignments ist nicht im
+    // Sync-Scope – derselbe Trick wie bei den zugewiesenen Objekten).
+    try {
+      window.localStorage.setItem(
+        `thiel-substitute-objects:${userId ?? "anonymous"}`,
+        JSON.stringify(objectsByRequest),
+      );
+    } catch {
+      /* localStorage voll – offline fehlen dann nur die Objektdetails */
+    }
     return;
   }
   if (path === "/api/time-tracking/summary" || path === "/api/admin/time-tracking/overview") {
@@ -571,8 +618,6 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   }
 
   if (path === "/api/planning") {
-    const day = Number.parseInt(req.query.get("day_of_week") ?? "", 10);
-    const userId = getCurrentUserId();
     const objects = (await cacheRowsOf("objects")).map((row) => ({
       id: row.id,
       name: row.name,
@@ -582,29 +627,7 @@ async function readOffline(req: OfflineRead): Promise<Response> {
       opens_at: row.opens_at,
       remark: row.remark,
     }));
-    const defaults = (await cacheRowsOf("weekly_default_routes"))
-      .filter(
-        (row) =>
-          Number(row.day_of_week) === day &&
-          (userId === null || row.user_id === userId),
-      )
-      .sort((a, b) => Number(a.selection_order) - Number(b.selection_order));
-    const selectedIds = defaults
-      .map((row) => row.object_id)
-      .filter((id): id is string => typeof id === "string");
-    const updatedAtValues = defaults
-      .map((row) => row.client_updated_at)
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => new Date(value).getTime());
-    return jsonResponse(200, {
-      day_of_week: Number.isNaN(day) ? 1 : day,
-      objects,
-      selected_ids: selectedIds,
-      defaults_updated_at:
-        updatedAtValues.length > 0
-          ? new Date(Math.max(...updatedAtValues)).toISOString()
-          : null,
-    });
+    return jsonResponse(200, { objects });
   }
 
   if (path === "/api/tours") {
@@ -804,6 +827,49 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     });
   }
 
+  if (path === "/api/time-tracking/substitutes") {
+    // Genehmigte Vertretungen des aktuellen Nutzers aus dem Cache
+    // rekonstruieren (Antrags-Zeilen + Profile + Objekt-Zuordnung).
+    const myId = getCurrentUserId();
+    const rows = (await cacheRowsOf("time_off_requests")).filter(
+      (row) =>
+        row.status === "approved" &&
+        typeof row.substitute_id === "string" &&
+        row.substitute_id === myId,
+    );
+    const profiles = await cacheRowsOf("profiles");
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    const objects = await cacheRowsOf("objects");
+    const objectById = new Map(objects.map((object) => [object.id, object]));
+    const objectsByRequest = cachedSubstituteObjects();
+    const substitutes = rows.map((row) => {
+      const absent = profileById.get(row.user_id) ?? {};
+      const objectIds = objectsByRequest[String(row.id ?? "")] ?? [];
+      return {
+        id: row.id,
+        start_date: row.start_date,
+        end_date: row.end_date,
+        type: row.type,
+        status: row.status,
+        reviewer_note: row.reviewer_note ?? null,
+        absent: {
+          id: row.user_id,
+          name: absent.name ?? "Unbekannter Mitarbeiter",
+          role: absent.role ?? "driver",
+        },
+        objects: objectIds
+          .map((objectId) => objectById.get(objectId))
+          .filter((object): object is Record<string, unknown> => Boolean(object))
+          .map((object) => ({
+            id: object.id,
+            name: object.name ?? "Unbekanntes Objekt",
+            address: object.address ?? "",
+          })),
+      };
+    });
+    return jsonResponse(200, { substitutes });
+  }
+
   if (path === "/api/time-tracking/summary") {
     const userId = getCurrentUserId();
     const profile = (await cacheRowsOf("profiles")).find((row) => row.id === userId) ?? null;
@@ -999,6 +1065,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       date: today,
       status: typeof body.status === "string" ? body.status : "packing",
       start_time: typeof body.start_time === "string" ? body.start_time : null,
+      warehouse_arrival: typeof body.warehouse_arrival === "string" ? body.warehouse_arrival : null,
     });
     const stops = Array.isArray(body.stops) ? body.stops : [];
     for (const [index, raw] of (stops as Array<Record<string, unknown>>).entries()) {
@@ -1022,6 +1089,7 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       "date",
       "status",
       "start_time",
+      "warehouse_arrival",
       "total_duration_minutes",
     ]));
     return jsonResponse(200, { tour: { id: params.id } });

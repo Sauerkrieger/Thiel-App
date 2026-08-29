@@ -14,6 +14,25 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
 ];
 const OVERPASS_TIMEOUT_MS = 20_000;
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const memoryCache = new Map<string, { expiresAt: number; data: { elements?: unknown[] } }>();
+
+// Bekannte Würzburger Fußgängerzonen als lokaler Fallback. Die lokale
+// Geometrie verhindert, dass ein Overpass-Ausfall die Kernabläufe blockiert.
+const WUERZBURG_FALLBACK_POLYGONS: Coordinate[][] = [
+  [
+    { lat: 49.7937, lng: 9.9289 },
+    { lat: 49.7937, lng: 9.9324 },
+    { lat: 49.7970, lng: 9.9324 },
+    { lat: 49.7970, lng: 9.9289 },
+  ],
+];
+
+function cacheKey(query: string): string { return query.replace(/\\s+/g, " ").trim(); }
+
+function localPedestrianFallback(coordinate: Coordinate): boolean {
+  return WUERZBURG_FALLBACK_POLYGONS.some((polygon) => pointInPolygon(coordinate, polygon));
+}
 
 /**
  * Overpass-api.de blockt Requests ohne aussagekräftigen User-Agent mit
@@ -47,6 +66,9 @@ const DRIVABLE_HIGHWAYS = [
 ];
 
 async function queryOverpass(query: string): Promise<{ elements?: unknown[] }> {
+  const key = cacheKey(query);
+  const cached = memoryCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
   // Überlastung/Rate-Limit (429/5xx) und Timeouts: je Endpoint 2 Versuche,
   // danach auf den Fallback-Spiegel wechseln.
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -64,7 +86,9 @@ async function queryOverpass(query: string): Promise<{ elements?: unknown[] }> {
           signal: controller.signal,
         });
         if (res.ok) {
-          return (await res.json()) as { elements?: unknown[] };
+          const data = (await res.json()) as { elements?: unknown[] };
+          memoryCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, data });
+          return data;
         }
         if (res.status === 429 || res.status >= 500) {
           await new Promise((resolve) => setTimeout(resolve, 800));
@@ -184,6 +208,9 @@ out geom;`;
     (el): el is Record<string, unknown> => typeof el === "object" && el !== null,
   );
 
+  if (ways.length === 0 && coordinate.lat >= 49.7 && coordinate.lat <= 49.9 && coordinate.lng >= 9.8 && coordinate.lng <= 10.1) {
+    return localPedestrianFallback(coordinate);
+  }
   for (const way of ways) {
     const coords = wayCoordinates(way);
     if (coords.length < 2) continue;

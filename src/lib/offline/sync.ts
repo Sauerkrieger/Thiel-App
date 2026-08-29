@@ -1,5 +1,5 @@
 /**
- * Sync-Engine für den Offline-First-Sync (siehe OFFLINE_SYNC_PLAN.md).
+ * Sync-Engine für den Offline-First-Sync (siehe SPEC.md, Abschnitt 6).
  *
  * - `queueMutation()`   legt einen lokal bearbeiteten Datensatz in die
  *                       IndexedDB-Queue (pending_upload) und stößt bei
@@ -38,7 +38,7 @@ export type SyncState = {
 };
 
 /** Sync-Reihenfolge: referenzierende Zeilen erst nach ihren Eltern
- *  (objects vor object_items/weekly_default_routes; active_tours vor tour_stops). */
+ *  (objects vor object_items; active_tours vor tour_stops). */
 const SYNC_ORDER: readonly SyncTable[] = [
   "objects",
   "active_tours",
@@ -46,7 +46,6 @@ const SYNC_ORDER: readonly SyncTable[] = [
   "profiles",
   "time_entries",
   "time_off_requests",
-  "weekly_default_routes",
   "object_items",
   "tour_stops",
 ];
@@ -243,6 +242,12 @@ export async function syncNow(): Promise<void> {
     for (const table of SYNC_ORDER) {
       const pending = await getPendingRecords(table);
       if (pending.length === 0) continue;
+      // Zeitstempel-Reihenfolge ist wichtig: erst Einstempeln, dann
+      // Ausstempeln/Änderungen. Das reduziert Unique-Index-Konflikte beim
+      // Reconnect und macht den Sync deterministisch.
+      if (table === "time_entries") {
+        pending.sort((a, b) => a.client_updated_at.localeCompare(b.client_updated_at));
+      }
 
       // In Häppchen senden (Server-Limit: 200 Einträge pro Request)
       for (let i = 0; i < pending.length; i += MAX_ENTRIES_PER_REQUEST) {

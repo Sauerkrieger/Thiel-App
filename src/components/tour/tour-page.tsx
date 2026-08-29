@@ -36,6 +36,7 @@ const RouteMap = dynamic(
   },
 );
 import { cleanAddressLabel } from "@/lib/address";
+import { WAREHOUSE_ADDRESS } from "@/lib/warehouse";
 import { formatMinutes } from "@/lib/routing/time";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
@@ -287,7 +288,7 @@ export function TourPage({ tourId }: Props) {
               )}
             </div>
 
-            {/* Stopp-Liste */}
+            {/* Stopp-Liste + Rückkehr im Lager */}
             <ol className="space-y-2">
               {stops.map((stop, index) => {
                 const delivered = stop.is_delivered;
@@ -397,6 +398,38 @@ export function TourPage({ tourId }: Props) {
                 );
               })}
             </ol>
+
+            {/* Rückkehr im Lager: Ankunftszeit + Navigation genauso wie bei
+                den normalen Zielen. (Offline ist das Lager nicht auflösbar –
+                dann greift die bekannte Lageradresse als Navigationsziel.) */}
+            {tour.warehouse_arrival && (
+              <div className="flex w-full items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <Flag className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">
+                    {tour.warehouse?.name ?? "Thiel Dienstleistungen (Lager)"}
+                  </span>
+                  <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                    <MapPin className="h-3 w-3 shrink-0" />
+                    Ankunft im Lager
+                    {tour.warehouse?.address
+                      ? ` · ${cleanAddressLabel(tour.warehouse.address)}`
+                      : ""}
+                  </span>
+                </span>
+                <span className="shrink-0 text-sm font-semibold tabular-nums">
+                  {tour.warehouse_arrival.slice(0, 5)}
+                </span>
+                <NavigateButton
+                  address={tour.warehouse?.address ?? WAREHOUSE_ADDRESS}
+                  latitude={tour.warehouse?.latitude ?? null}
+                  longitude={tour.warehouse?.longitude ?? null}
+                  label={tour.warehouse?.name ?? "Lager"}
+                />
+              </div>
+            )}
 
             {/* Karte mit eingezeichneter Route (unten) */}
             <RouteMap warehouse={tour.warehouse} stops={mapStops} />

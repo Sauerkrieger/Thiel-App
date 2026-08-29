@@ -12,7 +12,7 @@
 --      fehlendes updated_at (inkl. Trigger)
 --
 -- Hinweis: Keine sync_tombstones-Tabelle – Löschen passiert bewusst
--- nur online (siehe OFFLINE_SYNC_PLAN.md).
+-- nur online (siehe SPEC.md, Abschnitt 6).
 -- =============================================================
 
 -- ------------------------------------------------------------------

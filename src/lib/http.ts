@@ -54,7 +54,7 @@ function extractErrorMessage(error: unknown): string {
 /**
  * 409-Antwort bei einem LWW-Konflikt (Last-Write-Wins).
  * Der Client übernimmt daraufhin `serverRecord` lokal und verwirft seine
- * eigene, ältere Version (siehe OFFLINE_SYNC_PLAN.md).
+ * eigene, ältere Version (siehe SPEC.md, Abschnitt 6).
  */
 export function lwwConflictResponse(serverRecord: unknown) {
   return NextResponse.json(

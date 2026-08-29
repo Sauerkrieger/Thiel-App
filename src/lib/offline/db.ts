@@ -1,5 +1,5 @@
 /**
- * IndexedDB-Wrapper für den Offline-First-Sync (siehe OFFLINE_SYNC_PLAN.md).
+ * IndexedDB-Wrapper für den Offline-First-Sync (siehe SPEC.md, Abschnitt 6).
  *
  * Pro Sync-Tabelle ein Object-Store; Schlüssel ist die Datensatz-Id.
  * Jeder gespeicherte Datensatz trägt:

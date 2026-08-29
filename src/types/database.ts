@@ -6,7 +6,6 @@
  *
  *   - 20260731000000_roles_and_profiles.sql
  *   - 20260731000001_objects_and_object_items.sql
- *   - 20260731000002_weekly_default_routes.sql
  *
  * Sobald die Supabase-CLI verfügbar ist, kann dieser Datei-Inhalt
  * durch `supabase gen types typescript --local` ersetzt werden –
@@ -396,6 +395,9 @@ export interface Database {
           reviewer_note: string | null;
           employee_note: string | null;
           substitute_id: string | null;
+          substitute_request: boolean;
+          substitute_kind: 'driver' | 'facility_manager' | null;
+          substitute_object_id: string | null;
           created_at: string;
           updated_at: string;
           client_updated_at: string | null;
@@ -411,6 +413,9 @@ export interface Database {
           reviewer_note?: string | null;
           employee_note?: string | null;
           substitute_id?: string | null;
+          substitute_request?: boolean;
+          substitute_kind?: 'driver' | 'facility_manager' | null;
+          substitute_object_id?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -426,6 +431,9 @@ export interface Database {
           reviewer_note?: string | null;
           employee_note?: string | null;
           substitute_id?: string | null;
+          substitute_request?: boolean;
+          substitute_kind?: 'driver' | 'facility_manager' | null;
+          substitute_object_id?: string | null;
           created_at?: string;
           updated_at?: string;
           client_updated_at?: string | null;
@@ -439,6 +447,14 @@ export interface Database {
             referencedRelation: 'users';
             referencedColumns: ['id'];
             referencedSchema: 'auth';
+          },
+          {
+            foreignKeyName: 'time_off_requests_substitute_object_id_fkey';
+            columns: ['substitute_object_id'];
+            isOneToOne: false;
+            referencedRelation: 'objects';
+            referencedColumns: ['id'];
+            referencedSchema: 'public';
           },
         ];
       };
@@ -654,6 +670,8 @@ export interface Database {
           date: string;
           status: TourStatus;
           start_time: string | null;
+          /** Geplante Ankunft zurück im Lager (HH:MM) – beim Tourstart gesetzt. */
+          warehouse_arrival: string | null;
           total_duration_minutes: number | null;
           created_at: string;
           updated_at: string;
@@ -668,6 +686,7 @@ export interface Database {
           date?: string;
           status?: TourStatus;
           start_time?: string | null;
+          warehouse_arrival?: string | null;
           total_duration_minutes?: number | null;
           created_at?: string;
           updated_at?: string;
@@ -680,6 +699,7 @@ export interface Database {
           date?: string;
           status?: TourStatus;
           start_time?: string | null;
+          warehouse_arrival?: string | null;
           total_duration_minutes?: number | null;
           created_at?: string;
           updated_at?: string;
@@ -833,56 +853,6 @@ export interface Database {
           },
         ];
       };
-      weekly_default_routes: {
-        Row: {
-          id: string;
-          /** Eigentümer der Vorauswahl (jeder Nutzer hat seine eigene Tourplanung). */
-          user_id: string;
-          /** 0 = Sonntag, 1 = Montag, ..., 6 = Samstag. */
-          day_of_week: DayOfWeek;
-          object_id: string;
-          /** Reihenfolge der Objekte in der Standard-Route des Wochentags. */
-          selection_order: number;
-          created_at: string;
-          updated_at: string;
-          /** Zeitpunkt der letzten Bearbeitung auf dem Gerät (LWW-Basis). */
-          client_updated_at: string | null;
-          /** Serverzeit des letzten Syncs. */
-          synced_at: string | null;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          day_of_week: DayOfWeek;
-          object_id: string;
-          selection_order?: number;
-          created_at?: string;
-          updated_at?: string;
-          client_updated_at?: string | null;
-          synced_at?: string | null;
-        };
-        Update: {
-          id?: string;
-          user_id?: string;
-          day_of_week?: DayOfWeek;
-          object_id?: string;
-          selection_order?: number;
-          created_at?: string;
-          updated_at?: string;
-          client_updated_at?: string | null;
-          synced_at?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: 'weekly_default_routes_object_id_fkey';
-            columns: ['object_id'];
-            isOneToOne: false;
-            referencedRelation: 'objects';
-            referencedColumns: ['id'];
-            referencedSchema: 'public';
-          },
-        ];
-      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -893,18 +863,6 @@ export interface Database {
       current_user_role: {
         Args: Record<PropertyKey, never>;
         Returns: UserRole | null;
-      };
-      /**
-       * Ersetzt die Objektauswahl eines Wochentags transaktional pro Nutzer
-       * (selection_order folgt der Reihenfolge der übergebenen IDs).
-       */
-      save_weekly_defaults: {
-        Args: {
-          p_user_id: string;
-          p_day_of_week: number;
-          p_object_ids: string[];
-        };
-        Returns: undefined;
       };
       /**
        * Markiert überfällige offene Stempelungen (12 h überschritten ODER
@@ -945,7 +903,6 @@ export type ObjectRecord = Tables<'objects'>;
 export type ObjectAssignment = Tables<'object_assignments'>;
 export type ObjectItem = Tables<'object_items'>;
 export type InventoryItem = Tables<'inventory_items'>;
-export type WeeklyDefaultRoute = Tables<'weekly_default_routes'>;
 export type Passkey = Tables<'passkeys'>;
 export type WebauthnChallenge = Tables<'webauthn_challenges'>;
 
@@ -961,7 +918,3 @@ export type InventoryItemInsert =
   Database['public']['Tables']['inventory_items']['Insert'];
 export type InventoryItemUpdate =
   Database['public']['Tables']['inventory_items']['Update'];
-export type WeeklyDefaultRouteInsert =
-  Database['public']['Tables']['weekly_default_routes']['Insert'];
-export type WeeklyDefaultRouteUpdate =
-  Database['public']['Tables']['weekly_default_routes']['Update'];

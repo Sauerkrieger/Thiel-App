@@ -27,9 +27,10 @@ import type { UserRole } from "@/types/database";
 const DATA_ENDPOINTS: Record<string, () => string> = {
   "/objects": () => "/api/objects",
   "/inventar": () => "/api/inventory",
-  "/planung": () => `/api/planning?day_of_week=${new Date().getDay()}`,
+  "/planung": () => "/api/planning",
   "/historie": () => "/api/tours",
   "/zeiterfassung": () => "/api/time-tracking/summary",
+  "/vertretung": () => "/api/time-tracking/substitutes",
   "/admin/zeiterfassung": () => "/api/admin/time-tracking/overview",
   "/chat": () => "/api/chat/summary",
 };
@@ -85,6 +86,11 @@ const NAV_ITEMS: NavItem[] = [
     label: "Zeiterfassung",
   },
   {
+    href: "/vertretung",
+    label: "Vertretung",
+    roles: ["substitute"],
+  },
+  {
     href: "/admin/zeiterfassung",
     label: "Zeitadmin",
     roles: ["admin"],
@@ -113,6 +119,60 @@ export function AppShell({
   useEffect(() => {
     if (userId) initSync(userId);
   }, [userId]);
+
+  // Push-Benachrichtigungen app-weit aktivieren (nicht nur im Chat): Beim
+  // ersten Laden nach dem Login fragt der Browser einmalig nach der
+  // Berechtigung, bei bereits erteilter Berechtigung richtet er still die
+  // Subscription ein (falls noch keine existiert). Wer ablehnt, wird durch
+  // die Browser-Einstellung ohnehin nicht mehr gefragt; dieses asking-Gate
+  // verhindert nur wiederholte Versuche pro Session.
+  useEffect(() => {
+    if (!userRole || !userId) return;
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
+    if (Notification.permission === "denied") return;
+    if (
+      Notification.permission === "default" &&
+      window.sessionStorage.getItem("thiel-push-asked") === "1"
+    ) {
+      return;
+    }
+    window.sessionStorage.setItem("thiel-push-asked", "1");
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (!navigator.onLine) return;
+        const registration = await navigator.serviceWorker.ready;
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          const configResponse = await fetch("/api/chat/config", { cache: "no-store" });
+          const config = await configResponse.json().catch(() => ({}));
+          const vapidPublicKey: unknown = config?.vapidPublicKey;
+          if (typeof vapidPublicKey !== "string" || vapidPublicKey.length === 0) return;
+          if (Notification.permission === "default") {
+            const result = await Notification.requestPermission();
+            if (result !== "granted") return;
+          }
+          if (Notification.permission !== "granted") return;
+          const base64 = vapidPublicKey.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(vapidPublicKey.length / 4) * 4, "=");
+          const applicationServerKey = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+          subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+        }
+        if (cancelled) return;
+        // Idempotent speichern (upsert auf user_id + endpoint).
+        await fetch("/api/chat/push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription }),
+        });
+      } catch {
+        // Push ist optional – Fehler still ignorieren (kein UI-Rauschen).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userRole, userId]);
 
   // Service Worker nur im Production-Build registrieren (im Dev-Modus würde
   // er Hot-Reload/HMR stören). Er cached die App-Shell, damit die App auch

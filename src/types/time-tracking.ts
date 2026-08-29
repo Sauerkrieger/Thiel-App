@@ -46,10 +46,42 @@ export interface TimeOffRequest {
   reviewer_note: string | null;
   employee_note: string | null;
   substitute_id: string | null;
+  substitute_request: boolean;
+  substitute_kind: "driver" | "facility_manager" | null;
+  substitute_object_id: string | null;
   created_at: string;
   updated_at: string;
   client_updated_at: string | null;
   synced_at: string | null;
+}
+
+/** Objekt, das im Vertretungszeitraum gereinigt werden muss. */
+export type SubstituteObject = {
+  id: string;
+  name: string;
+  address: string;
+};
+
+/**
+ * Vertretung des angemeldeten Springers: eine genehmigte Abwesenheit, für
+ * die er als Vertretung eingetragen ist. objects ist nur bei vertretenen
+ * Reinigungskräften gefüllt; reviewer_note ist der Admin-Hinweis.
+ */
+export interface SubstituteAssignment {
+  id: string;
+  start_date: string;
+  end_date: string;
+  type: TimeOffType;
+  status: "approved" | "pending";
+  substitute_request?: boolean;
+  substitute_kind?: "driver" | "facility_manager" | null;
+  reviewer_note: string | null;
+  absent: {
+    id: string;
+    name: string;
+    role: "driver" | "admin" | "facility_manager" | "substitute";
+  };
+  objects: SubstituteObject[];
 }
 
 export type ClockAction = "clock_in" | "clock_out";

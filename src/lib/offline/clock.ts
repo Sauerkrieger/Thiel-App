@@ -1,5 +1,5 @@
 /**
- * Clock-Skew-Mitigation (siehe OFFLINE_SYNC_PLAN.md).
+ * Clock-Skew-Mitigation (siehe SPEC.md, Abschnitt 6).
  *
  * Nutzeruhren können lokal falsch gehen. Beim ersten Server-Kontakt wird daher
  *   timeOffset = serverTime - localClientTime

@@ -248,12 +248,19 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const startTime = body.start_time;
+    const warehouseArrival = body.warehouse_arrival;
     const status = body.status;
     const stops = body.stops as StopInput[] | undefined;
 
     if (startTime !== undefined && (typeof startTime !== "string" || !TIME_PATTERN.test(startTime))) {
       return NextResponse.json(
         { error: "Ungültige Startzeit (Format HH:MM erwartet)." },
+        { status: 400 },
+      );
+    }
+    if (warehouseArrival !== undefined && warehouseArrival !== null && (typeof warehouseArrival !== "string" || !TIME_PATTERN.test(warehouseArrival))) {
+      return NextResponse.json(
+        { error: "Ungültige Lager-Ankunftszeit (Format HH:MM erwartet)." },
         { status: 400 },
       );
     }
@@ -318,6 +325,8 @@ export async function POST(request: Request) {
       date: today,
       status: tourStatus,
       start_time: startTime ?? null,
+      warehouse_arrival:
+        typeof warehouseArrival === "string" ? warehouseArrival : null,
       driver_id: auth.user.id,
     };
     if (clientUpdatedAt) {

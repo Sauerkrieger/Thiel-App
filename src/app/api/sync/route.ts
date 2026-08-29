@@ -182,8 +182,7 @@ export async function POST(request: Request) {
         }
 
         // serverRecord immer mitsenden: Der Client übernimmt ihn als
-        // Quelle der Wahrheit (inkl. evtl. abweichender Server-Id, z. B.
-        // weekly_default_routes über den natürlichen Schlüssel).
+        // Quelle der Wahrheit (inkl. evtl. abweichender Server-Id).
         results.push({
           table: prepared.table,
           id: prepared.id,
@@ -191,11 +190,16 @@ export async function POST(request: Request) {
           serverRecord: outcome.applied ? outcome.record : outcome.serverRecord,
         });
       } catch (e) {
-        results.push({
-          table: prepared.table,
-          id: prepared.id,
-          error: readableError(e),
-        });
+        // Mehrfaches Offline-Einstempeln kann den partiellen Unique-Index
+        // verletzen. Den Serverstand zurückgeben statt die Queue dauerhaft
+        // mit einem nicht auflösbaren Fehler zu blockieren.
+        const message = readableError(e);
+        if (prepared.table === "time_entries" && /unique|duplicate|23505/i.test(message)) {
+          const current = await supabase.from("time_entries").select("*").eq("user_id", auth.user.id).is("clock_out", null).maybeSingle();
+          results.push({ table: prepared.table, id: prepared.id, applied: false, serverRecord: current.data as Record<string, unknown> | null ?? undefined });
+        } else {
+          results.push({ table: prepared.table, id: prepared.id, error: message });
+        }
       }
     }
 

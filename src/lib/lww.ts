@@ -7,7 +7,7 @@ import { SYNC_TABLES, isSyncTable, type SyncTable } from "@/lib/sync-tables";
 export { SYNC_TABLES, isSyncTable, type SyncTable } from "@/lib/sync-tables";
 
 /**
- * LWW-Registry für den Offline-First-Sync (siehe OFFLINE_SYNC_PLAN.md).
+ * LWW-Registry für den Offline-First-Sync (siehe SPEC.md, Abschnitt 6).
  *
  * Grundidee: Jeder synchronisierbare Datensatz trägt ein `client_updated_at`
  * (Zeitpunkt der letzten Bearbeitung auf dem Gerät). Kommt ein Update mit
@@ -92,12 +92,12 @@ const FIELD_WHITELISTS: Record<SyncTable, readonly string[]> = {
     "is_reserved",
   ],
   inventory_items: ["name", "note"],
-  weekly_default_routes: ["day_of_week", "object_id", "selection_order"],
   active_tours: [
     "driver_id",
     "date",
     "status",
     "start_time",
+    "warehouse_arrival",
     "total_duration_minutes",
   ],
   tour_stops: [
@@ -200,16 +200,12 @@ const TABLE_SPECS: Record<SyncTable, Record<string, FieldSpec>> = {
     name: { t: "text", max: 200 },
     note: { t: "text", max: 500 },
   },
-  weekly_default_routes: {
-    day_of_week: { t: "number", min: 0, max: 6, int: true },
-    object_id: { t: "text", max: 64 },
-    selection_order: { t: "number", min: 0, max: 100000, int: true },
-  },
   active_tours: {
     driver_id: { t: "text", max: 64 },
     date: { t: "date" },
     status: { t: "enum", values: ["packing", "in_transit", "completed"] },
     start_time: { t: "hhmm" },
+    warehouse_arrival: { t: "hhmm" },
     total_duration_minutes: { t: "number", min: 0, max: 100000, int: true },
   },
   tour_stops: {
@@ -395,7 +391,6 @@ export function prepareSyncEntry(
         };
       }
       break;
-    case "weekly_default_routes":
     case "active_tours":
     case "tour_stops":
       if (!planner) {
@@ -445,9 +440,6 @@ export function prepareSyncEntry(
         if (typeof data.employee_note !== "string") delete data.employee_note;
       }
     }
-  }
-  if (table === "weekly_default_routes") {
-    data.user_id = user.id; // Vorauswahl ist immer an den Nutzer gebunden
   }
   if (table === "active_tours" && !admin) {
     data.driver_id = user.id; // Fahrer syncen nur ihre eigenen Touren
@@ -566,8 +558,7 @@ export async function applyLww(
     from(name: string): SyncQuery;
   };
 
-  // Zuerst per id suchen, sonst ggf. über den natürlichen Schlüssel
-  // (z. B. weekly_default_routes: user_id + day_of_week + object_id).
+  // Zuerst per id suchen.
   let existingId: string | null = null;
   let existingClientUpdatedAt: string | null = null;
 
@@ -583,25 +574,6 @@ export async function applyLww(
       typeof byId.data.client_updated_at === "string"
         ? byId.data.client_updated_at
         : null;
-  }
-
-  if (!existingId && table === "weekly_default_routes") {
-    const byNatural = await db
-      .from("weekly_default_routes")
-      .select("id, client_updated_at")
-      .eq("user_id", data.user_id)
-      .eq("day_of_week", data.day_of_week)
-      .eq("object_id", data.object_id)
-      .maybeSingle();
-    if (byNatural.error) throw byNatural.error;
-    if (byNatural.data) {
-      existingId =
-        typeof byNatural.data.id === "string" ? byNatural.data.id : null;
-      existingClientUpdatedAt =
-        typeof byNatural.data.client_updated_at === "string"
-          ? byNatural.data.client_updated_at
-          : null;
-    }
   }
 
   if (existingId) {

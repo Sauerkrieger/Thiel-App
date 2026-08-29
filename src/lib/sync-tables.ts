@@ -12,7 +12,6 @@ export type SyncTable =
   | "objects"
   | "object_items"
   | "inventory_items"
-  | "weekly_default_routes"
   | "active_tours"
   | "tour_stops"
   | "time_entries"
@@ -23,7 +22,6 @@ export const SYNC_TABLES: readonly SyncTable[] = [
   "objects",
   "object_items",
   "inventory_items",
-  "weekly_default_routes",
   "active_tours",
   "tour_stops",
   "time_entries",

@@ -10,7 +10,7 @@ Stand: August 2026 – beschreibt den **aktuellen Ist-Zustand** des Codes.
 Die App unterstützt den kompletten Arbeitsablauf einer Reinigungs-/Liefer-Rundtour:
 
 1. **Objekte verwalten** (Ziele, Treppenhäuser) inkl. Items, Schlüsselnummern und Fotos
-2. **Touren planen** – Wochentags-Defaults, Foto-Auswahl, optimierte Rundtour vom/zum Lager
+2. **Touren planen** – manuelle Auswahl, Foto-Auswahl und optimierte Rundtour vom/zum Lager
 3. **Packen** – konsolidierte Packlisten je Objekt, Route auf der Karte
 4. **Ausliefern** – Stopps in optimierter Reihenfolge, Items vorab gecheckt, Belieferung abhaken
 5. **Historie & Einstellungen** – vergangene Touren, Profil, Passwort, Passkeys
@@ -71,6 +71,8 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 ### `time_off_requests` – Abwesenheitsanträge
 - `id`, `user_id` (FK auth.users, cascade), `type` (`vacation` | `sick_leave` | `unpaid` | `compensatory`), `start_date`, `end_date`
 - `status` (`pending` | `approved` | `rejected`), `reviewer_note`, `employee_note`
+- `substitute_request` (boolean), `substitute_kind` (`driver` | `facility_manager`), `substitute_object_id` (optionales FK auf `objects`)
+- Springer-Vorschläge werden mit `substitute_request = true` und `status = pending` gespeichert; Admin-Freigabe macht sie aktiv
 - LWW-Offline-Felder; Trigger verbucht genehmigte Urlaubstage auf das Konto (`vacation_days_used`)
 
 ### `objects` – Ziele/Treppenhäuser
@@ -98,10 +100,6 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - RLS: Lesen für alle authentifizierten Nutzer, verwalten (anlegen/bearbeiten/löschen) nur für Admins
 - Seed: initiale Item-Liste (Franzenmop, M-Power, Micromops-Varianten, Tana SR13, …)
 
-### `weekly_default_routes` – Wochentags-Vorauswahl (pro Benutzer)
-- `id`, `user_id` (FK auth.users, **jeder Nutzer hat eigene Defaults**), `day_of_week` (0–6, 0 = Sonntag), `object_id`, `selection_order`
-- Unique `(user_id, day_of_week, object_id)`; Ersetzung transaktional über RPC `save_weekly_defaults(user_id, day_of_week, object_ids)`
-
 ### `chat_threads`, `chat_messages` & `chat_translations` – Kommunikation
 - `chat_threads` verbindet jeweils einen Mitarbeiter mit einem Admin; pro Teilnehmerpaar genau ein Thread
 - `chat_messages` unterstützt Text, Bild und Audio mit Status `sent`/`delivered`/`read`, Eilmeldungen, Transkript und Medienpfad
@@ -116,7 +114,7 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - `profiles.chat_preferred_language` speichert die persönliche Übersetzungssprache; `profiles.phone` die Telefonnummer
 
 ### `active_tours` + `tour_stops` – Touren
-- `active_tours`: `id`, `driver_id`, `date`, `status` (packing → in_transit → completed), `start_time`, `total_duration_minutes`
+- `active_tours`: `id`, `driver_id`, `date`, `status` (packing → in_transit → completed), `start_time`, `warehouse_arrival` (geplante Rückkehr ins Lager), `total_duration_minutes`
 - `tour_stops`: `id`, `tour_id` (FK cascade), `object_id`, `stop_order` (unique je Tour), `arrival_time`, `is_delivered`, `next_delivery_items` (jsonb – vorgemerkte Extra-Items für die **nächste** Belieferung)
 
 ### Passkeys & Challenges
@@ -165,7 +163,7 @@ Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
 - **Items** (`items/analyze` + `items`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert, **je Item per Checkbox als Standard-Item markierbar** (`is_always_required`)
 
 ### 5.3 Tourenplanung (`/planung`)
-- **Wochentags-Defaults:** Vorauswahl des gleichen Wochentags (pro Benutzer) wird geladen; Änderungen werden per `save_weekly_defaults` gespeichert
+- **Manuelle Auswahl:** Objekte werden pro Tour manuell ausgewählt (Wochentags-Vorauswahl/-Speichern wurde entfernt)
 - **Foto-Auswahl** (`/api/planning/photo`): abfotografierte Routenliste → Häkchen automatisch setzen (Match per Adresse/Name, Unmatched werden aufgelistet)
 - **Startzeit** automatisch (aktuelle Uhrzeit + Vorbereitungszeit, auf 5 Min gerundet) – kein manuelles Auswahlfeld mehr
 
@@ -234,14 +232,22 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
   - **Freigabe-Feed:** geschlossene, noch nicht freigegebene Stempelungen („Nachgereichte Arbeitszeit“ / „Vergessene Ausstempelung“) und offene Anträge – einheitlich mit Icon + Status-Badge („Ausstehend“)
   - **Freigabe löst den Fall:** `is_approved = true` + `requires_review = false` → Eintrag zählt danach in Summen und Konto
   - **Änderungsprotokoll (Audit Log):** Jede Admin-Anpassung/-Freigabe/-Löschung einer Stempelung wird revisionssicher in `time_entry_audit_logs` protokolliert (alt→neu-Snapshot, Bearbeiter, Zeitstempel, Grund – bei Offline-Änderungen „Offline-Änderung (Sync)“). Auch **Nachreichungen durch den Mitarbeiter** werden protokolliert („Vergessene Ausstempelung nachgereicht“ / „Arbeitszeit nachgereicht“ – offline mit Zusatz „(Offline)“). Bearbeitete Einträge zeigen ein **Historiensymbol (🕘)** mit Tooltip *„{Begründung} von X am DD.MM.YYYY um HH:MM“* (z. B. *„Vergessene Ausstempelung nachgereicht von Max am 08.08.2026 um 14:32 Uhr“*); Klick öffnet einen Dialog mit allen Änderungen inkl. Feld-Diff (Start/Ende/Pause/Freigabe/Prüfbedarf/Notiz)
-  - Mitarbeiterstatus („Aktiv“ / „Prüfbedarf“), Monatsübersicht, Lohn-CSV-Export, Konto-Korrekturen (Urlaub/Überstunden)
+  - Mitarbeiterstatus („Aktiv“ / „Prüfbedarf“), Monatsübersicht, Lohn-CSV-Export, Konto-Korrekturen (Urlaub/Überstunden), Rollen- und Suchfilter sowie aktive Tour/nächstes Objekt in der Statusübersicht
 
-## 6. Karten (Leaflet)
+## 6. Offline-First und Synchronisation
+
+- Synchronisierbare Tabellen: `objects`, `object_items`, `inventory_items`, `active_tours`, `tour_stops`, `profiles`, `time_entries` und `time_off_requests`.
+- Offline-Schreibvorgänge werden in IndexedDB als `pending_upload` gespeichert und beim Reconnect über `POST /api/sync` synchronisiert. Last-Write-Wins verwendet `client_updated_at`; bei Konflikten übernimmt der Client den Server-Datensatz. Die Serverzeit wird über `GET /api/time` an die Client-Uhr angeglichen.
+- Die Sync-Engine synchronisiert in Abhängigkeitsreihenfolge (Touren vor Tourstopps), verarbeitet Batches und schützt lokale Änderungen, die während eines laufenden Syncs entstanden sind.
+- Löschen, Foto-/OCR-Import, Authentifizierung, Passwort-/Passkey-Verwaltung und Benutzeranlage bleiben online-only. Lesbare Daten werden je nach Endpunkt aus IndexedDB bereitgestellt; der Service Worker cached die App-Shell, greift aber nicht in `/api/*` ein.
+- Der Sync-/Offline-Indikator zeigt Online-/Offline-Status, laufende Synchronisierung, offene Einträge, letzten Sync und Fehler an.
+
+## 7. Karten (Leaflet)
 - `src/components/map/route-map.tsx` – imperatives Leaflet (nur im `useEffect`, SSR-sicher), OSM-Kacheln (kostenlos)
 - Straßenverlauf per **ORS-Directions** (`POST /api/planning/route-geometry`, Bearer-Auth, Polyline-Decoder in `src/lib/polyline.ts`); Fallback: gestrichelte Luftlinien
 - Eingesetzt im Pack-Modus und in der Tour-Ansicht; Autofit auf alle Punkte
 
-## 7. API-Übersicht (alle geschützt, Rolle in Klammern)
+## 8. API-Übersicht (alle geschützt, Rolle in Klammern)
 
 **Auth:** `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/me-profile` · `POST /api/auth/me-password`
 **Passkeys:** `POST /api/auth/passkeys/login-options` (öffentlich) · `login-verify` (öffentlich) · `register-options` · `register-verify` · `DELETE /api/auth/passkeys/[id]`
@@ -253,12 +259,12 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Reinigungskräfte)
 
 **Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH) – zusätzlich `weekly_target_hours`, `working_days_per_week`, `vacation_days_per_year` (Auto-Fill-Defaults serverseitig, Validierung Sollstunden 0–168 h / Arbeitstage 1–7 / Urlaubstage 0–365)
-**Planung (Driver/Admin):** `GET/POST /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
+**Planung (Driver/Admin):** `GET /api/planning` · `POST /api/planning/optimize` · `POST /api/planning/photo` · `POST /api/planning/route-geometry`
 **Touren (Driver/Admin):** `GET/POST /api/tours` · `GET/PATCH/DELETE /api/tours/[id]` · `PATCH /api/tours/[id]/stops/[stopId]`
 **Zeiterfassung (angemeldet):** `GET/POST /api/time-tracking/clock` · `GET/POST /api/time-tracking/entries` · `PATCH /api/time-tracking/entries/[id]` (Nachreichung vergessener Ausstempelung) · `GET /api/time-tracking/review` (Prüfbedarf-Abfrage fürs Zwangspopup) · `GET /api/time-tracking/summary` · `GET/POST /api/time-tracking/requests` · `PATCH /api/time-tracking/requests/[id]`
-**Zeitadmin (Admin):** `GET /api/admin/time-tracking/overview` (inkl. `audit_logs` je Eintrag) · `GET /api/admin/time-tracking/status` · `GET /api/admin/time-tracking/export` (Lohn-CSV) · `PATCH/DELETE /api/admin/time-tracking/entries/[id]` (Freigabe + offene Stempelung aktiv schließen; ArbZG-Mindestpause; schreibt `time_entry_audit_logs`)
+**Zeitadmin (Admin):** `GET /api/admin/time-tracking/overview` (inkl. `audit_logs` je Eintrag) · `GET /api/admin/time-tracking/status` · `GET /api/admin/time-tracking/export` (Lohn-CSV) · `POST /api/admin/time-tracking/entries` · `PATCH/DELETE /api/admin/time-tracking/entries/[id]` (Freigabe + offene Stempelung aktiv schließen; ArbZG-Mindestpause; schreibt `time_entry_audit_logs`)
 
-## 8. Umgebungsvariablen (`.env.local`)
+## 9. Umgebungsvariablen (`.env.local`)
 
 | Variable | Pflicht | Zweck |
 | :--- | :--- | :--- |
@@ -271,7 +277,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` | – | Passkey-Relaying-Party (Default: Host / „Thiel Dienstleistungen") |
 | `WAREHOUSE_ADDRESS` | – | Lager-Adresse (Default: Sartoriusstraße 14, 97072 Würzburg) |
 
-## 9. Projektstruktur (Auszug)
+## 10. Projektstruktur (Auszug)
 
 ```
 src/
@@ -307,8 +313,13 @@ src/
 supabase/migrations/                # versionierte Schema- und Performance-Migrationen
 ```
 
-## 10. Entwicklung
+## 11. Entwicklung
 
 - `npm run dev` – Dev-Server · `npm run build` – Produktions-Build · `npm run typecheck` – `tsc --noEmit` · `npm start` – Produktions-Server
+- Overpass: Antworten werden serverseitig 24 Stunden im Memory gecacht; für Würzburg existiert ein lokaler Polygon-Fallback. Bei Cache-Miss werden beide Overpass-Endpunkte mit Timeout/Retry verwendet.
+- Offline-Time-Entries: Pending-Einträge werden chronologisch synchronisiert. Konflikte am partiellen Unique-Index werden serverseitig als LWW-Konflikt mit dem offenen Server-Eintrag beantwortet, damit die Queue nicht dauerhaft blockiert.
+- Passkey-Login: `generateLink`/`verifyOtp` erzeugen und verwenden intern ein Token; es wird kein E-Mail-Versand ausgelöst. Der Ablauf bleibt serverseitig und kann über die Login-Request-Dauer gemessen werden.
+
 - Migrationen werden in `supabase/migrations/` versioniert (laufen auf dem Supabase-Projekt); der Chat benötigt die Chat-, Push- und Performance-Migrationen bis `20260825000000_chat_performance.sql`
+- **Passwortloser Supabase-CLI-Ablauf:** Dieses Projekt ist bereits mit einem Supabase-Projekt verknüpft (`supabase/.temp/project-ref`). Wenn die CLI-Sitzung bereits authentifiziert ist, prüft `supabase projects list` den Zugriff ohne ein DB-Passwort. Migrationen werden anschließend mit `supabase db push --linked --yes` eingespielt. Die CLI verwendet dabei die bestehende lokale Login-/Access-Token-Sitzung; ein Datenbankpasswort muss nicht in Dateien gespeichert werden. Falls `supabase projects list` nicht funktioniert, zuerst einmalig interaktiv `supabase login` ausführen (Token aus dem Supabase-Dashboard), danach erneut `supabase db push --linked --yes`. Migrationen mit identischer Versionsnummer dürfen nicht existieren; die Springer-Migration verwendet deshalb `20260828000200_substitute_requests.sql`.
 - Deployment über Git-Push nach `main` (Vercel/GitHub Actions), Migrationen vor dem ersten Request einspielen

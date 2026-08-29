@@ -1,5 +1,4 @@
 import type {
-  DayOfWeek,
   ObjectCategory,
   ObjectItem,
   ObjectRecord,
@@ -42,11 +41,7 @@ export type PlanningObject = Pick<
 
 /** Antwort von GET /api/planning. */
 export type PlanningData = {
-  day_of_week: DayOfWeek;
   objects: PlanningObject[];
-  selected_ids: string[];
-  /** Zeitpunkt der letzten Speicherung der Vorauswahl (oder null). */
-  defaults_updated_at: string | null;
 };
 
 /** Per Foto-Erkennung zugeordnetes Objekt. */
@@ -165,6 +160,8 @@ export type TourWithStops = {
   date: string;
   status: "packing" | "in_transit" | "completed";
   start_time: string | null;
+  /** Geplante Ankunft zurück im Lager (HH:MM) – beim Tourstart gesetzt. */
+  warehouse_arrival: string | null;
   total_duration_minutes: number | null;
   created_at: string;
   tour_stops: TourStopWithObject[];

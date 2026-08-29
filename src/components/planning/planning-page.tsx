@@ -9,13 +9,11 @@ import {
   CalendarDays,
   Camera,
   Check,
-  CheckCircle2,
   Clock,
   MapPin,
   MessageSquareText,
   Play,
   Route,
-  Save,
   Search,
   Store,
   Trash2,
@@ -48,7 +46,6 @@ import {
 } from "@/lib/routing/time";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { getCurrentUserId } from "@/lib/offline/sync";
-import type { DayOfWeek } from "@/types/database";
 import type {
   ApiError,
   OptimizedStop,
@@ -58,26 +55,11 @@ import type {
   TourHistoryItem,
 } from "@/types/api";
 
-const WEEKDAY_NAMES = [
-  "Sonntag",
-  "Montag",
-  "Dienstag",
-  "Mittwoch",
-  "Donnerstag",
-  "Freitag",
-  "Samstag",
-];
-
 const dateFormatter = new Intl.DateTimeFormat("de-DE", {
   weekday: "long",
   day: "numeric",
   month: "long",
   year: "numeric",
-});
-
-const shortDateFormatter = new Intl.DateTimeFormat("de-DE", {
-  day: "numeric",
-  month: "long",
 });
 
 // Lokaler Zwischenspeicher für den Pack-Modus: Die berechnete Route wird
@@ -149,17 +131,12 @@ function clearPackDraft() {
 export function PlanningPage() {
   const router = useRouter();
 
-  // 0 = Sonntag ... 6 = Samstag (JS getDay() = DB-Konvention)
-  const dayOfWeek = new Date().getDay() as DayOfWeek;
 
   const [objects, setObjects] = useState<PlanningObject[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [savedIds, setSavedIds] = useState<string[]>([]);
-  const [defaultsUpdatedAt, setDefaultsUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [search, setSearch] = useState("");
-  const [saving, setSaving] = useState(false);
 
   // Routen-Optimierung / Pack-Modus
   const [optimizing, setOptimizing] = useState(false);
@@ -199,18 +176,10 @@ export function PlanningPage() {
   // parallel vom Server nachladen.
   const load = useCallback(async (fresh = false) => {
     setError(null);
-    const url = `/api/planning?day_of_week=${dayOfWeek}`;
+    const url = "/api/planning";
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached) {
       setObjects((cached.objects as PlanningObject[]) ?? []);
-      const ids: string[] = (cached.selected_ids as string[]) ?? [];
-      setSelected(new Set(ids));
-      setSavedIds(ids);
-      setDefaultsUpdatedAt(
-        typeof cached.defaults_updated_at === "string"
-          ? cached.defaults_updated_at
-          : null,
-      );
       setLoading(false);
     } else {
       setLoading(true);
@@ -228,10 +197,6 @@ export function PlanningPage() {
         return;
       }
       setObjects(body.objects ?? []);
-      const ids: string[] = body.selected_ids ?? [];
-      setSelected(new Set(ids));
-      setSavedIds(ids);
-      setDefaultsUpdatedAt(body.defaults_updated_at ?? null);
     } catch {
       if (!cached) {
         setError({ message: "Netzwerkfehler beim Laden der Tourenplanung." });
@@ -239,7 +204,7 @@ export function PlanningPage() {
     } finally {
       setLoading(false);
     }
-  }, [dayOfWeek]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -297,11 +262,6 @@ export function PlanningPage() {
     void loadActiveTour();
   }, [loadActiveTour]);
 
-  const dirty = useMemo(() => {
-    if (selected.size !== savedIds.length) return true;
-    return savedIds.some((id) => !selected.has(id));
-  }, [selected, savedIds]);
-
   function toggle(id: string, checked: boolean) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -309,32 +269,6 @@ export function PlanningPage() {
       else next.delete(id);
       return next;
     });
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const res = await offlineFetch("/api/planning", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          day_of_week: dayOfWeek,
-          object_ids: Array.from(selected),
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        toast.error(body.error ?? "Speichern fehlgeschlagen.");
-        return;
-      }
-      setSavedIds(Array.from(selected));
-      setDefaultsUpdatedAt(new Date().toISOString());
-      toast.success(`Auswahl für ${WEEKDAY_NAMES[dayOfWeek]} gespeichert.`);
-    } catch {
-      toast.error("Speichern fehlgeschlagen.");
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function runOptimize() {
@@ -431,6 +365,11 @@ export function PlanningPage() {
         body: JSON.stringify({
           start_time: actualStart,
           status: "in_transit",
+          // Geplante Rückkehr im Lager analog zu den Stopps an den
+          // tatsächlichen Start anpassen.
+          warehouse_arrival: formatMinutes(
+            toMinutes(route.warehouse_arrival) + delta,
+          ),
           stops: route.stops.map((stop) => ({
             object_id: stop.object_id,
             key_number: stop.key_number ?? null,
@@ -571,7 +510,7 @@ export function PlanningPage() {
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             {route
               ? "Prüfe die Packlisten und starte die Ausfahrt, wenn alles verstaut ist. Dein Zwischenstand wird automatisch gespeichert – du kannst später hier weitermachen."
-              : `Wähle die Objekte für deine Tour. Die Auswahl wird gespeichert und am nächsten ${WEEKDAY_NAMES[dayOfWeek]} automatisch vorgeschlagen.`}
+              : "Wähle die Objekte für deine Tour und berechne dann die optimale Route."}
           </p>
           <p className="mt-2 flex items-center gap-1.5 text-sm font-medium">
             <CalendarDays className="h-4 w-4 text-primary" />
@@ -658,27 +597,6 @@ export function PlanningPage() {
               </Link>
             </Button>
           </div>
-        </div>
-      )}
-
-      {/* Vorauswahl-Hinweis (nur im Auswahl-Modus) */}
-      {!route && !loading && !error && (
-        <div className="mt-4">
-          {defaultsUpdatedAt ? (
-            <div className="flex items-start gap-2 rounded-md border bg-primary/5 px-3 py-2 text-sm">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              <span>
-                Vorauswahl vom letzten {WEEKDAY_NAMES[dayOfWeek]} übernommen
-                (zuletzt gespeichert am{" "}
-                {shortDateFormatter.format(new Date(defaultsUpdatedAt))}).
-              </span>
-            </div>
-          ) : (
-            <div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-              Keine gespeicherte Vorauswahl für {WEEKDAY_NAMES[dayOfWeek]} –
-              wähle unten die Objekte aus und speichere die Auswahl.
-            </div>
-          )}
         </div>
       )}
 
@@ -862,42 +780,30 @@ export function PlanningPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Sticky-Leiste: auf dem Handy über der festen Stempeluhr-Leiste
+      {/* Sticky-Leiste: nur im Pack-Modus nötig (Auswahl-Modus hat ihre
+          Aktion oben). Auf dem Handy über der festen Stempeluhr-Leiste
           (bottom-14), am Desktop am unteren Rand. */}
-      <div className="fixed inset-x-0 bottom-14 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:bottom-0">
-        <div className="container flex h-16 items-center justify-between gap-3">
-          {route ? (
-            <>
-              <p className="min-w-0 text-sm text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  {route.stops.length}
-                </span>{" "}
-                Stopps · Start {route.start_time} Uhr
-              </p>
-              <Button
-                size="lg"
-                onClick={() => void handleStartTour()}
-                disabled={startingTour || optimizing}
-                className="gap-2"
-              >
-                <Play />
-                {startingTour ? "Tour wird gestartet…" : "Ausfahren beginnen"}
-              </Button>
-            </>
-          ) : (
-            <>
-              <p className="min-w-0 text-sm">
-                <span className="font-semibold">{selected.size}</span>{" "}
-                Objekt{selected.size === 1 ? "" : "e"} ausgewählt
-              </p>
-              <Button onClick={() => void handleSave()} disabled={!dirty || saving}>
-                <Save />
-                {saving ? "Wird gespeichert…" : "Auswahl speichern"}
-              </Button>
-            </>
-          )}
+      {route && (
+        <div className="fixed inset-x-0 bottom-14 z-30 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:bottom-0">
+          <div className="container flex h-16 items-center justify-between gap-3">
+            <p className="min-w-0 text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">
+                {route.stops.length}
+              </span>{" "}
+              Stopps · Start {route.start_time} Uhr
+            </p>
+            <Button
+              size="lg"
+              onClick={() => void handleStartTour()}
+              disabled={startingTour || optimizing}
+              className="gap-2"
+            >
+              <Play />
+              {startingTour ? "Tour wird gestartet…" : "Ausfahren beginnen"}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
