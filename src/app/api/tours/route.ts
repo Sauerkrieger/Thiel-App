@@ -17,6 +17,13 @@ const TOUR_STATUSES: readonly TourStatus[] = [
 ];
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+function isMissingWarehouseArrivalColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return /warehouse_arrival.*schema cache|could not find.*warehouse_arrival|column .*warehouse_arrival.*does not exist/i.test(
+    error.message ?? "",
+  );
+}
+
 type StopInput = {
   object_id?: unknown;
   arrival_time?: unknown;
@@ -336,12 +343,27 @@ export async function POST(request: Request) {
     }
     tourPayload.synced_at = new Date().toISOString();
 
-    const { data: tour, error: tourError } = await supabase
+    let tourInsert = await supabase
       .from("active_tours")
       .insert(tourPayload)
       .select()
       .single();
 
+    // Kompatibilität für eine bereits laufende Instanz, deren PostgREST-
+    // Schema-Cache die Migration noch nicht kennt. Die Migration repariert
+    // die Ursache dauerhaft; der Fallback verhindert bis dahin den Abbruch
+    // des Tourstarts (die Rückkehrzeit wird dann erst nach dem Schema-Reload
+    // gespeichert).
+    if (isMissingWarehouseArrivalColumn(tourInsert.error)) {
+      const { warehouse_arrival: _warehouseArrival, ...legacyPayload } = tourPayload;
+      tourInsert = await supabase
+        .from("active_tours")
+        .insert(legacyPayload)
+        .select()
+        .single();
+    }
+
+    const { data: tour, error: tourError } = tourInsert;
     if (tourError) throw tourError;
 
     // Stopps mit ihren IDs zurückgeben, damit der Client beim Start die

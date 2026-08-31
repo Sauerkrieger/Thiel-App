@@ -428,24 +428,30 @@ export function PhotoImportDialog({ open, onOpenChange, onImported }: Props) {
 
     setApplying(true);
     setError(null);
-    try {
-      const res = await fetch("/api/objects/import/items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_objects: newObjects }),
+    // Nicht auf die Antwort warten: Der Server nimmt den Auftrag an und
+    // verarbeitet ihn über `after()` weiter. Dadurch bleibt die App sofort
+    // frei und der nächste Foto-Import kann parallel gestartet werden.
+    void fetch("/api/objects/import/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_objects: newObjects }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          toast.error(body.error ?? "Foto-Import konnte nicht gestartet werden.");
+        }
+      })
+      .catch(() => {
+        toast.error("Foto-Import konnte nicht gestartet werden.");
       });
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body.error ?? "Übernehmen fehlgeschlagen.");
-        return;
-      }
-      setItemResult(body as ItemGroupImportResult);
-      onImported();
-    } catch {
-      setError("Übernehmen fehlgeschlagen.");
-    } finally {
-      setApplying(false);
-    }
+
+    // Optimistische Bestätigung: Die eigentliche Zahl der angelegten Objekte
+    // wird sofort angezeigt. Fehler während der Verarbeitung meldet der
+    // Server per Push-Benachrichtigung.
+    setApplying(false);
+    toast.success(`objekte hinzu gefügt ${newObjects.length}`);
+    handleClose(false);
   }
 
   const description = (() => {

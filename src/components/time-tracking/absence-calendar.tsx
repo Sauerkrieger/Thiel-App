@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarRange, ChevronLeft, ChevronRight, Filter, List } from "lucide-react";
+import { CalendarRange, ChevronLeft, ChevronRight, Filter, List, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import type { TimeOffRequest, TimeOffType } from "@/types/time-tracking";
 
 type Employee = { id: string; name: string; role: string };
@@ -87,14 +88,20 @@ function MultiFilter({
   selected,
   onToggle,
   onSelectAll,
+  searchPlaceholder,
 }: {
   label: string;
   options: Array<{ value: string; label: string }>;
   selected: Set<string>;
   onToggle: (value: string) => void;
   onSelectAll: () => void;
+  searchPlaceholder?: string;
 }) {
+  const [query, setQuery] = useState("");
   const allSelected = options.length > 0 && selected.size === options.length;
+  const visibleOptions = searchPlaceholder
+    ? options.filter((option) => option.label.toLocaleLowerCase("de-DE").includes(query.trim().toLocaleLowerCase("de-DE")))
+    : options;
   return (
     <details className="relative min-w-[180px]">
       <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border bg-background px-3 text-sm shadow-sm">
@@ -102,10 +109,11 @@ function MultiFilter({
         <span className="text-xs text-muted-foreground">{selected.size}/{options.length}</span>
       </summary>
       <div className="absolute left-0 top-10 z-40 max-h-72 min-w-full overflow-y-auto rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
+        {searchPlaceholder ? <div className="relative mb-1.5"><Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" /><Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} aria-label={searchPlaceholder} className="h-8 rounded border bg-background pl-7 pr-2 text-xs" /></div> : null}
         <button type="button" className="mb-1 w-full rounded px-2 py-1.5 text-left text-xs font-medium text-primary hover:bg-accent" onClick={onSelectAll}>
           {allSelected ? "Alle abwählen" : "Alle auswählen"}
         </button>
-        {options.map((option) => (
+        {visibleOptions.map((option) => (
           <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent">
             <Checkbox checked={selected.has(option.value)} onCheckedChange={() => onToggle(option.value)} />
             <span className="whitespace-nowrap">{option.label}</span>
@@ -204,7 +212,7 @@ export function AbsenceCalendar({ employees, requests, onEditRequest }: Calendar
       <div className="flex flex-wrap gap-2">
         <MultiFilter label="Abwesenheitstypen" options={typeOptions} selected={types} onToggle={(value) => setTypes((current) => toggleValue(current, value))} onSelectAll={() => setTypes((current) => current.size === typeOptions.length ? new Set() : new Set(typeOptions.map((option) => option.value)))} />
         <MultiFilter label="Rollen" options={roleOptions} selected={roles} onToggle={(value) => setRoles((current) => toggleValue(current, value))} onSelectAll={() => setRoles((current) => current.size === roleOptions.length ? new Set() : new Set(roleOptions.map((option) => option.value)))} />
-        <MultiFilter label="Mitarbeiter" options={employeeOptions} selected={employeeIds} onToggle={(value) => setEmployeeIds((current) => toggleValue(current, value))} onSelectAll={() => setEmployeeIds((current) => current.size === employeeOptions.length ? new Set() : new Set(employeeOptions.map((option) => option.value)))} />
+        <MultiFilter label="Mitarbeiter" options={employeeOptions} selected={employeeIds} onToggle={(value) => setEmployeeIds((current) => toggleValue(current, value))} onSelectAll={() => setEmployeeIds((current) => current.size === employeeOptions.length ? new Set() : new Set(employeeOptions.map((option) => option.value)))} searchPlaceholder="Mitarbeiter suchen" />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">

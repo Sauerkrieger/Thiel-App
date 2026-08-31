@@ -21,6 +21,8 @@ export type PushPayload = {
   url: string;
   /** Gruppierung: gleiche Tags ersetzen sich gegenseitig (Standard: Chat). */
   tag?: string;
+  /** Auch anzeigen, wenn die App gerade sichtbar geöffnet ist. */
+  always?: boolean;
 };
 
 /**
@@ -35,7 +37,7 @@ export async function sendPushToUser(recipientId: string, payload: PushPayload):
   const { data: subscriptions } = await supabase.from("push_subscriptions").select("id, endpoint, p256dh, auth").eq("user_id", recipientId);
   await Promise.all((subscriptions ?? []).map(async (subscription) => {
     try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify({ title: payload.title, body: payload.body.slice(0, 140), url: payload.url, tag: payload.tag ?? "chat-message" }));
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify({ title: payload.title, body: payload.body.slice(0, 140), url: payload.url, tag: payload.tag ?? "chat-message", always: payload.always === true }));
     } catch (error) {
       const status = error && typeof error === "object" && "statusCode" in error ? error.statusCode : 0;
       if (status === 404 || status === 410) await supabase.from("push_subscriptions").delete().eq("id", subscription.id);

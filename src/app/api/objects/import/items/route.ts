@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   apiErrorResponse,
@@ -21,12 +21,14 @@ import {
 import { safeIsInPedestrianZone } from "@/lib/overpass";
 import { hasHouseNumber } from "@/lib/utils";
 import { requireUser, isAdmin } from "@/lib/auth";
+import { sendPushToUser } from "@/app/api/chat/push/send";
 import type {
   ItemGroupImportNewObject,
   ItemGroupImportResult,
 } from "@/types/api";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const MAX_GROUPS = 200;
 
@@ -47,56 +49,34 @@ function parseAdminInfo(r: Record<string, unknown>): {
   };
 }
 
-/** POST /api/objects/import/items -> bestätigte Items-Gruppen übernehmen. */
-export async function POST(request: Request) {
-  const auth = await requireUser();
-  if (!auth.user) {
-    return NextResponse.json(
-      { error: auth.error, code: auth.code },
-      { status: auth.status },
-    );
-  }
-  if (!isAdmin(auth.user)) {
-    return NextResponse.json(
-      { error: "Nur Admins dürfen Items importieren." },
-      { status: 403 },
-    );
-  }
-
+/** Führt die bestätigte Anlage außerhalb der initialen HTTP-Antwort aus. */
+async function processItemImport(rawNewObjects: unknown[], userId: string): Promise<void> {
   try {
-    const body = await request.json().catch(() => ({}));
-    // Dieser Import darf ausschließlich neue Objekte anlegen. Ein früheres
-    // Payload-Feld `groups` wird bewusst ignoriert, damit ältere Clients
-    // niemals wieder bestehende Objekte mit Items verändern können.
-    const rawNewObjects = Array.isArray(body.new_objects)
-      ? (body.new_objects as unknown[])
-      : [];
+    await persistItemImport(rawNewObjects);
+  } catch {
+    await sendPushToUser(userId, {
+      title: "Foto-Import fehlgeschlagen",
+      body: "Der Foto-Import konnte im Hintergrund nicht abgeschlossen werden.",
+      url: "/objects",
+      tag: "photo-import-failure",
+      always: true,
+    });
+  }
+}
 
-    if (rawNewObjects.length === 0) {
-      return NextResponse.json(
-        { error: "Keine Items-Gruppen übermittelt." },
-        { status: 400 },
-      );
-    }
-    if (rawNewObjects.length > MAX_GROUPS) {
-      return NextResponse.json(
-        { error: `Maximal ${MAX_GROUPS} Gruppen erlaubt.` },
-        { status: 400 },
-      );
-    }
-
-    // Neu anzulegende Objekte aus der bestätigten Vorschau.
-    // Eine exakte Adresse mit Hausnummer ist Pflicht – reine Straßen- oder
-    // Ortsangaben werden abgelehnt.
-    const newObjects: ItemGroupImportNewObject[] = [];
-    for (const raw of rawNewObjects) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const r = raw as Record<string, unknown>;
-      const name = typeof r.name === "string" ? r.name.trim() : "";
-      const address = typeof r.address === "string" ? r.address.trim() : "";
-      const items = parseItemInputs(r.items);
-      if (!name || !items || items.length === 0) continue;
-      if (!hasHouseNumber(address)) continue;
+async function persistItemImport(rawNewObjects: unknown[]): Promise<void> {
+  // Neu anzulegende Objekte aus der bestätigten Vorschau.
+  // Eine exakte Adresse mit Hausnummer ist Pflicht – reine Straßen- oder
+  // Ortsangaben werden abgelehnt.
+  const newObjects: ItemGroupImportNewObject[] = [];
+  for (const raw of rawNewObjects) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const r = raw as Record<string, unknown>;
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    const address = typeof r.address === "string" ? r.address.trim() : "";
+    const items = parseItemInputs(r.items);
+    if (!name || !items || items.length === 0) continue;
+    if (!hasHouseNumber(address)) continue;
       // Mehrfach-Hausnummern derselben Straße (Treppenhaus-Fall, z. B.
       // „Josefplatz 1,2,3“): Nur die ERSTE Hausnummer wird als Adresse
       // gespeichert/geocodiert – der Gesamtstring („Josefplatz 1,2,3,
@@ -104,25 +84,22 @@ export async function POST(request: Request) {
       // Düsseldorf). Der Name behält die vollständige Adressliste.
       const split = splitMultiHouseNumberAddress(address);
       const geoAddress = split ? split.first : address;
-      newObjects.push({
-        name,
-        // Würzburg-Regel: Ohne Ortsangabe wird „Würzburg“ ergänzt, damit die
-        // Adresse nie ohne Städtezusatz gespeichert wird (sonst landet sie
-        // beim Geocoding irgendwo in Deutschland).
-        address: ensureAddressCity(geoAddress),
-        latitude: validLatitude(r.latitude),
-        longitude: validLongitude(r.longitude),
-        category: isObjectCategory(r.category) ? r.category : "objekt",
-        ...parseAdminInfo(r),
-        items,
-      });
-    }
+    newObjects.push({
+      name,
+      // Würzburg-Regel: Ohne Ortsangabe wird „Würzburg“ ergänzt, damit die
+      // Adresse nie ohne Städtezusatz gespeichert wird (sonst landet sie
+      // beim Geocoding irgendwo in Deutschland).
+      address: ensureAddressCity(geoAddress),
+      latitude: validLatitude(r.latitude),
+      longitude: validLongitude(r.longitude),
+      category: isObjectCategory(r.category) ? r.category : "objekt",
+      ...parseAdminInfo(r),
+      items,
+    });
+  }
 
-    if (newObjects.length === 0) {
-      return NextResponse.json(
-        { error: "Ungültige Items-Gruppen übermittelt." },
-        { status: 400 },
-      );
+  if (newObjects.length === 0) {
+      throw new Error("Ungültige Items-Gruppen übermittelt.");
     }
 
     const supabase = getSupabaseAdmin();
@@ -132,18 +109,18 @@ export async function POST(request: Request) {
     const { data: allObjects, error: allObjectsError } = await supabase
       .from("objects")
       .select("address");
-    if (allObjectsError) throw allObjectsError;
-    const existingAddresses = (allObjects ?? []).map((o) =>
-      normalizeAddress(o.address),
-    );
-    const result: ItemGroupImportResult = {
-      assigned: 0,
-      items_added: 0,
-      not_found: 0,
-      new_objects_created: 0,
-      new_objects_skipped: 0,
-      duplicate_warnings: 0,
-    };
+  if (allObjectsError) throw allObjectsError;
+  const existingAddresses = (allObjects ?? []).map((o) =>
+    normalizeAddress(o.address),
+  );
+  const result: ItemGroupImportResult = {
+    assigned: 0,
+    items_added: 0,
+    not_found: 0,
+    new_objects_created: 0,
+    new_objects_skipped: 0,
+    duplicate_warnings: 0,
+  };
 
     const toInsert: {
       object_id: string;
@@ -236,7 +213,56 @@ export async function POST(request: Request) {
       result.items_added += batch.length;
     }
 
-    return NextResponse.json(result);
+    if (result.new_objects_skipped > 0) {
+      throw new Error(
+        `${result.new_objects_skipped} Objekt${result.new_objects_skipped === 1 ? "" : "e"} konnten im Hintergrund nicht angelegt werden.`,
+      );
+    }
+}
+
+/** POST /api/objects/import/items -> Auftrag sofort annehmen. */
+export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Nur Admins dürfen Items importieren." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    // Dieser Import darf ausschließlich neue Objekte anlegen. Ein früheres
+    // Payload-Feld `groups` wird bewusst ignoriert, damit ältere Clients
+    // niemals wieder bestehende Objekte mit Items verändern können.
+    const rawNewObjects = Array.isArray(body.new_objects)
+      ? (body.new_objects as unknown[])
+      : [];
+
+    if (rawNewObjects.length === 0) {
+      return NextResponse.json(
+        { error: "Keine Items-Gruppen übermittelt." },
+        { status: 400 },
+      );
+    }
+    if (rawNewObjects.length > MAX_GROUPS) {
+      return NextResponse.json(
+        { error: `Maximal ${MAX_GROUPS} Gruppen erlaubt.` },
+        { status: 400 },
+      );
+    }
+
+    after(() => processItemImport(rawNewObjects, auth.user.id));
+    return NextResponse.json(
+      { accepted: true, new_objects_queued: rawNewObjects.length },
+      { status: 202 },
+    );
   } catch (e) {
     return apiErrorResponse(e);
   }

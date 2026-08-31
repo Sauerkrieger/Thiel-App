@@ -38,3 +38,6 @@ supabase/.env.local
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# next dev log
+.next-dev.log

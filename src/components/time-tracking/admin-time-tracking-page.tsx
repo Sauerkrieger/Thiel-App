@@ -117,12 +117,7 @@ function employeeStatusBadge(entry: TimeEntry | null) {
 }
 
 export function AdminTimeTrackingPage() {
-  const [role, setRole] = useState("all");
-  const [query, setQuery] = useState("");
-  // Debounce: Die Freitext-Suche soll nicht bei jedem Tastendruck einen
-  // kompletten Server-Request + Cache-Read auslösen, sondern erst, wenn der
-  // Nutzer kurz pausiert (gleiche Filterung, nur sparsamer).
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [statusEmployeeQuery, setStatusEmployeeQuery] = useState("");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -186,10 +181,7 @@ export function AdminTimeTrackingPage() {
   // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
   // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
   const load = useCallback(async (fresh = false) => {
-    const params = new URLSearchParams();
-    if (role !== "all") params.set("role", role);
-    if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
-    const url = `/api/admin/time-tracking/overview?${params.toString()}`;
+    const url = "/api/admin/time-tracking/overview";
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached) {
       setOverview(cached as Overview);
@@ -220,7 +212,7 @@ export function AdminTimeTrackingPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Übersicht konnte nicht geladen werden.");
     } finally { setLoading(false); }
-  }, [role, debouncedQuery]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -231,12 +223,6 @@ export function AdminTimeTrackingPage() {
     ["time_entries", "time_off_requests", "profiles"],
     () => { void load(true); },
   );
-
-  // Debounce der Freitext-Suche (siehe oben): sobald der Nutzer kurz pausiert.
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query), 350);
-    return () => window.clearTimeout(timer);
-  }, [query]);
 
   async function approveEntry(entry: TimeEntry, approved: boolean) {
     setSaving(entry.id);
@@ -695,6 +681,13 @@ export function AdminTimeTrackingPage() {
     });
   }, [overview, month]);
   const monthTotal = monthRows.reduce((sum, row) => sum + row.total, 0);
+  const statusEmployees = useMemo(() => {
+    const normalizedQuery = statusEmployeeQuery.trim().toLocaleLowerCase("de-DE");
+    if (!normalizedQuery) return overview?.employees ?? [];
+    return (overview?.employees ?? []).filter((employee) =>
+      employee.name.toLocaleLowerCase("de-DE").includes(normalizedQuery),
+    );
+  }, [overview?.employees, statusEmployeeQuery]);
 
   /**
    * Monats-Soll eines Minijobbers in Minuten: Wochen-Soll (Profil bzw.
@@ -731,10 +724,8 @@ export function AdminTimeTrackingPage() {
     <div className="container py-6 sm:py-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="mb-2 text-sm font-medium text-primary">Verwaltung</p><h1 className="text-3xl font-bold tracking-tight">Zeitadmin</h1><p className="mt-1 text-sm text-muted-foreground">Mitarbeiterstatus, Freigaben, Konten und Monatsübersicht.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void downloadCsv("details")}><Download /> Schichtdetails (CSV)</Button><Button variant="outline" onClick={() => void downloadCsv("summary")}><Download /> Monatsübersicht (CSV)</Button></div></div>
       <div className="mt-8 grid gap-4 sm:grid-cols-3"><Stat icon={<Users />} label="Mitarbeiter" value={String(overview?.employees.length ?? 0)} /><Stat icon={<UserCheck />} label="Gerade aktiv" value={String(openCount)} /><Stat icon={<ShieldCheck />} label="Offene Freigaben" value={String(pendingRequests.length + pendingEntries.length + reviewEntries.length)} /></div>
-      <Card className="mt-6"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Mitarbeiter suchen…" /></div><Select value={role} onValueChange={setRole}><SelectTrigger className="sm:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle Rollen</SelectItem>{Object.entries(ROLE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></CardContent></Card>
-
       {loading && !overview ? <div className="mt-8 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" /> Übersicht wird geladen…</div> : overview ? <>
-        <Card className="mt-6"><CardHeader><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? In der Kalenderansicht siehst du Abwesenheiten und Vertretungen.</CardDescription></div><div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" variant="outline" onClick={() => { setCreateEmployeeId(overview.employees[0]?.id ?? ""); setCreateAbsenceOpen(true); }}><Plus /> Abwesenheit eintragen</Button><div className="flex rounded-md border p-0.5" role="group" aria-label="Mitarbeiterstatus-Ansicht"><Button type="button" size="sm" variant={statusView === "list" ? "secondary" : "ghost"} onClick={() => setStatusView("list")}><Users /> Liste</Button><Button type="button" size="sm" variant={statusView === "calendar" ? "secondary" : "ghost"} onClick={() => setStatusView("calendar")}><CalendarDays /> Kalender</Button></div></div></div></CardHeader><CardContent>{statusView === "calendar" ? <AbsenceCalendar employees={overview.employees} requests={overview.requests} onEditRequest={openEditRequest} /> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{overview.employees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${vacationRemainingOf(employee)} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div>}</CardContent></Card>
+        <Card className="mt-6"><CardHeader><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Mitarbeiterstatus</CardTitle><CardDescription>Wer ist aktuell eingestempelt? In der Kalenderansicht siehst du Abwesenheiten und Vertretungen.</CardDescription></div><div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" variant="outline" onClick={() => { setCreateEmployeeId(overview.employees[0]?.id ?? ""); setCreateAbsenceOpen(true); }}><Plus /> Abwesenheit eintragen</Button><div className="flex rounded-md border p-0.5" role="group" aria-label="Mitarbeiterstatus-Ansicht"><Button type="button" size="sm" variant={statusView === "list" ? "secondary" : "ghost"} onClick={() => setStatusView("list")}><Users /> Liste</Button><Button type="button" size="sm" variant={statusView === "calendar" ? "secondary" : "ghost"} onClick={() => setStatusView("calendar")}><CalendarDays /> Kalender</Button></div></div></div></CardHeader><CardContent>{statusView === "calendar" ? <AbsenceCalendar employees={overview.employees} requests={overview.requests} onEditRequest={openEditRequest} /> : <div className="space-y-3"><div className="relative max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={statusEmployeeQuery} onChange={(event) => setStatusEmployeeQuery(event.target.value)} placeholder="Mitarbeiter suchen…" aria-label="Mitarbeiter suchen" /></div>{statusEmployees.length === 0 ? <p className="rounded-md border p-6 text-sm text-muted-foreground">Keine Mitarbeiter gefunden.</p> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{statusEmployees.map((employee) => <button key={employee.id} type="button" onClick={() => openEmployee(employee)} className="group w-full rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{employee.name}</p><p className="text-xs text-muted-foreground">{ROLE_LABELS[employee.role] ?? employee.role}</p></div><div className="flex items-center gap-1.5">{employeeStatusBadge(employee.current_entry)}<ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div></div><p className="mt-4 text-sm text-muted-foreground">{employee.current_entry ? `Seit ${timeLabel(employee.current_entry.clock_in)} Uhr` : `Resturlaub ${vacationRemainingOf(employee)} Tage`}</p>{employee.current_assignment && <p className="mt-1 text-xs text-primary">Tour {employee.current_assignment.tour_id.slice(0, 8)} · nächstes Objekt: {employee.current_assignment.object_name ?? "unbekannt"}</p>}<p className="mt-1 text-xs text-muted-foreground">Überstunden: {hoursToLabel(overtimeOf(employee).total)} · {contractLabel(employee)}</p></button>)}</div>}</div>}</CardContent></Card>
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex flex-wrap items-center justify-between gap-3"><span>Monatsübersicht</span><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="h-9 w-44" aria-label="Monat wählen" /></CardTitle><CardDescription>Gesamtarbeitszeit aller Mitarbeiter im gewählten Monat (freigegebene, abgeschlossene Einträge). Zeile anklicken, um die Stempelzeiten unten auf diese Person zu filtern – orangefarbene Zeilen: Minijob-Limit fast erreicht, rote Zeilen: Minijob-Limit überschritten.</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Mitarbeiter</TableHead><TableHead>Rolle</TableHead><TableHead className="text-right">Tage</TableHead><TableHead className="text-right">Arbeitszeit</TableHead></TableRow></TableHeader><TableBody>{monthRows.map((row) => { const miniLimit = miniJobLimitMinutes(row.employee); const miniPercent = miniLimit && miniLimit > 0 ? Math.round((row.total / miniLimit) * 100) : null; const miniOver = miniPercent !== null && miniPercent >= 100; const miniNear = miniPercent !== null && !miniOver && miniPercent >= 85; const isSelected = selectedUserId === row.employee.id; const rowTitle = miniOver ? `Minijob-Limit überschritten! (${miniPercent} %)` : miniNear ? `Minijob-Limit fast erreicht: ${miniPercent} %` : isSelected ? "Filter aktiv – erneut klicken zum Aufheben" : undefined; return (<TableRow key={row.employee.id} title={rowTitle} onClick={() => setSelectedUserId((current) => (current === row.employee.id ? null : row.employee.id))} className={cn("cursor-pointer transition-colors", isSelected ? "bg-primary/10 hover:bg-primary/15" : miniOver ? "bg-destructive/5 hover:bg-destructive/10" : miniNear ? "bg-amber-500/5 hover:bg-amber-500/10" : "")}><TableCell className="font-medium">{row.employee.name}{isSelected && <span className="ml-2 inline-block h-2 w-2 rounded-full bg-primary align-middle" aria-hidden="true" />}</TableCell><TableCell className="text-muted-foreground">{ROLE_LABELS[row.employee.role] ?? row.employee.role}</TableCell><TableCell className="text-right">{row.days}</TableCell><TableCell className="text-right font-mono"><span className="inline-flex items-center justify-end gap-2">{minutesToLabel(row.total)}{miniPercent !== null && (miniNear || miniOver) && <Badge variant={miniOver ? "destructive" : "warning"}>{miniPercent} %</Badge>}</span></TableCell></TableRow>); })}</TableBody><TableFooter><TableRow><TableCell colSpan={3}>Gesamt ({monthRows.length} Mitarbeiter)</TableCell><TableCell className="text-right font-mono">{minutesToLabel(monthTotal)}</TableCell></TableRow></TableFooter></Table></CardContent></Card>
 

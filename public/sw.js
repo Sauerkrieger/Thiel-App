@@ -120,10 +120,10 @@ async function networkFirst(request) {
 
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
-    let data = { title: "Neue Chatnachricht", body: "Neue Nachricht", url: "/chat", tag: "chat-message" };
+    let data = { title: "Neue Chatnachricht", body: "Neue Nachricht", url: "/chat", tag: "chat-message", always: false };
     try { data = { ...data, ...(event.data ? event.data.json() : {}) }; } catch { /* Fallback verwenden */ }
     const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
-    if (windows.some((client) => client.visibilityState === "visible")) return;
+    if (windows.some((client) => client.visibilityState === "visible") && !data.always) return;
     // Tag aus dem Payload (z. B. "substitute" für Vertretungs-Pushes),
     // damit sich verschiedene Benachrichtigungsarten nicht gegenseitig
     // ersetzen.

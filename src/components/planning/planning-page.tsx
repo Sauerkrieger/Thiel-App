@@ -614,6 +614,12 @@ export function PlanningPage() {
             />
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <span
+              className="text-sm font-semibold tabular-nums"
+              aria-label={`${selected.size}/${objects.length} Objekte ausgewählt`}
+            >
+              {selected.size}/{objects.length}
+            </span>
             <Button
               variant="outline"
               onClick={() => setPhotoOpen(true)}
