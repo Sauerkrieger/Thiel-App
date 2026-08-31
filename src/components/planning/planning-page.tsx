@@ -632,13 +632,6 @@ export function PlanningPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setSelected(new Set(objects.map((o) => o.id)))}
-            >
-              Alle auswählen
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
               onClick={() => setSelected(new Set())}
             >
               Auswahl leeren

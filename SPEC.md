@@ -73,7 +73,7 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 - `status` (`pending` | `approved` | `rejected`), `reviewer_note`, `employee_note`
 - `substitute_request` (boolean), `substitute_kind` (`driver` | `facility_manager`), `substitute_object_id` (optionales FK auf `objects`)
 - Springer-Vorschläge werden mit `substitute_request = true` und `status = pending` gespeichert; Admin-Freigabe macht sie aktiv
-- LWW-Offline-Felder; Trigger verbucht genehmigte Urlaubstage auf das Konto (`vacation_days_used`)
+- LWW-Offline-Felder; Trigger verbuchen genehmigte Urlaubstage auf das Konto (`vacation_days_used`): `calculate_time_off_workdays(uuid, date, date)` zählt Montag–Freitag im angegebenen Zeitraum und skaliert die Zahl proportional zu `working_days_per_week` (Default 5); `recalculate_vacation_days_used(uuid)` summiert nur **genehmigte** (`approved`) Urlaubsanträge (`type = 'vacation'`) des **aktuellen Kalenderjahres**, gekappt auf `[Jahresanfang, Jahresende]`. Trigger `sync_vacation_days_used` läuft bei Insert/Update/Delete auf `time_off_requests`, ein weiterer bei Änderung von `working_days_per_week` auf `profiles`. Die früheren Kalendertage-basierten Trigger wurden entfernt
 
 ### `objects` – Ziele/Treppenhäuser
 - `id`, `name`, `address`, `category`
@@ -160,10 +160,10 @@ die Benutzerverwaltung angelegt (`/api/auth/users`, nur `admin`). Seed-Admin „
 Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
 - **Objekte** (`objects/analyze` + `objects`): abfotografierte Adresslisten → Vorschau mit Duplikat-Erkennung (normalisierte Adresse + Fuzzy-Match), ORS-Geocoding-Status je Eintrag, Fußgängerzonen-Check (OCR-Hinweis **oder** Overpass)
 - **Schlüssel** (`keys/analyze` + `keys`): erkannte Schlüsselnummern → Zuordnung zu bestehenden Objekten (Dropdown zeigt vorhandene Schlüsselnummern) oder **„Neues Objekt anlegen…"** (Name/Adresse eingeben, wird geocodiert + Fußgängerzone geprüft, Duplikat-Schutz über bestehende Adressen)
-- **Items** (`items/analyze` + `items`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert, **je Item per Checkbox als Standard-Item markierbar** (`is_always_required`)
+- **Items** (`items/analyze` + `items/import`): Packlisten pro Objekt → Zuordnung zu Objekten (per Adresse/Name) oder Verwerfen; Menge + Bemerkung strukturiert, **je Item per Checkbox als Standard-Item markierbar** (`is_always_required`). Die **Übernahme läuft asynchron im Hintergrund** (`maxDuration = 300`): `POST items/import` nimmt den Auftrag sofort mit `202` an, speichert Objekte + Items über die Next.js-`after()`-Hooks nach/parallel zur Antwort und meldet einen Fehler (z. B. angelegte Objekte, aber Fehler beim Items-Batch) per **Push-Benachrichtigung** (Tag `photo-import-failure`, `always`), sodass die App währenddessen frei bleibt und ein nächster Import parallel starten kann
 
 ### 5.3 Tourenplanung (`/planung`)
-- **Manuelle Auswahl:** Objekte werden pro Tour manuell ausgewählt (Wochentags-Vorauswahl/-Speichern wurde entfernt)
+- **Manuelle Auswahl:** Objekte werden pro Tour manuell ausgewählt (Wochentags-Vorauswahl/-Speichern wurde entfernt). Über der Liste zeigt ein Zähler `ausgewählt/gesamt` (z. B. „5/42“) den Fortschritt
 - **Foto-Auswahl** (`/api/planning/photo`): abfotografierte Routenliste → Häkchen automatisch setzen (Match per Adresse/Name, Unmatched werden aufgelistet)
 - **Startzeit** automatisch (aktuelle Uhrzeit + Vorbereitungszeit, auf 5 Min gerundet) – kein manuelles Auswahlfeld mehr
 
@@ -205,7 +205,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 - Thread-Ansicht ist auf mobilen Geräten als Master-Detail-Navigation umgesetzt: Liste oder Verlauf, mit Zurück-Navigation
 - Eigene Nachrichten sind rechts als blaue Bubbles mit maximal 75 % Breite, empfangene Nachrichten links neutral dargestellt; der aktive Kontakt ist in der Liste markiert
 - Offline-First: Nachrichten werden lokal in IndexedDB zwischengespeichert bzw. aus der Upload-Warteschlange synchronisiert; der Thread-Index und Batch-Schreibvorgänge reduzieren die Ladezeit
-- Push-Benachrichtigungen sind optional und werden nur nach Browser-Zustimmung eingerichtet
+- Push-Benachrichtigungen sind optional und werden nur nach Browser-Zustimmung eingerichtet. Das Push-Payload unterstützt ein optionales Flag `always` (Service Worker `sw.js`): Ist es gesetzt, wird die Benachrichtigung auch angezeigt, wenn ein Tab der App gerade sichtbar ist (Standard ist, dann zu unterdrücken). Wird u. a. für den Foto-Import-Fehler genutzt.
 
 ### 5.9 Einstellungen (`/einstellungen`)
 - Profil (Name), Passwort ändern (`/api/auth/me-password`), **Passkeys verwalten** (registrieren/löschen, eigene nur)
@@ -232,7 +232,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
   - **Freigabe-Feed:** geschlossene, noch nicht freigegebene Stempelungen („Nachgereichte Arbeitszeit“ / „Vergessene Ausstempelung“) und offene Anträge – einheitlich mit Icon + Status-Badge („Ausstehend“)
   - **Freigabe löst den Fall:** `is_approved = true` + `requires_review = false` → Eintrag zählt danach in Summen und Konto
   - **Änderungsprotokoll (Audit Log):** Jede Admin-Anpassung/-Freigabe/-Löschung einer Stempelung wird revisionssicher in `time_entry_audit_logs` protokolliert (alt→neu-Snapshot, Bearbeiter, Zeitstempel, Grund – bei Offline-Änderungen „Offline-Änderung (Sync)“). Auch **Nachreichungen durch den Mitarbeiter** werden protokolliert („Vergessene Ausstempelung nachgereicht“ / „Arbeitszeit nachgereicht“ – offline mit Zusatz „(Offline)“). Bearbeitete Einträge zeigen ein **Historiensymbol (🕘)** mit Tooltip *„{Begründung} von X am DD.MM.YYYY um HH:MM“* (z. B. *„Vergessene Ausstempelung nachgereicht von Max am 08.08.2026 um 14:32 Uhr“*); Klick öffnet einen Dialog mit allen Änderungen inkl. Feld-Diff (Start/Ende/Pause/Freigabe/Prüfbedarf/Notiz)
-  - Mitarbeiterstatus („Aktiv“ / „Prüfbedarf“), Monatsübersicht, Lohn-CSV-Export, Konto-Korrekturen (Urlaub/Überstunden), Rollen- und Suchfilter sowie aktive Tour/nächstes Objekt in der Statusübersicht
+  - Mitarbeiterstatus („Aktiv“ / „Prüfbedarf“), Monatsübersicht, Lohn-CSV-Export, Konto-Korrekturen (Urlaub/Überstunden) sowie aktive Tour/nächstes Objekt in der Statusübersicht. Der Umzug der Suche vom Server an den Client: Die Übersicht `GET /api/admin/time-tracking/overview` liefert alle Mitarbeiter, die Mitarbeiterstatus-Liste filtert per **Client-seitiger Suche** (`statusEmployeeQuery`); der Abwesenheitskalender bietet zusätzlich einen **Mitarbeiter-Suchfilter** (Suchfeld im Filter-Dropdown) neben den bestehenden Filtern für Abwesenheitstypen und Rollen
 
 ## 6. Offline-First und Synchronisation
 
@@ -255,7 +255,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 **Geocoding:** `POST /api/geocoding/autocomplete` · `POST /api/geocoding/verify`
 **Objekte (Admin; Facility lesend):** `GET/POST /api/objects` · `GET/PATCH/DELETE /api/objects/[id]` · `GET/POST /api/objects/[id]/items` · `PATCH/DELETE /api/objects/[id]/items/[itemId]` · `GET /api/objects/[id]/pack-info`
 **Inventar (Admin):** `GET/POST /api/inventory` · `PUT/DELETE /api/inventory/[id]`
-**Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]`
+**Import (Admin):** `POST /api/objects/import/objects[/analyze]` · `…/keys[/analyze]` · `…/items[/analyze]` · `POST /api/objects/import/items/import` (Items-Übernahme asynchron, `202`, Ergebnis/Fehler per Push)
 **Items:** `POST /api/items/ocr` · `POST /api/items/photo` (alle außer Reinigungskräfte)
 
 **Objektzuweisungen (Admin):** verwaltet über `PATCH /api/auth/users/[id]` bzw. `POST /api/auth/users` (`object_ids`, mind. 1 bei Reinigungskräften); Vertragsart über `contract_type` (GET/POST/PATCH) – zusätzlich `weekly_target_hours`, `working_days_per_week`, `vacation_days_per_year` (Auto-Fill-Defaults serverseitig, Validierung Sollstunden 0–168 h / Arbeitstage 1–7 / Urlaubstage 0–365)
