@@ -13,6 +13,11 @@ const ROLE_LABELS: Record<string, string> = {
   substitute: "Springer",
 };
 const DAY_LABELS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+// Alle Stempel-/Abwesenheitszeiten sind in lokaler Zeit (Europa/Berlin)
+// erfasst. Der Server läuft in UTC, daher muss das Export hier explizit
+// berücksichtigt werden – sonst verschieben sich alle Zeiten um +1/+2 h
+// und Datum/Wochentag an Monatsgrenzen.
+const TZ = "Europe/Berlin";
 const TYPE_LABELS: Record<string, string> = {
   vacation: "Urlaub",
   sick_leave: "Krankheit",
@@ -29,13 +34,13 @@ function dateLabel(value: string): string {
   return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
 }
 function dateTimeLabel(value: string): string {
-  return new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return new Date(value).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: TZ });
 }
 function isWeekday(date: Date): boolean {
   return date.getDay() !== 0 && date.getDay() !== 6;
 }
-function monthTargetHours(from: string, to: string, weeklyHours: number, workingDays: number): number {
-  if (!Number.isFinite(weeklyHours) || !Number.isFinite(workingDays) || workingDays <= 0) return 0;
+function monthTargetHours(from: string, to: string, weeklyHours: number): number {
+  if (!Number.isFinite(weeklyHours)) return 0;
   let weekdays = 0;
   const date = new Date(`${from}T00:00:00`);
   const end = new Date(`${to}T00:00:00`);
@@ -43,7 +48,9 @@ function monthTargetHours(from: string, to: string, weeklyHours: number, working
     if (isWeekday(date)) weekdays += 1;
     date.setDate(date.getDate() + 1);
   }
-  return weekdays * (weeklyHours / workingDays);
+  // Wochen-Soll proportional hochgerechnet auf die Werktage des Monats
+  // (Standard-5-Tage-Woche). Beispiel Minijob: 10 h/Woche → 10 × 22/5 ≈ 44 h.
+  return weekdays * (weeklyHours / 5);
 }
 function overlapWeekdayCount(startDate: string, endDate: string, from: string, to: string): number {
   const start = new Date(`${startDate < from ? from : startDate}T00:00:00`);
@@ -62,7 +69,13 @@ function approvalNameFor(entryId: string, logs: Array<{ time_entry_id: string | 
   return typeof name === "string" ? name : "";
 }
 function timeLabel(value: string): string {
-  return new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
+}
+/** Echte Wochentags-IDx (0=So … 6=Sa) eines ISO-Zeitstempels in Europa/Berlin. */
+function berlinWeekdayIndex(value: string | Date): number {
+  const weekday = new Date(value).toLocaleDateString("en-US", { weekday: "short", timeZone: TZ });
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[weekday] ?? new Date(value).getDay();
 }
 function numberLabel(value: number | null, digits = 2): string {
   return value == null ? "" : value.toFixed(digits).replace(".", ",");
@@ -113,29 +126,20 @@ export async function GET(request: Request) {
     const mode = url.searchParams.get("mode") ?? "details";
     const supabase = getSupabaseAdmin();
 
-    const [{ data: profiles, error: profilesError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: assignments, error: assignmentsError }, { data: tours, error: toursError }, { data: auditLogs, error: auditLogsError }] = await Promise.all([
+    const [{ data: profiles, error: profilesError }, { data: entries, error: entriesError }, { data: requests, error: requestsError }, { data: tours, error: toursError }, { data: auditLogs, error: auditLogsError }] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("time_entries").select("*").gte("clock_in", from).lte("clock_in", to).order("clock_in"),
       supabase.from("time_off_requests").select("*").lte("start_date", bounds.to).gte("end_date", bounds.from),
-      supabase.from("object_assignments").select("user_id, object_id, objects:object_id(name)"),
       supabase.from("active_tours").select("id, driver_id, date, tour_stops(object_id, stop_order, objects:object_id(id, name))"),
       supabase.from("time_entry_audit_logs").select("time_entry_id, changed_by_user_id, new_values, changed_at").order("changed_at", { ascending: false }),
     ]);
     if (profilesError) throw profilesError;
     if (entriesError) throw entriesError;
     if (requestsError) throw requestsError;
-    if (assignmentsError) throw assignmentsError;
     if (toursError) throw toursError;
     if (auditLogsError) throw auditLogsError;
 
     const profileById = new Map<string, Record<string, unknown>>((profiles ?? []).map((profile) => [profile.id, profile as Record<string, unknown>]));
-    const objectsByUser = new Map<string, string[]>();
-    for (const assignment of (assignments ?? []) as Array<{ user_id: string; objects?: { name?: string } | null }>) {
-      if (!assignment.objects?.name) continue;
-      const names = objectsByUser.get(assignment.user_id) ?? [];
-      names.push(assignment.objects.name);
-      objectsByUser.set(assignment.user_id, names);
-    }
     const tourObjectsByDriverDate = new Map<string, string[]>();
     for (const tour of (tours ?? []) as unknown as Array<{ driver_id: string | null; date: string; tour_stops?: Array<{ stop_order: number; objects?: { name?: string } | null }> }>) {
       if (!tour.driver_id) continue;
@@ -152,19 +156,27 @@ export async function GET(request: Request) {
     }
 
     if (mode === "summary") {
-      const summaryRows = [["Personalnummer", "Nachname", "Vorname", "Rolle", "Soll_Stunden", "Ist_Stunden", "Krankheit_Stunden", "Urlaub_Stunden", "Ueberstunden_Stunden", "Status"]];
+      const summaryRows = [["Personalnummer", "Nachname", "Vorname", "Rolle", "Soll_Stunden", "Ist_Stunden", "Krankheit_Stunden", "Urlaub_Stunden", "Ueberstunden_Stunden", "Minijob_Limit_Stunden", "Minijob_Auslastung_Prozent", "Status"]];
       for (const profile of profiles ?? []) {
         const name = profileName(profile as Record<string, unknown>, profile.id);
         const employeeEntries = (entries ?? []).filter((entry) => entry.user_id === profile.id);
         const regular = employeeEntries.reduce((sum, entry) => sum + (entry.is_approved ? workingHours(entry) ?? 0 : 0), 0);
         const absences = requestsByUser.get(profile.id) ?? [];
         const weeklyHours = Number(profile.weekly_target_hours ?? 40);
-        const workingDays = Number(profile.working_days_per_week ?? 5);
-        const dailySoll = workingDays > 0 ? weeklyHours / workingDays : 0;
-        const targetHours = monthTargetHours(bounds.from, bounds.to, weeklyHours, workingDays);
-        const absenceHours = (type: string) => absences.filter((item) => item.type === type && item.status === "approved").reduce((sum, item) => sum + overlapWeekdayCount(String(item.start_date), String(item.end_date), bounds.from, bounds.to) * dailySoll, 0);
+        // Soll- und Abwesenheitsstunden proportional zur Wochenarbeitszeit
+        // (Standard-5-Tage-Woche) statt "alle Werktage × Tages-Soll" – so
+        // werden Minijobber/Teilzeit nicht überhöht (z. B. Minijob 10 h/Woche).
+        const targetHours = monthTargetHours(bounds.from, bounds.to, weeklyHours);
+        const absenceHours = (type: string) => absences.filter((item) => item.type === type && item.status === "approved").reduce((sum, item) => sum + overlapWeekdayCount(String(item.start_date), String(item.end_date), bounds.from, bounds.to) * (weeklyHours / 5), 0);
         const hasOpen = employeeEntries.some((entry) => !entry.clock_out || !entry.is_approved) || absences.some((item) => item.status === "pending");
-        summaryRows.push([personnelNumber(profile as Record<string, unknown>, profile.id), name.last, name.first, roleLabel(profile.role), numberLabel(targetHours), numberLabel(regular), numberLabel(absenceHours("sick_leave")), numberLabel(absenceHours("vacation")), numberLabel(regular - targetHours), hasOpen ? "Offene Einträge" : "Vollständig freigegeben"]);
+        const isMiniJob = profile.contract_type === "mini_job";
+        // Minijob-Grenze ist gesetzlich (2026: 556 €), nicht eine fixe
+        // Stundenzahl. Zur groben Einordnung wird die Wochen-Sollzeit auf den
+        // Monat hochgerechnet (wie in der Monatsübersicht der App: × 4,33) bzw.
+        // exakt 4,33 Wochen – die Auslastung zeigt, wie nahe das Soll daran liegt.
+        const miniJobLimit = isMiniJob ? weeklyHours * (52 / 12) : 0;
+        const miniJobPercent = isMiniJob && miniJobLimit > 0 ? Math.round((regular / miniJobLimit) * 100) : null;
+        summaryRows.push([personnelNumber(profile as Record<string, unknown>, profile.id), name.last, name.first, roleLabel(profile.role), numberLabel(targetHours), numberLabel(regular), numberLabel(absenceHours("sick_leave")), numberLabel(absenceHours("vacation")), numberLabel(regular - targetHours), isMiniJob ? numberLabel(miniJobLimit) : "", miniJobPercent == null ? "" : String(miniJobPercent), hasOpen ? "Offene Einträge" : "Vollständig freigegeben"]);
       }
       const csv = "\uFEFF" + summaryRows.map((row) => row.map(cell).join(";")).join("\r\n") + "\r\n";
       return new NextResponse(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="Lohnexport_Thiel_Monatsuebersicht_${bounds.label}.csv"`, "Cache-Control": "no-store" } });
@@ -176,9 +188,12 @@ export async function GET(request: Request) {
       const name = profileName(profile, entry.user_id);
       const hours = workingHours(entry);
       const absence = (requestsByUser.get(entry.user_id) ?? []).find((item) => item.status === "approved" && String(item.start_date) <= entry.clock_in.slice(0, 10) && String(item.end_date) >= entry.clock_in.slice(0, 10));
-      const date = new Date(entry.clock_in);
-      const locationNames = tourObjectsByDriverDate.get(`${entry.user_id}:${entry.clock_in.slice(0, 10)}`) ?? objectsByUser.get(entry.user_id) ?? [];
-      detailRows.push([dateTimeLabel(entry.clock_in), DAY_LABELS[date.getDay()], personnelNumber(profile, entry.user_id), name.last, name.first, profile ? roleLabel(profile.role) : "", locationNames.join(", "), absence ? TYPE_LABELS[String(absence.type)] : "Arbeit", timeLabel(entry.clock_in), entry.clock_out ? timeLabel(entry.clock_out) : "", String(entry.break_duration_minutes ?? 0), hours == null ? "" : numberLabel(hours), statusLabel(Boolean(entry.is_approved), Boolean(entry.clock_out)), approvalNameFor(entry.id, exportAuditLogs, profileById), entry.note ?? ""]);
+      // Einsatzort nur aus der tatsächlichen Tour des Tages übernehmen.
+      // Zugewiesene Objekte (Reinigungskräfte) sind kein tatsächlicher
+      // Einsatzort und würden als anderes als das gearbeitete Objekt
+      // in die Lohnbuchhaltung wandern.
+      const locationNames = tourObjectsByDriverDate.get(`${entry.user_id}:${entry.clock_in.slice(0, 10)}`) ?? [];
+      detailRows.push([dateTimeLabel(entry.clock_in), DAY_LABELS[berlinWeekdayIndex(entry.clock_in)], personnelNumber(profile, entry.user_id), name.last, name.first, profile ? roleLabel(profile.role) : "", locationNames.join(", "), absence ? TYPE_LABELS[String(absence.type)] : "Arbeit", timeLabel(entry.clock_in), entry.clock_out ? timeLabel(entry.clock_out) : "", String(entry.break_duration_minutes ?? 0), hours == null ? "" : numberLabel(hours), statusLabel(Boolean(entry.is_approved), Boolean(entry.clock_out)), approvalNameFor(entry.id, exportAuditLogs, profileById), entry.note ?? ""]);
     }
     for (const requestRow of requests ?? []) {
       // Auch abgelehnte Abwesenheiten werden exportiert, damit der Status
