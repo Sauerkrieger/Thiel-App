@@ -21,12 +21,20 @@ export async function GET() {
       : (["admin", "driver", "facility_manager", "substitute"] as UserRole[]);
 
     let contacts: Array<{ id: string; name: string; role: UserRole; phone?: string | null }> = [];
-    const contactsWithPhone = await admin
-      .from("profiles")
-      .select("id, name, role, phone")
-      .in("role", contactRoles)
-      .neq("id", auth.user.id)
-      .order("name");
+    // Unabhängige Abfragen parallel ausführen (Kontakte, Threads, Sprache),
+    // statt sie sequenziell zu warten – verkürzt die Antwortzeit spürbar.
+    const [contactsWithPhone, threadsResult, ownWithLanguage] = await Promise.all([
+      admin
+        .from("profiles")
+        .select("id, name, role, phone")
+        .in("role", contactRoles)
+        .neq("id", auth.user.id)
+        .order("name"),
+      // Chat-Tabellen können auf einer noch nicht migrierten Umgebung fehlen.
+      // Die Kontaktliste darf dadurch niemals ausfallen.
+      admin.from("chat_threads").select("id, employee_id, admin_id, created_at").or(`employee_id.eq.${auth.user.id},admin_id.eq.${auth.user.id}`),
+      admin.from("profiles").select("chat_preferred_language").eq("id", auth.user.id).maybeSingle(),
+    ]);
     if (contactsWithPhone.error) {
       const contactsWithoutPhone = await admin
         .from("profiles")
@@ -39,13 +47,7 @@ export async function GET() {
     } else {
       contacts = (contactsWithPhone.data ?? []) as typeof contacts;
     }
-
-    // Chat-Tabellen können auf einer noch nicht migrierten Umgebung fehlen.
-    // Die Kontaktliste darf dadurch niemals ausfallen.
-    const threadsResult = await admin.from("chat_threads").select("id, employee_id, admin_id, created_at").or(`employee_id.eq.${auth.user.id},admin_id.eq.${auth.user.id}`);
     const threads = threadsResult.error ? [] : (threadsResult.data ?? []);
-
-    const ownWithLanguage = await admin.from("profiles").select("chat_preferred_language").eq("id", auth.user.id).maybeSingle();
     const preferredLanguage = ownWithLanguage.error ? null : ownWithLanguage.data?.chat_preferred_language ?? null;
 
     const threadIds = (threads ?? []).map((thread) => thread.id);
@@ -65,7 +67,9 @@ export async function GET() {
       unreadByThread.set(message.thread_id, (unreadByThread.get(message.thread_id) ?? 0) + 1);
     }
     const incoming = (unreadMessages ?? []).filter((message) => message.status === "sent").map((message) => message.id);
-    if (incoming.length) await admin.from("chat_messages").update({ status: "delivered", delivered_at: new Date().toISOString() }).in("id", incoming);
+    // Delivered-Markierung blockiert die Antwort nicht (idempotent; der
+    // nächste Aufruf würde sie ohnehin erneut setzen).
+    if (incoming.length) void (async () => { try { await admin.from("chat_messages").update({ status: "delivered", delivered_at: new Date().toISOString() }).in("id", incoming); } catch { /* idempotent, nächster Aufruf setzt es erneut */ } })();
     return NextResponse.json({ contacts: contacts ?? [], preferredLanguage, unreadCount: [...unreadByThread.values()].reduce((sum, count) => sum + count, 0), threads: (threads ?? []).map((thread) => ({ ...thread, contact: profileById.get(thread.employee_id === auth.user.id ? thread.admin_id : thread.employee_id) ?? null, unreadCount: unreadByThread.get(thread.id) ?? 0 })) });
   } catch (error) { return apiErrorResponse(error); }
 }
