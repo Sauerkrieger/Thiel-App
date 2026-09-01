@@ -442,12 +442,12 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
 
   return (
     <div className="container py-6 md:min-h-0 md:py-6 sm:max-md:h-[calc(100dvh-7.5rem)] sm:max-md:overflow-hidden">
-      <div className="mb-6 sm:max-md:mb-3">
+      <div className={`mb-6 sm:max-md:mb-3 ${selectedThread ? "sm:max-md:hidden" : ""}`}>
         <p className="text-sm font-medium text-primary">Kommunikation</p>
         <h1 className="text-3xl font-bold">Chat</h1>
         <p className="text-sm text-muted-foreground">Sicherer Austausch zwischen Mitarbeitern und Verwaltung.</p>
       </div>
-      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0">
+      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0 sm:max-md:pb-24">
         <Card className={selectedThread ? "hidden md:block" : "block"}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
@@ -526,7 +526,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div className="shrink-0 space-y-2 border-t pt-4">
+            <div className="shrink-0 space-y-2 border-t pt-4 sm:max-md:fixed sm:max-md:inset-x-0 sm:max-md:bottom-14 sm:max-md:z-30 sm:max-md:bg-background/95 sm:max-md:px-4 sm:max-md:pb-2 sm:max-md:pt-2 sm:max-md:backdrop-blur">
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
