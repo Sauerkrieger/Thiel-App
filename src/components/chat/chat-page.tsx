@@ -114,6 +114,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [composerHeight, setComposerHeight] = useState(0);
+  const [messagesPadding, setMessagesPadding] = useState(0);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const [translation, setTranslation] = useState<Record<string, string>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -186,6 +187,41 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     observer.observe(composer);
     return () => observer.disconnect();
   }, [selectedThread]);
+
+  // Abstand der letzten Nachricht zum Composer live messen: Die letzte
+  // Nachricht soll immer knapp über dem Eingabefeld stehen – auch wenn die
+  // Tastatur den Composer nach oben schiebt (Android) oder den Viewport
+  // verkleinert (iOS). Ein fester Wert (composerHeight + 24) war zu groß und
+  // folgte der Tastatur nicht.
+  useEffect(() => {
+    const updatePadding = () => {
+      const container = messagesContainerRef.current;
+      const composer = composerRef.current;
+      if (!container || !composer) return;
+      const overlap = container.getBoundingClientRect().bottom - composer.getBoundingClientRect().top;
+      setMessagesPadding((current) => {
+        const next = Math.max(0, overlap) + 12;
+        return Math.abs(next - current) > 1 ? next : current;
+      });
+    };
+    updatePadding();
+    const container = messagesContainerRef.current;
+    const wasNearBottom = container ? container.scrollHeight - container.scrollTop - container.clientHeight < 120 : true;
+    const frame = wasNearBottom ? window.requestAnimationFrame(() => scrollMessagesToBottom("auto")) : 0;
+    if (typeof ResizeObserver === "undefined") {
+      return () => { if (frame) window.cancelAnimationFrame(frame); };
+    }
+    const observer = new ResizeObserver(updatePadding);
+    if (composerRef.current) observer.observe(composerRef.current);
+    if (container) observer.observe(container);
+    const onResize = () => updatePadding();
+    window.addEventListener("resize", onResize);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, [keyboardHeight, keyboardOpen, selectedThread, scrollMessagesToBottom]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -582,7 +618,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 max-md:p-3">
-            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain max-md:pb-6" style={{ paddingBottom: composerHeight ? `${composerHeight + 24}px` : undefined }}>
+            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: messagesPadding ? `${messagesPadding}px` : undefined }}>
               <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
