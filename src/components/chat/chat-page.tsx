@@ -65,7 +65,7 @@ function formatMessageTime(createdAt: string) {
   }).format(new Date(createdAt));
 }
 
-function AudioPlayer({ src }: { src: string }) {
+function AudioPlayer({ src, own }: { src: string; own: boolean }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
 
@@ -79,10 +79,10 @@ function AudioPlayer({ src }: { src: string }) {
   return (
     <div className="flex items-center gap-2">
       <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} className="hidden" />
-      <Button type="button" size="sm" variant="outline" onClick={() => void toggle()}>
+      <Button type="button" size="sm" variant={own ? "secondary" : "outline"} className={own ? "bg-white text-blue-700 hover:bg-blue-50" : "bg-background text-foreground"} onClick={() => void toggle()}>
         <Play className="h-3.5 w-3.5" /> {playing ? "Pause" : "Abspielen"}
       </Button>
-      <span className="text-xs text-muted-foreground">Sprachnachricht</span>
+
     </div>
   );
 }
@@ -268,7 +268,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setAttachment(file);
     setAttachmentPreview((current) => {
       if (current) URL.revokeObjectURL(current);
-      return file ? URL.createObjectURL(file) : null;
+      return file?.type.startsWith("image/") ? URL.createObjectURL(file) : null;
     });
   }
 
@@ -417,10 +417,10 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setRecordingFile(null);
     setUrgent(false);
     setBroadcastConfirmOpen(false);
-    requestAnimationFrame(() => {
-      scrollMessagesToBottom();
-      if (window.matchMedia("(max-width: 767px)").matches) inputRef.current?.focus({ preventScroll: true });
-    });
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
+    }
+    requestAnimationFrame(() => scrollMessagesToBottom());
     void loadSummary().catch(() => {});
   }
 
@@ -556,7 +556,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                     {message.is_urgent && <p className={`mb-1 flex items-center gap-1 text-xs font-semibold ${isOwnMessage ? "text-blue-100" : "text-destructive"}`}><AlertTriangle className="h-3.5 w-3.5" /> Eilmeldung</p>}
                     {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
                     {message.kind === "image" && message.media_path && (message.media_url ? <img src={message.media_url} alt="Chat-Anhang" className="max-h-64 max-w-full rounded-md object-contain" /> : <p className="flex items-center gap-2 text-sm"><ImagePlus className="h-4 w-4" /> Bild wird geladen…</p>)}
-                  {message.kind === "audio" && <div className="space-y-1"><p className="flex items-center gap-2 text-sm"><Volume2 className="h-4 w-4" /> Sprachnachricht</p>{message.media_url && <AudioPlayer src={message.media_url} />}{message.transcript && <p className="text-sm text-muted-foreground">Transkript: {message.transcript}</p>}</div>}
+                  {message.kind === "audio" && <div className="space-y-1"><p className="flex items-center gap-2 text-sm"><Volume2 className="h-4 w-4" /> Sprachnachricht</p>{message.media_url && <AudioPlayer src={message.media_url} own={isOwnMessage} />}{message.transcript && <p className="text-sm text-muted-foreground">Transkript: {message.transcript}</p>}</div>}
                     {translation[message.id] && <p className={`mt-2 border-t pt-2 text-sm italic ${isOwnMessage ? "border-white/30" : "border-border"}`}>{translation[message.id]}</p>}
                     <div className={`mt-2 flex items-center justify-end gap-1 text-xs ${isOwnMessage ? "text-blue-100" : "text-muted-foreground"}`}>
                       {message.pending && <span title="Ausstehend">◷</span>}
@@ -572,14 +572,14 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: `calc(3.5rem + ${keyboardHeight}px)` }}>
+            <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: `calc(3.5rem + ${keyboardHeight}px)`, transition: "none" }}>
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="cursor-pointer" title="Bild aus Datei anhängen"><Paperclip className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
-                <label className="cursor-pointer" title="Foto aufnehmen"><Camera className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" capture="environment" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
+                <label className="flex cursor-pointer items-center gap-1" title="Bild aus Datei anhängen"><Paperclip className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
+                <label className="flex cursor-pointer items-center gap-1" title="Foto aufnehmen"><Camera className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" capture="environment" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
                 <Button size="sm" variant={recording ? "destructive" : "outline"} onClick={() => recording ? stopRecording() : void startRecording()}>{recording ? <Square /> : <Mic />} {recording ? "Stop" : "Audio"}</Button>
                 {attachmentPreview && <img src={attachmentPreview} alt="Ausgewählter Chat-Anhang" className="h-12 w-12 rounded border object-cover" />}
                 {attachment && !attachmentPreview && <span className="text-xs text-muted-foreground">{attachment.name}</span>}
