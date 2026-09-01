@@ -141,7 +141,11 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       const response = await fetch(`/api/chat/messages?thread_id=${encodeURIComponent(threadId)}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Chat offline");
       const data = await response.json();
-      setMessages(data.messages ?? []);
+      setMessages((current) => {
+        const pending = current.filter((message) => message.pending && message.thread_id === threadId);
+        const serverMessages = data.messages ?? [];
+        return [...serverMessages, ...pending.filter((message) => !serverMessages.some((serverMessage: Message) => serverMessage.body === message.body && serverMessage.sender_id === message.sender_id && Math.abs(new Date(serverMessage.created_at).getTime() - new Date(message.created_at).getTime()) < 30_000))];
+      });
       setShowScrollToBottom(false);
       await cacheChatMessages(data.messages ?? []);
       setOfflineNotice(false);
@@ -168,7 +172,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     if (!container) return;
     const frame = window.requestAnimationFrame(() => {
       const wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
-      if (wasNearBottom) scrollMessagesToBottom();
+      if (wasNearBottom) scrollMessagesToBottom("auto");
       updateScrollToBottomVisibility();
     });
     return () => window.cancelAnimationFrame(frame);
@@ -371,7 +375,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       scrollMessagesToBottom();
       if (window.matchMedia("(max-width: 767px)").matches) inputRef.current?.focus({ preventScroll: true });
     });
-    void loadSummary().then(() => selectedThreadIdRef.current ? loadMessages(selectedThreadIdRef.current, false) : undefined).catch(() => {});
+    void loadSummary().catch(() => {});
   }
 
   function send() {
@@ -443,7 +447,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
         <h1 className="text-3xl font-bold">Chat</h1>
         <p className="text-sm text-muted-foreground">Sicherer Austausch zwischen Mitarbeitern und Verwaltung.</p>
       </div>
-      <div className="grid gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0">
+      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0">
         <Card className={selectedThread ? "hidden md:block" : "block"}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
@@ -486,8 +490,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
           </CardContent>
         </Card>
 
-        <Card className={`flex min-h-0 flex-col overflow-hidden md:h-[calc(100dvh-10rem)] md:min-h-[600px] sm:max-md:min-h-0 ${selectedThread ? "block" : "hidden md:flex"}`}>
-          <CardHeader>
+        <Card className={`flex h-[calc(100dvh-11rem)] min-h-0 flex-col overflow-hidden md:h-[calc(100dvh-10rem)] md:min-h-[600px] ${selectedThread ? "flex" : "hidden md:flex"}`}>
+          <CardHeader className="shrink-0">
             <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
             {pushPrompt && <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><span>Benachrichtigungen aktivieren?</span><Button size="sm" onClick={() => void enablePush()}>Aktivieren</Button></div>}{offlineNotice && <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">Offline – Nachricht wird gesendet, sobald Verbindung steht.{pendingCount > 0 ? ` (${pendingCount} ausstehend)` : ""}</div>}
             <CardTitle className="flex items-center justify-between gap-2"><span>{selectedThread?.contact?.name ?? "Chat auswählen"}</span>{selectedThread && <a href={`tel:${isAdmin ? selectedThread.contact?.phone ?? "" : supportPhone ?? ""}`} aria-label="Direkt anrufen" title={(isAdmin ? selectedThread.contact?.phone : supportPhone) ? "Direkt anrufen" : "Keine Telefonnummer hinterlegt"} className={`rounded-md p-2 ${(isAdmin ? selectedThread.contact?.phone : supportPhone) ? "text-primary hover:bg-accent" : "pointer-events-none text-muted-foreground"}`}><Phone className="h-4 w-4" /></a>}</CardTitle>
@@ -496,8 +500,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               <Button size="sm" variant="ghost" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden sm:max-md:min-h-0">
-            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:max-md:p-3">
+            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
@@ -522,9 +526,9 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div className="mt-4 space-y-2 border-t pt-4">
+            <div className="shrink-0 space-y-2 border-t pt-4">
               <div className="flex gap-2">
-                <Input ref={inputRef} value={body} onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
+                <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
