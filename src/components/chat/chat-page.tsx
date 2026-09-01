@@ -441,13 +441,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const allVisibleSelected = filteredContacts.length > 0 && filteredContacts.every((contact) => selectedContactIds.includes(contact.id));
 
   return (
-    <div className="container py-6 md:min-h-0 md:py-6 sm:max-md:h-[calc(100dvh-7.5rem)] sm:max-md:overflow-hidden">
-      <div className={`mb-6 sm:max-md:mb-3 ${selectedThread ? "sm:max-md:hidden" : ""}`}>
+    <div className="container py-6 md:min-h-0 md:py-6 max-md:h-[calc(100dvh-7.5rem)] max-md:overflow-hidden">
+      <div className={`mb-6 max-md:mb-3 ${selectedThread ? "max-md:hidden" : ""}`}>
         <p className="text-sm font-medium text-primary">Kommunikation</p>
         <h1 className="text-3xl font-bold">Chat</h1>
         <p className="text-sm text-muted-foreground">Sicherer Austausch zwischen Mitarbeitern und Verwaltung.</p>
       </div>
-      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0 sm:max-md:pb-24">
+      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] max-md:h-[calc(100%-5rem)] max-md:min-h-0 max-md:pb-24">
         <Card className={selectedThread ? "hidden md:block" : "block"}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
@@ -500,13 +500,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               <Button size="sm" variant="ghost" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:max-md:p-3">
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 max-md:p-3">
             <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
                 return (
-                  <div key={message.id} className={`w-fit max-w-[75%] min-w-0 break-words rounded-lg border p-3 sm:max-md:max-w-[90%] ${isOwnMessage ? "ml-auto border-blue-600 bg-blue-600 text-white" : "border-border bg-gray-100 text-foreground"} ${message.is_urgent ? "ring-2 ring-destructive/50" : ""}`}>
+                  <div key={message.id} className={`w-fit max-w-[75%] min-w-0 break-words rounded-lg border p-3 max-md:max-w-[90%] ${isOwnMessage ? "ml-auto border-blue-600 bg-blue-600 text-white" : "border-border bg-gray-100 text-foreground"} ${message.is_urgent ? "ring-2 ring-destructive/50" : ""}`}>
                     {message.is_urgent && <p className={`mb-1 flex items-center gap-1 text-xs font-semibold ${isOwnMessage ? "text-blue-100" : "text-destructive"}`}><AlertTriangle className="h-3.5 w-3.5" /> Eilmeldung</p>}
                     {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
                     {message.kind === "image" && message.media_path && (message.media_url ? <img src={message.media_url} alt="Chat-Anhang" className="max-h-64 max-w-full rounded-md object-contain" /> : <p className="flex items-center gap-2 text-sm"><ImagePlus className="h-4 w-4" /> Bild wird geladen…</p>)}
@@ -526,7 +526,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div className="shrink-0 space-y-2 border-t pt-4 sm:max-md:fixed sm:max-md:inset-x-0 sm:max-md:bottom-14 sm:max-md:z-30 sm:max-md:bg-background/95 sm:max-md:px-4 sm:max-md:pb-2 sm:max-md:pt-2 sm:max-md:backdrop-blur">
+            <div className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:bottom-14 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur">
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
