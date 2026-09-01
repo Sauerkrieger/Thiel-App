@@ -39,6 +39,17 @@ type Thread = {
   lastMessage?: Message | null;
 };
 
+const CHAT_LANGUAGES = [
+  { value: "English", label: "English" },
+  { value: "Deutsch", label: "Deutsch" },
+  { value: "Türkçe", label: "Türkçe" },
+  { value: "Polski", label: "Polski" },
+  { value: "العربية", label: "العربية" },
+  { value: "Русский", label: "Русский" },
+  { value: "Français", label: "Français" },
+  { value: "Español", label: "Español" },
+];
+
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
   driver: "Fahrer",
@@ -98,6 +109,10 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const [supportPhone, setSupportPhone] = useState<string | null>(null);
   const [languageDialog, setLanguageDialog] = useState(false);
   const [languageInput, setLanguageInput] = useState("English");
+  const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
+  const composerRef = useRef<HTMLDivElement | null>(null);
   const [translation, setTranslation] = useState<Record<string, string>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -159,6 +174,29 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       } catch { /* kein lokaler Verlauf vorhanden */ }
     }
   }
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer || typeof ResizeObserver === "undefined") return;
+    const updateHeight = () => setComposerHeight(composer.getBoundingClientRect().height);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [selectedThread]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const updateKeyboardHeight = () => setKeyboardHeight(Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop));
+    updateKeyboardHeight();
+    viewport.addEventListener("resize", updateKeyboardHeight);
+    viewport.addEventListener("scroll", updateKeyboardHeight);
+    return () => {
+      viewport.removeEventListener("resize", updateKeyboardHeight);
+      viewport.removeEventListener("scroll", updateKeyboardHeight);
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedThread) return;
@@ -224,6 +262,14 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setSelectedThread(thread);
     setBroadcast(false);
     void loadMessages(thread.id);
+  }
+
+  function handleAttachmentChange(file: File | null) {
+    setAttachment(file);
+    setAttachmentPreview((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return file ? URL.createObjectURL(file) : null;
+    });
   }
 
   function goBackToContacts() {
@@ -367,7 +413,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       }
     }
     setBody("");
-    setAttachment(null);
+    handleAttachmentChange(null);
     setRecordingFile(null);
     setUrgent(false);
     setBroadcastConfirmOpen(false);
@@ -501,7 +547,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 max-md:p-3">
-            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain max-md:pb-10">
+            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain max-md:pb-6" style={{ paddingBottom: composerHeight ? `${composerHeight + 24}px` : undefined }}>
               <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
@@ -526,16 +572,17 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:bottom-14 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur">
+            <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: `calc(3.5rem + ${keyboardHeight}px)` }}>
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="cursor-pointer" title="Bild aus Datei anhängen"><Paperclip className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" onChange={(event) => setAttachment(event.target.files?.[0] ?? null)} /></label>
-                <label className="cursor-pointer" title="Foto aufnehmen"><Camera className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" capture="environment" onChange={(event) => setAttachment(event.target.files?.[0] ?? null)} /></label>
+                <label className="cursor-pointer" title="Bild aus Datei anhängen"><Paperclip className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
+                <label className="cursor-pointer" title="Foto aufnehmen"><Camera className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" capture="environment" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
                 <Button size="sm" variant={recording ? "destructive" : "outline"} onClick={() => recording ? stopRecording() : void startRecording()}>{recording ? <Square /> : <Mic />} {recording ? "Stop" : "Audio"}</Button>
-                {attachment && <span className="text-xs text-muted-foreground">{attachment.name}</span>}
+                {attachmentPreview && <img src={attachmentPreview} alt="Ausgewählter Chat-Anhang" className="h-12 w-12 rounded border object-cover" />}
+                {attachment && !attachmentPreview && <span className="text-xs text-muted-foreground">{attachment.name}</span>}
                 {recordingFile && <span className="text-xs text-muted-foreground">Audio bereit</span>}
                 {isAdmin && <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={urgent} onChange={(event) => setUrgent(event.target.checked)} /> Wichtig / Eilmeldung</label>}
               </div>
@@ -554,7 +601,10 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
         <DialogContent>
           <DialogHeader><DialogTitle>Bevorzugte Sprache</DialogTitle><DialogDescription>Wähle oder ändere die Sprache für Nachrichtenübersetzungen.</DialogDescription></DialogHeader>
           <Label htmlFor="chat-language">Sprache</Label>
-          <Input id="chat-language" value={languageInput} onChange={(event) => setLanguageInput(event.target.value)} placeholder="z. B. English, Türkçe, Polski" />
+          <Select value={languageInput} onValueChange={setLanguageInput}>
+            <SelectTrigger id="chat-language"><SelectValue placeholder="Sprache auswählen" /></SelectTrigger>
+            <SelectContent>{CHAT_LANGUAGES.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+          </Select>
           <DialogFooter><Button variant="outline" onClick={() => setLanguageDialog(false)}>Abbrechen</Button><Button onClick={() => void saveLanguage()}>Speichern</Button></DialogFooter>
         </DialogContent>
       </Dialog>
