@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRealtimeRefresh } from "@/lib/realtime";
+import { normalizeImageForAnalysis } from "@/lib/image-upload";
 import { cacheChatMessages, pendingChatMessages, queueChatMessage, readCachedChatMessages, syncChatMessages } from "@/lib/offline/chat";
 
 type Contact = { id: string; name: string; role: string; phone?: string | null };
@@ -79,7 +80,7 @@ function AudioPlayer({ src, own }: { src: string; own: boolean }) {
   return (
     <div className="flex items-center gap-2">
       <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} className="hidden" />
-      <Button type="button" size="sm" variant={own ? "secondary" : "outline"} className={own ? "bg-white text-blue-700 hover:bg-blue-50" : "bg-background text-foreground"} onClick={() => void toggle()}>
+      <Button type="button" size="sm" variant={own ? "secondary" : "outline"} className={own ? "bg-white text-foreground hover:bg-blue-50" : "bg-background text-foreground"} onClick={() => void toggle()}>
         <Play className="h-3.5 w-3.5" /> {playing ? "Pause" : "Abspielen"}
       </Button>
 
@@ -111,6 +112,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const [languageInput, setLanguageInput] = useState("English");
   const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [composerHeight, setComposerHeight] = useState(0);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const [translation, setTranslation] = useState<Record<string, string>>({});
@@ -188,13 +190,36 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const viewport = window.visualViewport;
-    const updateKeyboardHeight = () => setKeyboardHeight(Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop));
-    updateKeyboardHeight();
-    viewport.addEventListener("resize", updateKeyboardHeight);
-    viewport.addEventListener("scroll", updateKeyboardHeight);
+    // innerHeight bei geschlossener Tastatur – iOS/Android verkleinern den
+    // Layout-Viewport, wenn die Tastatur erscheint (dann ist die Differenz
+    // zum Visual Viewport 0 und nur der Höhenverlust verrät die Tastatur).
+    let baseline = window.innerHeight;
+    const measure = () => {
+      const offset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      setKeyboardHeight(offset);
+      setKeyboardOpen(offset > 20 || window.innerHeight < baseline - 140);
+    };
+    const onWindowResize = () => {
+      const offset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      const keyboardVisible = offset > 20 || window.innerHeight < baseline - 140;
+      if (!keyboardVisible) baseline = window.innerHeight;
+      measure();
+    };
+    const onOrientationChange = () => {
+      baseline = window.innerHeight;
+      setKeyboardHeight(0);
+      setKeyboardOpen(false);
+    };
+    measure();
+    viewport.addEventListener("resize", measure);
+    viewport.addEventListener("scroll", measure);
+    window.addEventListener("resize", onWindowResize);
+    window.addEventListener("orientationchange", onOrientationChange);
     return () => {
-      viewport.removeEventListener("resize", updateKeyboardHeight);
-      viewport.removeEventListener("scroll", updateKeyboardHeight);
+      viewport.removeEventListener("resize", measure);
+      viewport.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener("orientationchange", onOrientationChange);
     };
   }, []);
 
@@ -264,7 +289,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     void loadMessages(thread.id);
   }
 
-  function handleAttachmentChange(file: File | null) {
+  async function handleAttachmentChange(file: File | null) {
+    // Kamerafotos (HEIC/HEIF, oft > 15 MB) vor dem Hochladen komprimieren,
+    // damit der Versand nicht am Datei- oder Request-Limit scheitert und die
+    // Vorschau in allen Browsern anzeigbar ist.
+    if (file && file.type.startsWith("image/")) {
+      file = await normalizeImageForAnalysis(file);
+    }
     setAttachment(file);
     setAttachmentPreview((current) => {
       if (current) URL.revokeObjectURL(current);
@@ -418,7 +449,11 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setUrgent(false);
     setBroadcastConfirmOpen(false);
     if (window.matchMedia("(max-width: 767px)").matches) {
-      window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
+      window.setTimeout(() => {
+        // Nur nachfokussieren, wenn der Fokus wirklich verloren ging – ein
+        // unnötiger focus()-Aufruf lässt die Tastatur auf iOS flackern.
+        if (document.activeElement !== inputRef.current) inputRef.current?.focus({ preventScroll: true });
+      }, 0);
     }
     requestAnimationFrame(() => scrollMessagesToBottom());
     void loadSummary().catch(() => {});
@@ -556,7 +591,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                     {message.is_urgent && <p className={`mb-1 flex items-center gap-1 text-xs font-semibold ${isOwnMessage ? "text-blue-100" : "text-destructive"}`}><AlertTriangle className="h-3.5 w-3.5" /> Eilmeldung</p>}
                     {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
                     {message.kind === "image" && message.media_path && (message.media_url ? <img src={message.media_url} alt="Chat-Anhang" className="max-h-64 max-w-full rounded-md object-contain" /> : <p className="flex items-center gap-2 text-sm"><ImagePlus className="h-4 w-4" /> Bild wird geladen…</p>)}
-                  {message.kind === "audio" && <div className="space-y-1"><p className="flex items-center gap-2 text-sm"><Volume2 className="h-4 w-4" /> Sprachnachricht</p>{message.media_url && <AudioPlayer src={message.media_url} own={isOwnMessage} />}{message.transcript && <p className="text-sm text-muted-foreground">Transkript: {message.transcript}</p>}</div>}
+                  {message.kind === "audio" && <div className="space-y-1"><p className="flex items-center gap-2 text-sm"><Volume2 className="h-4 w-4" /> Sprachnachricht</p>{message.media_url && <AudioPlayer src={message.media_url} own={isOwnMessage} />}{message.transcript && <p className={`text-sm ${isOwnMessage ? "text-blue-100" : "text-gray-400"}`}>Transkript: {message.transcript}</p>}</div>}
                     {translation[message.id] && <p className={`mt-2 border-t pt-2 text-sm italic ${isOwnMessage ? "border-white/30" : "border-border"}`}>{translation[message.id]}</p>}
                     <div className={`mt-2 flex items-center justify-end gap-1 text-xs ${isOwnMessage ? "text-blue-100" : "text-muted-foreground"}`}>
                       {message.pending && <span title="Ausstehend">◷</span>}
@@ -572,10 +607,10 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               </div>
             </div>
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
-            <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: `calc(3.5rem + ${keyboardHeight}px)`, transition: "none" }}>
+            <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: keyboardOpen ? `${keyboardHeight}px` : "3.5rem", transition: "none" }}>
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
-                <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
+                <Button onPointerDown={(event) => event.preventDefault()} onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex cursor-pointer items-center gap-1" title="Bild aus Datei anhängen"><Paperclip className="h-4 w-4" /><input type="file" className="hidden" accept="image/*" onChange={(event) => handleAttachmentChange(event.target.files?.[0] ?? null)} /></label>
