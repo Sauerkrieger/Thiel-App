@@ -104,6 +104,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const selectedThreadIdRef = useRef<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const sendingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSummary = useCallback(async () => {
     const response = await fetch("/api/chat/summary", { cache: "no-store" });
@@ -221,6 +223,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   }
 
   function goBackToContacts() {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     selectedThreadIdRef.current = null;
     setSelectedThread(null);
     setMessages([]);
@@ -300,12 +303,21 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     const file = recordingFile ?? attachment;
     if (!body.trim() && !file) return;
 
+    const kind = recordingFile ? "audio" : attachment ? "image" : "text";
+    const draftBody = body.trim();
+    const draftUrgent = urgent;
+    const draftFile = file;
+    const optimisticIds = new Map<string, string>();
     const queuePending = async (thread: Thread) => {
-      const kind = recordingFile ? "audio" : attachment ? "image" : "text";
-      const pendingId = await queueChatMessage({ thread_id: thread.id, body: body.trim(), kind, is_urgent: urgent, ...(file ? { file } : {}) });
-      if (thread.id === selectedThreadIdRef.current) setMessages((current) => [...current, { id: pendingId, thread_id: thread.id, sender_id: userId, kind: kind as Message["kind"], body: body.trim() || null, media_path: null, media_mime_type: file?.type ?? null, transcript: null, is_urgent: urgent, status: "sent", understood_at: null, created_at: new Date().toISOString(), pending: true }]);
+      await queueChatMessage({ thread_id: thread.id, body: draftBody, kind, is_urgent: draftUrgent, ...(draftFile ? { file: draftFile } : {}) });
       setPendingCount((count) => count + 1);
       setOfflineNotice(true);
+    };
+    const addOptimisticMessage = (thread: Thread) => {
+      const optimisticId = `pending-${typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`;
+      optimisticIds.set(thread.id, optimisticId);
+      const optimisticMessage: Message = { id: optimisticId, thread_id: thread.id, sender_id: userId, kind: kind as Message["kind"], body: draftBody || null, media_path: null, media_mime_type: draftFile?.type ?? null, transcript: null, is_urgent: draftUrgent, status: "sent", understood_at: null, created_at: new Date().toISOString(), pending: true };
+      if (thread.id === selectedThreadIdRef.current) setMessages((current) => [...current, optimisticMessage]);
     };
 
     for (const recipient of recipients) {
@@ -326,12 +338,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
         }
       }
       if (!thread) continue;
+      addOptimisticMessage(thread);
       const form = new FormData();
       form.set("thread_id", thread.id);
-      form.set("body", body.trim());
+      form.set("body", draftBody);
       form.set("kind", recordingFile ? "audio" : attachment ? "image" : "text");
-      form.set("is_urgent", String(urgent));
-      if (file) form.set("file", file);
+      form.set("is_urgent", String(draftUrgent));
+      if (draftFile) form.set("file", draftFile);
       if (!navigator.onLine) {
         await queuePending(thread);
         continue;
@@ -344,6 +357,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
         continue;
       }
       if (!response.ok) {
+        setMessages((current) => current.filter((message) => message.id !== optimisticIds.get(thread.id)));
         const data = await response.json().catch(() => ({}));
         toast.error(data.error ?? "Nachricht konnte nicht gesendet werden.");
       }
@@ -353,11 +367,15 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     setRecordingFile(null);
     setUrgent(false);
     setBroadcastConfirmOpen(false);
-    await loadSummary();
-    if (selectedThreadIdRef.current) await loadMessages(selectedThreadIdRef.current, false);
+    requestAnimationFrame(() => {
+      scrollMessagesToBottom();
+      if (window.matchMedia("(max-width: 767px)").matches) inputRef.current?.focus({ preventScroll: true });
+    });
+    void loadSummary().then(() => selectedThreadIdRef.current ? loadMessages(selectedThreadIdRef.current, false) : undefined).catch(() => {});
   }
 
   function send() {
+    if (sendingRef.current) return;
     const file = recordingFile ?? attachment;
     if (!body.trim() && !file) return;
     if (broadcast) {
@@ -368,7 +386,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       setBroadcastConfirmOpen(true);
       return;
     }
-    void sendNow();
+    sendingRef.current = true;
+    void sendNow().finally(() => { sendingRef.current = false; });
   }
 
   async function startRecording() {
@@ -467,7 +486,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
           </CardContent>
         </Card>
 
-        <Card className={`min-h-[600px] sm:max-md:min-h-0 sm:max-md:overflow-hidden ${selectedThread ? "block" : "hidden md:block"}`}>
+        <Card className={`flex min-h-0 flex-col overflow-hidden md:h-[calc(100dvh-10rem)] md:min-h-[600px] sm:max-md:min-h-0 ${selectedThread ? "block" : "hidden md:flex"}`}>
           <CardHeader>
             <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
             {pushPrompt && <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><span>Benachrichtigungen aktivieren?</span><Button size="sm" onClick={() => void enablePush()}>Aktivieren</Button></div>}{offlineNotice && <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">Offline – Nachricht wird gesendet, sobald Verbindung steht.{pendingCount > 0 ? ` (${pendingCount} ausstehend)` : ""}</div>}
@@ -477,13 +496,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               <Button size="sm" variant="ghost" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-[500px] flex-col sm:max-md:min-h-0 sm:max-md:overflow-hidden">
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden sm:max-md:min-h-0">
             <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-              <div className="flex min-h-full flex-col justify-end gap-3">
+              <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
                 return (
-                  <div key={message.id} className={`w-fit max-w-[75%] break-words rounded-lg border p-3 ${isOwnMessage ? "ml-auto border-blue-600 bg-blue-600 text-white" : "border-border bg-gray-100 text-foreground"} ${message.is_urgent ? "ring-2 ring-destructive/50" : ""}`}>
+                  <div key={message.id} className={`w-fit max-w-[75%] min-w-0 break-words rounded-lg border p-3 sm:max-md:max-w-[90%] ${isOwnMessage ? "ml-auto border-blue-600 bg-blue-600 text-white" : "border-border bg-gray-100 text-foreground"} ${message.is_urgent ? "ring-2 ring-destructive/50" : ""}`}>
                     {message.is_urgent && <p className={`mb-1 flex items-center gap-1 text-xs font-semibold ${isOwnMessage ? "text-blue-100" : "text-destructive"}`}><AlertTriangle className="h-3.5 w-3.5" /> Eilmeldung</p>}
                     {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
                     {message.kind === "image" && message.media_path && (message.media_url ? <img src={message.media_url} alt="Chat-Anhang" className="max-h-64 max-w-full rounded-md object-contain" /> : <p className="flex items-center gap-2 text-sm"><ImagePlus className="h-4 w-4" /> Bild wird geladen…</p>)}
@@ -505,7 +524,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
             <div className="mt-4 space-y-2 border-t pt-4">
               <div className="flex gap-2">
-                <Input value={body} onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
+                <Input ref={inputRef} value={body} onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
