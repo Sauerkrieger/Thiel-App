@@ -609,12 +609,15 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
 
         <Card className={`flex min-h-0 flex-col overflow-hidden max-md:flex-1 md:h-[calc(100dvh-10rem)] ${selectedThread ? "flex" : "hidden md:flex"}`}>
           <CardHeader className="shrink-0">
-            <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
+            <div className="flex items-center justify-between gap-2">
+              <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
+              <Button size="sm" variant="ghost" className="md:hidden" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
+            </div>
             {pushPrompt && <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><span>Benachrichtigungen aktivieren?</span><Button size="sm" onClick={() => void enablePush()}>Aktivieren</Button></div>}{offlineNotice && <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">Offline – Nachricht wird gesendet, sobald Verbindung steht.{pendingCount > 0 ? ` (${pendingCount} ausstehend)` : ""}</div>}
             <CardTitle className="flex items-center justify-between gap-2"><span>{selectedThread?.contact?.name ?? "Chat auswählen"}</span>{selectedThread && <a href={`tel:${isAdmin ? selectedThread.contact?.phone ?? "" : supportPhone ?? ""}`} aria-label="Direkt anrufen" title={(isAdmin ? selectedThread.contact?.phone : supportPhone) ? "Direkt anrufen" : "Keine Telefonnummer hinterlegt"} className={`rounded-md p-2 ${(isAdmin ? selectedThread.contact?.phone : supportPhone) ? "text-primary hover:bg-accent" : "pointer-events-none text-muted-foreground"}`}><Phone className="h-4 w-4" /></a>}</CardTitle>
             <CardDescription className="flex flex-wrap items-center justify-between gap-2">
               <span>{selectedThread ? "" : "Wähle links einen Kontakt aus."}</span>
-              <Button size="sm" variant="ghost" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
+              <Button size="sm" variant="ghost" className="hidden md:inline-flex" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 max-md:p-3">
