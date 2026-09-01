@@ -501,7 +501,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 max-md:p-3">
-            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain max-md:pb-6">
+            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 overflow-y-auto overscroll-contain max-md:pb-10">
               <div className="flex min-h-full flex-col justify-end gap-3 p-1">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
