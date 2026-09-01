@@ -512,10 +512,10 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                     {message.kind === "image" && message.media_path && (message.media_url ? <img src={message.media_url} alt="Chat-Anhang" className="max-h-64 max-w-full rounded-md object-contain" /> : <p className="flex items-center gap-2 text-sm"><ImagePlus className="h-4 w-4" /> Bild wird geladen…</p>)}
                   {message.kind === "audio" && <div className="space-y-1"><p className="flex items-center gap-2 text-sm"><Volume2 className="h-4 w-4" /> Sprachnachricht</p>{message.media_url && <AudioPlayer src={message.media_url} />}{message.transcript && <p className="text-sm text-muted-foreground">Transkript: {message.transcript}</p>}</div>}
                     {translation[message.id] && <p className={`mt-2 border-t pt-2 text-sm italic ${isOwnMessage ? "border-white/30" : "border-border"}`}>{translation[message.id]}</p>}
-                    {!isOwnMessage && (message.body || message.transcript) && <Button size="sm" variant="ghost" onClick={() => void translate(message)}><Languages /> Übersetzen</Button>}
                     <div className={`mt-2 flex items-center justify-end gap-1 text-xs ${isOwnMessage ? "text-blue-100" : "text-muted-foreground"}`}>
                       {message.pending && <span title="Ausstehend">◷</span>}
                       <span>{formatMessageTime(message.created_at)}</span>
+                      {!isOwnMessage && (message.body || message.transcript) && <Button type="button" size="icon" variant="ghost" className="h-5 w-5 p-0" onClick={() => void translate(message)} aria-label="Nachricht übersetzen" title="Nachricht übersetzen"><Languages className="h-3.5 w-3.5" /></Button>}
                       {isOwnMessage && <span aria-label={`Status: ${message.status}`} title={`Status: ${message.status}`}>
                         {message.status === "read" ? <CheckCheck className="inline h-3.5 w-3.5 text-blue-100" /> : message.status === "delivered" ? <CheckCheck className="inline h-3.5 w-3.5" /> : <Check className="inline h-3.5 w-3.5" />}
                       </span>}
