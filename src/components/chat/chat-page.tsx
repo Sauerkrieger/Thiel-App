@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, Camera, Check, CheckCheck, ImagePlus, Languages, Mic, Paperclip, Phone, Play, Send, Square, Users, Volume2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, Camera, Check, CheckCheck, ImagePlus, Languages, Mic, Paperclip, Phone, Play, Send, Square, Users, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -102,6 +102,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const loadSummary = useCallback(async () => {
     const response = await fetch("/api/chat/summary", { cache: "no-store" });
@@ -119,12 +121,26 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     }
   }, [userId]);
 
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+  }, []);
+
+  function updateScrollToBottomVisibility() {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 80);
+  }
+
   async function loadMessages(threadId: string, refreshSummary = true) {
     try {
       const response = await fetch(`/api/chat/messages?thread_id=${encodeURIComponent(threadId)}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Chat offline");
       const data = await response.json();
       setMessages(data.messages ?? []);
+      setShowScrollToBottom(false);
       await cacheChatMessages(data.messages ?? []);
       setOfflineNotice(false);
       if (refreshSummary) void loadSummary();
@@ -132,10 +148,29 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       try {
         const cached = await readCachedChatMessages(threadId);
         setMessages(cached as Message[]);
+        setShowScrollToBottom(false);
         setOfflineNotice(true);
       } catch { /* kein lokaler Verlauf vorhanden */ }
     }
   }
+
+  useEffect(() => {
+    if (!selectedThread) return;
+    const frame = window.requestAnimationFrame(() => scrollMessagesToBottom("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedThread, scrollMessagesToBottom]);
+
+  useEffect(() => {
+    if (!selectedThread || messages.length === 0) return;
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const frame = window.requestAnimationFrame(() => {
+      const wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+      if (wasNearBottom) scrollMessagesToBottom();
+      updateScrollToBottomVisibility();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, selectedThread, scrollMessagesToBottom]);
 
   useEffect(() => {
     try {
@@ -383,13 +418,13 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const allVisibleSelected = filteredContacts.length > 0 && filteredContacts.every((contact) => selectedContactIds.includes(contact.id));
 
   return (
-    <div className="container py-6">
-      <div className="mb-6">
+    <div className="container py-6 md:min-h-0 md:py-6 sm:max-md:h-[calc(100dvh-7.5rem)] sm:max-md:overflow-hidden">
+      <div className="mb-6 sm:max-md:mb-3">
         <p className="text-sm font-medium text-primary">Kommunikation</p>
         <h1 className="text-3xl font-bold">Chat</h1>
         <p className="text-sm text-muted-foreground">Sicherer Austausch zwischen Mitarbeitern und Verwaltung.</p>
       </div>
-      <div className="grid gap-6 md:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid gap-6 md:grid-cols-[320px_minmax(0,1fr)] sm:max-md:h-[calc(100%-5rem)] sm:max-md:min-h-0">
         <Card className={selectedThread ? "hidden md:block" : "block"}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
@@ -432,7 +467,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
           </CardContent>
         </Card>
 
-        <Card className={`min-h-[600px] ${selectedThread ? "block" : "hidden md:block"}`}>
+        <Card className={`min-h-[600px] sm:max-md:min-h-0 sm:max-md:overflow-hidden ${selectedThread ? "block" : "hidden md:block"}`}>
           <CardHeader>
             <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
             {pushPrompt && <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><span>Benachrichtigungen aktivieren?</span><Button size="sm" onClick={() => void enablePush()}>Aktivieren</Button></div>}{offlineNotice && <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">Offline – Nachricht wird gesendet, sobald Verbindung steht.{pendingCount > 0 ? ` (${pendingCount} ausstehend)` : ""}</div>}
@@ -442,8 +477,9 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               <Button size="sm" variant="ghost" onClick={() => setLanguageDialog(true)}><Languages /> Sprache</Button>
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-[500px] flex-col">
-            <div className="flex-1 space-y-3 overflow-y-auto">
+          <CardContent className="flex min-h-[500px] flex-col sm:max-md:min-h-0 sm:max-md:overflow-hidden">
+            <div ref={messagesContainerRef} onScroll={updateScrollToBottomVisibility} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+              <div className="flex min-h-full flex-col justify-end gap-3">
               {messages.map((message) => {
                 const isOwnMessage = message.sender_id === userId;
                 return (
@@ -464,7 +500,9 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                   </div>
                 );
               })}
+              </div>
             </div>
+            {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
             <div className="mt-4 space-y-2 border-t pt-4">
               <div className="flex gap-2">
                 <Input value={body} onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />

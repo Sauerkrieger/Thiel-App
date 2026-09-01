@@ -274,7 +274,7 @@ export function AppShell({
           <SyncBadge sync={sync} />
         </div>
       </header>
-      <main className="flex-1">{children}</main>
+      <main className="min-h-0 flex-1">{children}</main>
       {/* Mobile Stempeluhr: feste Leiste am unteren Rand (nur Handy). Sie ist
           auf JEDER Seite sichtbar – Seiten mit eigener Bottom-Leiste
           (Tourenplanung, Tour) stapeln ihre Leiste darüber (bottom-14). */}
