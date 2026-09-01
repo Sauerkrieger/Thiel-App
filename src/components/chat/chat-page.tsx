@@ -522,19 +522,19 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
   const allVisibleSelected = filteredContacts.length > 0 && filteredContacts.every((contact) => selectedContactIds.includes(contact.id));
 
   return (
-    <div className="container py-6 md:min-h-0 md:py-6 max-md:h-[calc(100dvh-7.5rem)] max-md:overflow-hidden">
-      <div className={`mb-6 max-md:mb-3 ${selectedThread ? "max-md:hidden" : ""}`}>
+    <div className="container py-6 md:min-h-0 md:py-6 max-md:flex max-md:h-[calc(100dvh-11rem)] max-md:flex-col max-md:overflow-hidden">
+      <div className={`mb-6 max-md:mb-3 max-md:shrink-0 ${selectedThread ? "max-md:hidden" : ""}`}>
         <p className="text-sm font-medium text-primary">Kommunikation</p>
         <h1 className="text-3xl font-bold">Chat</h1>
         <p className="text-sm text-muted-foreground">Sicherer Austausch zwischen Mitarbeitern und Verwaltung.</p>
       </div>
-      <div className="grid min-h-0 gap-6 md:grid-cols-[320px_minmax(0,1fr)] max-md:h-[calc(100%-5rem)] max-md:min-h-0 max-md:pb-24">
-        <Card className={selectedThread ? "hidden md:block" : "block"}>
-          <CardHeader>
+      <div className="grid min-h-0 gap-6 md:grid-cols-[minmax(240px,min(28vw,320px))_minmax(0,1fr)] max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
+        <Card className={`flex min-h-0 flex-col max-md:flex-1 md:h-[calc(100dvh-10rem)] ${selectedThread ? "hidden md:flex" : "flex"}`}>
+          <CardHeader className="shrink-0">
             <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
             <CardDescription>{isAdmin ? "Mitarbeiter auswählen" : "Admins auswählen"}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
             <Input placeholder="Name suchen…" value={search} onChange={(event) => setSearch(event.target.value)} />
             <Select value={roleFilter} onValueChange={setRoleFilter}>
               <SelectTrigger><SelectValue placeholder="Alle Rollen" /></SelectTrigger>
@@ -551,7 +551,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                 {allVisibleSelected ? "Sichtbare Auswahl aufheben" : "Alle sichtbaren auswählen"}
               </Button>}
             </>}
-            <div className="max-h-[60vh] overflow-y-auto border-y pr-1">
+            <div className="min-h-0 flex-1 overflow-y-auto border-y pr-1">
               {filteredContacts.length === 0 && <p className="py-4 text-sm text-muted-foreground">Keine passenden Kontakte.</p>}
               {filteredContacts.map((contact) => {
                 const thread = threads.find((item) => item.contact?.id === contact.id || (isAdmin ? item.employee_id === contact.id : item.admin_id === contact.id));
@@ -571,7 +571,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
           </CardContent>
         </Card>
 
-        <Card className={`flex h-[calc(100dvh-11rem)] min-h-0 flex-col overflow-hidden md:h-[calc(100dvh-10rem)] md:min-h-[600px] ${selectedThread ? "flex" : "hidden md:flex"}`}>
+        <Card className={`flex min-h-0 flex-col overflow-hidden max-md:flex-1 md:h-[calc(100dvh-10rem)] ${selectedThread ? "flex" : "hidden md:flex"}`}>
           <CardHeader className="shrink-0">
             <Button type="button" variant="ghost" className="w-fit px-2 md:hidden" onClick={goBackToContacts}><ArrowLeft /> Zurück</Button>
             {pushPrompt && <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><span>Benachrichtigungen aktivieren?</span><Button size="sm" onClick={() => void enablePush()}>Aktivieren</Button></div>}{offlineNotice && <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">Offline – Nachricht wird gesendet, sobald Verbindung steht.{pendingCount > 0 ? ` (${pendingCount} ausstehend)` : ""}</div>}
@@ -606,7 +606,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               })}
               </div>
             </div>
-            {showScrollToBottom && <div className="flex justify-center py-2 sm:hidden"><Button type="button" size="icon" variant="secondary" className="h-9 w-9 rounded-full shadow-md" onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button></div>}
+            {showScrollToBottom && <Button type="button" size="icon" variant="secondary" className="fixed left-1/2 z-30 h-9 w-9 -translate-x-1/2 rounded-full shadow-md sm:hidden" style={{ bottom: `calc(${keyboardOpen ? `${keyboardHeight}px` : "3.5rem"} + ${composerHeight}px + 0.75rem)` }} onClick={() => scrollMessagesToBottom()} aria-label="Zum neuesten Beitrag scrollen" title="Zum neuesten Beitrag scrollen"><ArrowDown className="h-4 w-4" /></Button>}
             <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: keyboardOpen ? `${keyboardHeight}px` : "3.5rem", transition: "none" }}>
               <div className="flex gap-2">
                 <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
