@@ -14,21 +14,25 @@ export async function GET() {
     const userIsAdmin = isAdmin(auth.user);
     // Kontakte sind unabhängig von vorhandenen Threads. Dadurch bleibt die
     // Auswahl sichtbar, auch wenn noch kein Chat angelegt wurde.
+    // Nicht-Admins (z. B. Fahrer) sehen neben Admins auch andere Mitarbeiter
+    // als Kontakte (Peer-Chat, z. B. Fahrer ↔ Fahrer) – außer sich selbst.
     const contactRoles = userIsAdmin
       ? (["driver", "facility_manager", "substitute"] as UserRole[])
-      : (["admin"] as UserRole[]);
+      : (["admin", "driver", "facility_manager", "substitute"] as UserRole[]);
 
     let contacts: Array<{ id: string; name: string; role: UserRole; phone?: string | null }> = [];
     const contactsWithPhone = await admin
       .from("profiles")
       .select("id, name, role, phone")
       .in("role", contactRoles)
+      .neq("id", auth.user.id)
       .order("name");
     if (contactsWithPhone.error) {
       const contactsWithoutPhone = await admin
         .from("profiles")
         .select("id, name, role")
         .in("role", contactRoles)
+        .neq("id", auth.user.id)
         .order("name");
       if (contactsWithoutPhone.error) throw contactsWithoutPhone.error;
       contacts = (contactsWithoutPhone.data ?? []) as typeof contacts;
@@ -62,6 +66,6 @@ export async function GET() {
     }
     const incoming = (unreadMessages ?? []).filter((message) => message.status === "sent").map((message) => message.id);
     if (incoming.length) await admin.from("chat_messages").update({ status: "delivered", delivered_at: new Date().toISOString() }).in("id", incoming);
-    return NextResponse.json({ contacts: contacts ?? [], preferredLanguage, unreadCount: [...unreadByThread.values()].reduce((sum, count) => sum + count, 0), threads: (threads ?? []).map((thread) => ({ ...thread, contact: profileById.get(userIsAdmin ? thread.employee_id : thread.admin_id) ?? null, unreadCount: unreadByThread.get(thread.id) ?? 0 })) });
+    return NextResponse.json({ contacts: contacts ?? [], preferredLanguage, unreadCount: [...unreadByThread.values()].reduce((sum, count) => sum + count, 0), threads: (threads ?? []).map((thread) => ({ ...thread, contact: profileById.get(thread.employee_id === auth.user.id ? thread.admin_id : thread.employee_id) ?? null, unreadCount: unreadByThread.get(thread.id) ?? 0 })) });
   } catch (error) { return apiErrorResponse(error); }
 }

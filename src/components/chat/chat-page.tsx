@@ -411,7 +411,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
     const recipients = broadcast
       ? selectedContactIds
       : selectedThread
-        ? [isAdmin ? selectedThread.employee_id : selectedThread.admin_id]
+        ? [selectedThread.employee_id === userId ? selectedThread.admin_id : selectedThread.employee_id]
         : [];
     if (recipients.length === 0) {
       toast.error("Bitte mindestens einen Empfänger wählen.");
@@ -567,8 +567,8 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
       <div className="grid min-h-0 gap-6 md:grid-cols-[minmax(240px,min(28vw,320px))_minmax(0,1fr)] max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col">
         <Card className={`flex min-h-0 flex-col max-md:flex-1 md:h-[calc(100dvh-10rem)] ${selectedThread ? "hidden md:flex" : "flex"}`}>
           <CardHeader className="shrink-0">
-            <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Admins"}</CardTitle>
-            <CardDescription>{isAdmin ? "Mitarbeiter auswählen" : "Admins auswählen"}</CardDescription>
+            <CardTitle className="flex items-center gap-2"><Users /> {isAdmin ? "Mitarbeiter" : "Kontakte"}</CardTitle>
+            <CardDescription>{isAdmin ? "Mitarbeiter auswählen" : "Kontakt auswählen"}</CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
             <Input placeholder="Name suchen…" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -576,7 +576,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
               <SelectTrigger><SelectValue placeholder="Alle Rollen" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Alle Rollen</SelectItem>
-                {Object.entries(ROLE_LABELS).filter(([key]) => isAdmin ? key !== "admin" : key === "admin").map(([key, value]) => <SelectItem key={key} value={key}>{value}</SelectItem>)}
+                {Object.entries(ROLE_LABELS).filter(([key]) => isAdmin ? key !== "admin" : true).map(([key, value]) => <SelectItem key={key} value={key}>{value}</SelectItem>)}
               </SelectContent>
             </Select>
             {isAdmin && <>
@@ -590,7 +590,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             <div className="min-h-0 flex-1 overflow-y-auto border-y pr-1">
               {filteredContacts.length === 0 && <p className="py-4 text-sm text-muted-foreground">Keine passenden Kontakte.</p>}
               {filteredContacts.map((contact) => {
-                const thread = threads.find((item) => item.contact?.id === contact.id || (isAdmin ? item.employee_id === contact.id : item.admin_id === contact.id));
+                const thread = threads.find((item) => item.contact?.id === contact.id || item.employee_id === contact.id || item.admin_id === contact.id);
                 const isActive = selectedThread?.id === thread?.id;
                 return (
                   <div key={contact.id} className={`flex items-center gap-2 border-x border-b p-2 text-sm first:border-t hover:bg-accent ${isActive ? "border-l-4 border-l-primary bg-primary/10" : ""}`}>
