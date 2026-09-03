@@ -97,6 +97,8 @@ export type RoutingMode =
 
 export type RouteObject = {
   id: string;
+  is_unknown?: boolean;
+  unknown_target_id?: string | null;
   name: string;
   address: string;
   category: ObjectCategory;
@@ -105,6 +107,9 @@ export type RouteObject = {
   opens_at: string | null;
   /** Bemerkung zum Objekt (für alle sichtbar). */
   remark: string | null;
+  /** Adresse/Name eines temporären Ziels bleiben außerhalb der Objekttabelle. */
+  unknown_address?: string | null;
+  unknown_name?: string | null;
   /**
    * Verifizierte Koordinaten aus der DB (beim Speichern geocodiert).
    * Werden genutzt, damit die Routenberechnung nicht jede Adresse
@@ -116,6 +121,10 @@ export type RouteObject = {
 
 export type OptimizedStop = {
   object_id: string;
+  is_unknown: boolean;
+  unknown_target_id: string | null;
+  unknown_name: string | null;
+  unknown_address: string | null;
   name: string;
   address: string;
   arrival: string;
@@ -138,7 +147,7 @@ export type RouteOptimizationResult = {
   mode: RoutingMode;
   /** Tatsächliche Abfahrtszeit (ORS wählt sie innerhalb des gewählten Startfensters optimal). */
   start_time: string;
-  /** Dauer der Vorbereitung am Lager (3 Min/Stopp + 5 Min Schlüssel). */
+  /** Dauer der Vorbereitung am Lager (4 Min/Stopp + 5 Min Schlüssel). */
   prep_duration_minutes: number;
   /** Beginn der Vorbereitung am Lager (Abfahrt − Vorbereitungszeit). */
   prep_begin: string;
@@ -322,7 +331,7 @@ async function solveWithOrsOptimization(
       location: [c.lng, c.lat],
       // Bei Custom-Matrix: expliziter Index in der Fahrzeitmatrix (0..n-1)
       ...(useMatrix ? { location_index: index } : {}),
-      // Haltzeit je Kategorie (Treppenhaus 3 Min, Objekt 5 Min)
+      // Haltzeit je Kategorie (Treppenhaus 6 Min, Objekt 8 Min)
       service: serviceMinutes[node] * 60,
       time_windows: timeWindows,
     };
@@ -808,9 +817,9 @@ export async function optimizeRoute(
   startTime?: string,
 ): Promise<RouteOptimizationResult> {
   const warnings: string[] = [];
-  // Vorbereitung am Lager: 3 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
+  // Vorbereitung am Lager: 4 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
   const prepMinutes = prepMinutesForCount(objects.length);
-  // Haltzeit je Ziel: Treppenhaus 3 Min, Objekt 5 Min (Node 0 = Lager, 0 Min)
+  // Haltzeit je Ziel: Treppenhaus 6 Min, Objekt 8 Min (Node 0 = Lager, 0 Min)
   const serviceMinutes = [
     0,
     ...objects.map((o) => serviceMinutesForCategory(o.category)),
@@ -986,6 +995,10 @@ export async function optimizeRoute(
       : (objectGeos[node - 1]?.fallback ?? true);
     return {
       object_id: obj.id,
+      is_unknown: obj.is_unknown === true,
+      unknown_target_id: obj.is_unknown === true ? obj.unknown_target_id ?? null : null,
+      unknown_name: obj.is_unknown === true ? obj.name : null,
+      unknown_address: obj.is_unknown === true ? obj.address : null,
       name: obj.name,
       address: obj.address,
       arrival: formatMinutes(arrival),

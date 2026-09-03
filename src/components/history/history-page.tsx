@@ -9,6 +9,7 @@ import {
   History,
   Trash2,
   KeyRound,
+  MapPin,
   Search,
   Truck,
   User as UserIcon,
@@ -156,6 +157,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
         // Kunden-Infos sind Admin-Daten – nur Admins können danach suchen.
         ...(isAdmin ? (tour.delivered_customers ?? []) : []),
         ...(tour.undeliverable ?? []).flatMap((u) => [u.object_name, u.reason ?? ""]),
+        ...(tour.unknown_targets ?? []).flatMap((target) => [target.name, target.address]),
         ...(tour.key_numbers ?? []).flatMap((key) => [`nr. ${key}`, String(key)]),
         tour.start_time ? `start ${tour.start_time.slice(0, 5)}` : "",
         tour.date,
@@ -177,7 +179,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [tours, search]);
+  }, [tours, search, isAdmin]);
 
   return (
     <div className="container py-6 sm:py-10">
@@ -348,6 +350,24 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                             {u.object_name}
                             {u.reason ? ` – ${u.reason}` : ""}
                           </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(tour.unknown_targets ?? []).length > 0 && (
+                    <div className="mt-2">
+                      <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Unbekannte Ziele ({tour.unknown_targets.length})
+                      </p>
+                      <div className="space-y-1">
+                        {tour.unknown_targets.map((target, index) => (
+                          <p key={`${target.name}-${index}`} className="flex items-start gap-1.5 text-sm text-muted-foreground">
+                            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                            <span>
+                              <span className="font-medium text-foreground">{target.name}</span>
+                              <span className="block">{target.address}</span>
+                            </span>
+                          </p>
                         ))}
                       </div>
                     </div>

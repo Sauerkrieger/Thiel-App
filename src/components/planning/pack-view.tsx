@@ -38,10 +38,12 @@ const RouteMap = dynamic(
 
 type Props = {
   route: RouteOptimizationResult;
+  selectedKeyStopIds: Set<string>;
   onOpenStop: (stop: OptimizedStop) => void;
+  onOpenKeys: () => void;
 };
 
-export function PackView({ route, onOpenStop }: Props) {
+export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: Props) {
   // Einfacher Status: grün, wenn die ORS-Optimierung (VROOM) direkt gelöst
   // hat; rot, wenn ein Fallback oder der Demo-Modus verwendet wurde.
   const optimized = route.mode === "ors-optimization";
@@ -63,13 +65,15 @@ export function PackView({ route, onOpenStop }: Props) {
     [route],
   );
 
-  // Schlüssel-Packliste: alle Schlüsselnummern der Tour, aufsteigend sortiert
-  const keyNumbers = route.stops
-    .map((stop) => stop.key_number)
-    .filter((key): key is number => typeof key === "number");
-  const sortedKeys = [...new Set(keyNumbers)].sort((a, b) => a - b);
+  // Nur die im Pack-Modus bestätigten Schlüssel werden angezeigt.
+  const sortedKeys = [...new Set(
+    route.stops
+      .filter((stop) => selectedKeyStopIds.has(stop.object_id))
+      .map((stop) => stop.key_number)
+      .filter((key): key is number => typeof key === "number"),
+  )].sort((a, b) => a - b);
 
-  // Geschätztes Arbeitsende = Lager-Rückkehr + Aufräumzeit (3 Min pro Stopp
+  // Geschätztes Arbeitsende = Lager-Rückkehr + Aufräumzeit (4 Min pro Stopp
   // + 5 Min) – bewusst nur als Ergebnis dargestellt, ohne Rechnungsweg.
   const workEnd = useMemo(
     () =>
@@ -113,15 +117,20 @@ export function PackView({ route, onOpenStop }: Props) {
         </p>
 
         {/* Schlüssel-Packliste */}
-        {sortedKeys.length > 0 && (
-          <div className="mt-3 flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-            <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <span>
-              <span className="font-medium">Schlüssel mitnehmen:</span>{" "}
-              {sortedKeys.map((key) => `Nr. ${key}`).join(", ")}
+        <button
+          type="button"
+          onClick={onOpenKeys}
+          className="mt-3 flex w-full items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-left text-sm transition-colors hover:bg-primary/10"
+        >
+          <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <span>
+            <span className="font-medium">
+              {route.key_selection_confirmed && sortedKeys.length > 0
+                ? `Schlüssel: ${sortedKeys.map((key) => `Nr. ${key}`).join(", ")}`
+                : "Schlüssel auswählen"}
             </span>
-          </div>
-        )}
+          </span>
+        </button>
 
         {route.warnings.length > 0 && (
           <div className="mt-3 space-y-1.5">
@@ -158,9 +167,10 @@ export function PackView({ route, onOpenStop }: Props) {
           <li key={stop.object_id} className="relative">
             <button
               type="button"
-              onClick={() => onOpenStop(stop)}
+              onClick={() => !stop.is_unknown && onOpenStop(stop)}
               className={[
                 "flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/40",
+                stop.is_unknown ? "cursor-default" : "cursor-pointer",
               ].join(" ")}
             >
               <span className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background">
@@ -168,9 +178,9 @@ export function PackView({ route, onOpenStop }: Props) {
               </span>
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-sm font-medium">{stop.name}</span>
-                  {stop.key_number != null && (
-                    <Badge variant="secondary">Schlüssel Nr. {stop.key_number}</Badge>
+                  <span className="text-sm font-medium">{stop.is_unknown ? stop.unknown_name ?? stop.name : stop.name}</span>
+                  {!stop.is_unknown && selectedKeyStopIds.has(stop.object_id) && stop.key_number != null && (
+                    <Badge variant="secondary">Nr. {stop.key_number}</Badge>
                   )}
                   {stop.approach_by_foot ? (
                     <Badge variant="warning" className="gap-1">

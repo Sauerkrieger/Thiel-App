@@ -13,8 +13,9 @@ import { SYNC_TABLES, type SyncTable } from "@/lib/sync-tables";
 
 const DB_NAME = "thiel-offline";
 // Version erhöhen, damit bestehende Installationen neue Stores und
-// Indizes beim nächsten Öffnen anlegen.
-const DB_VERSION = 5;
+// Indizes beim nächsten Öffnen anlegen (v6: sync_status-Index für
+// schnelles Auslesen der Offline-Queue).
+const DB_VERSION = 6;
 
 export type OfflineTable = SyncTable | "chat_messages";
 export type SyncStatus = "synced" | "pending_upload";
@@ -43,6 +44,16 @@ function openDb(): Promise<IDBDatabase> {
           const store = db.objectStoreNames.contains(storeNameValue)
             ? transaction?.objectStore(storeNameValue)
             : db.createObjectStore(storeNameValue, { keyPath: "id" });
+          // sync_status-Index: getPendingRecords muss nicht mehr die ganze
+          // Tabelle scannen, bevor gefiltert wird (Offline-Queue-Status wird
+          // nach jeder Mutation aktualisiert).
+          if (
+            table !== "chat_messages" &&
+            store &&
+            !store.indexNames.contains("sync_status")
+          ) {
+            store.createIndex("sync_status", "sync_status", { unique: false });
+          }
           if (table === "chat_messages" && store && !store.indexNames.contains("thread_id")) {
             store.createIndex("thread_id", "data.thread_id", { unique: false });
           }
@@ -138,12 +149,14 @@ export async function getRecordsByIndex(
   return result ?? [];
 }
 
-/** Alle noch nicht hochgeladenen Datensätze einer Tabelle. */
+/** Alle noch nicht hochgeladenen Datensätze einer Tabelle (über den Index). */
 export async function getPendingRecords(
   table: OfflineTable,
 ): Promise<StoredRecord[]> {
-  const all = await getAllRecords(table);
-  return all.filter((record) => record.sync_status === "pending_upload");
+  const result = await readTx(table, (store) =>
+    store.index("sync_status").getAll("pending_upload"),
+  );
+  return result ?? [];
 }
 
 /** Löscht einen Datensatz. */

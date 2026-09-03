@@ -17,7 +17,7 @@
 
 import type { SyncTable } from "@/lib/sync-tables";
 import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
-import { deleteRecord, getAllRecords, getRecord, putRecord } from "./db";
+import { deleteRecord, getAllRecords, getRecord, putRecord, putRecords } from "./db";
 import {
   getCurrentUserId,
   getCurrentUserRole,
@@ -193,27 +193,39 @@ async function profileRefsFromCache(): Promise<
 /* Cache-Logik                                                         */
 /* ------------------------------------------------------------------ */
 
-/** Hinterlegt Zeilen im Store; partielle Zeilen werden mit dem Bestand gemergt. */
+/** Hinterlegt Zeilen im Store; partielle Zeilen werden mit dem Bestand gemergt.
+ *  Alle Zeilen laufen in EINER Lese- + EINER Schreib-Transaktion (statt zwei
+ *  Transaktionen pro Zeile) – das Caching nach einem Online-Load ist sonst
+ *  bei großen Objekt-/Stopp-Listen spürbar langsam. */
 async function cacheRows(
   table: SyncTable,
   rows: Array<Record<string, unknown>>,
 ): Promise<void> {
-  for (const row of rows) {
-    if (typeof row.id !== "string" || !row.id) continue;
-    const existing = await getRecord(table, row.id);
-    // Lokale pending-Bearbeitung gewinnt (wird beim Sync aufgelöst)
-    if (existing?.sync_status === "pending_upload") continue;
-    const merged = { ...(existing?.data ?? {}), ...row };
-    await putRecord(table, {
-      id: row.id,
-      client_updated_at:
-        typeof row.client_updated_at === "string"
-          ? row.client_updated_at
-          : existing?.client_updated_at ?? new Date().toISOString(),
-      sync_status: "synced",
-      data: merged,
-    });
-  }
+  const valid = rows.filter(
+    (row) => typeof row.id === "string" && row.id.length > 0,
+  );
+  if (valid.length === 0) return;
+  const existingAll = await getAllRecords(table);
+  const existingById = new Map(existingAll.map((r) => [r.id, r]));
+  const now = new Date().toISOString();
+  const merged = valid
+    .map((row) => {
+      const id = row.id as string;
+      const existing = existingById.get(id);
+      // Lokale pending-Bearbeitung gewinnt (wird beim Sync aufgelöst)
+      if (existing?.sync_status === "pending_upload") return null;
+      return {
+        id,
+        client_updated_at:
+          typeof row.client_updated_at === "string"
+            ? row.client_updated_at
+            : existing?.client_updated_at ?? now,
+        sync_status: "synced" as const,
+        data: { ...(existing?.data ?? {}), ...row },
+      };
+    })
+    .filter((r) => r !== null);
+  await putRecords(table, merged);
 }
 
 /** Alle Zeilen einer Tabelle aus dem Cache (Daten, `id` garantiert enthalten). */
@@ -666,10 +678,21 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     const objectAddress = new Map(objects.map((o) => [o.id, o.address]));
     const objectCustomer = new Map(objects.map((o) => [o.id, o.customer]));
     const driverName = new Map(profiles.map((p) => [p.id, p.name]));
+    // Stopps einmal pro tour_id gruppieren (statt für jede Tour alle
+    // Stopps zu filtern) – der Assembler läuft bei jedem Mount der
+    // Planung („Laufende Tour“-Banner) und der Historie.
+    const stopsByTour = new Map<string, Record<string, unknown>[]>();
+    for (const stop of stops) {
+      const tourId = typeof stop.tour_id === "string" ? stop.tour_id : "";
+      if (!tourId) continue;
+      const list = stopsByTour.get(tourId) ?? [];
+      list.push(stop);
+      stopsByTour.set(tourId, list);
+    }
     const history = tours.map((tour) => {
-      const tourStops = stops
-        .filter((s) => s.tour_id === tour.id)
-        .sort((a, b) => Number(a.stop_order) - Number(b.stop_order));
+      const tourStops = (stopsByTour.get(String(tour.id)) ?? []).sort(
+        (a, b) => Number(a.stop_order) - Number(b.stop_order),
+      );
       const delivered = tourStops.filter((s) => s.is_delivered === true);
       const undeliverable = tourStops.filter((s) => s.is_undeliverable === true);
       const isAdminRole = getCurrentUserRole() === "admin";
@@ -685,14 +708,22 @@ async function readOffline(req: OfflineRead): Promise<Response> {
               ? (driverName.get(tour.driver_id) as string | undefined) ?? null
               : null,
         delivered_objects: delivered
+          .filter((s) => s.is_unknown !== true)
           .map((s) => objectName.get(s.object_id as string))
           .filter((n): n is string => typeof n === "string"),
         // Parallel zu delivered_objects – gleiche Reihenfolge wie in der
         // Online-API, damit die Historie-Suche (Adresse/Kunde) auch offline
         // genauso funktioniert. Kunden nur für Admins (Admin-Daten).
         delivered_addresses: delivered
+          .filter((s) => s.is_unknown !== true)
           .map((s) => objectAddress.get(s.object_id as string))
-          .filter((a): a is string => typeof a === "string" && a.length > 0),
+          .filter((a): a is string => typeof a === "string" && a.length > 0)
+          .concat(
+            delivered
+              .filter((s) => s.is_unknown === true)
+              .map((s) => s.unknown_address)
+              .filter((a): a is string => typeof a === "string" && a.length > 0),
+          ),
         delivered_customers: isAdminRole
           ? delivered
               .map((s) => objectCustomer.get(s.object_id as string))
@@ -702,7 +733,9 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         undeliverable_count: undeliverable.length,
         undeliverable: undeliverable.map((s) => ({
           object_name:
-            objectName.get(s.object_id as string) ?? "Unbekanntes Objekt",
+            s.is_unknown === true
+              ? (typeof s.unknown_name === "string" ? s.unknown_name : "Unbekanntes Ziel")
+              : objectName.get(s.object_id as string) ?? "Unbekanntes Objekt",
           reason:
             typeof s.undeliverable_reason === "string"
               ? s.undeliverable_reason
@@ -714,6 +747,14 @@ async function readOffline(req: OfflineRead): Promise<Response> {
             .filter((key): key is number => typeof key === "number"),
         )].sort((a, b) => a - b),
         total_stops: tourStops.length,
+        unknown_targets: tourStops
+          .filter((s) => s.is_unknown === true)
+          .map((s) => ({
+            name: typeof s.unknown_name === "string" ? s.unknown_name : "Unbekanntes Ziel",
+            address: typeof s.unknown_address === "string" ? s.unknown_address : "",
+            delivered: s.is_delivered === true,
+            undeliverable: s.is_undeliverable === true,
+          })),
       };
     });
     return jsonResponse(200, { tours: history });
@@ -755,15 +796,23 @@ async function readOffline(req: OfflineRead): Promise<Response> {
         key_number: typeof stop.key_number === "number" ? stop.key_number : null,
         next_delivery_items: parseDeliveryItems(stop.next_delivery_items),
         delivered_items: parseDeliveredItems(stop.delivered_items),
-        object: {
-          id: stop.object_id,
-          name: obj.name ?? "Unbekanntes Objekt",
-          address: obj.address ?? "",
-          category: obj.category ?? "objekt",
-          latitude: obj.latitude ?? null,
-          longitude: obj.longitude ?? null,
-          remark: obj.remark ?? null,
-        },
+        object: stop.is_unknown === true || !stop.object_id
+          ? null
+          : {
+              id: stop.object_id,
+              name: obj.name ?? "Unbekanntes Objekt",
+              address: obj.address ?? "",
+              category: obj.category ?? "objekt",
+              latitude: obj.latitude ?? null,
+              longitude: obj.longitude ?? null,
+              remark: obj.remark ?? null,
+            },
+        is_unknown: stop.is_unknown === true,
+        unknown_target_id: typeof stop.unknown_target_id === "string" ? stop.unknown_target_id : null,
+        unknown_name: typeof stop.unknown_name === "string" ? stop.unknown_name : null,
+        unknown_address: typeof stop.unknown_address === "string" ? stop.unknown_address : null,
+        unknown_latitude: typeof stop.unknown_latitude === "number" ? stop.unknown_latitude : null,
+        unknown_longitude: typeof stop.unknown_longitude === "number" ? stop.unknown_longitude : null,
       };
     });
     return jsonResponse(200, {
@@ -1071,11 +1120,17 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
     for (const [index, raw] of (stops as Array<Record<string, unknown>>).entries()) {
       await queueMutation("tour_stops", newRecordId(), {
         tour_id: id,
-        object_id: typeof raw.object_id === "string" ? raw.object_id : "",
+        object_id: typeof raw.object_id === "string" ? raw.object_id : null,
         stop_order: index,
         arrival_time: typeof raw.arrival_time === "string" ? raw.arrival_time : null,
         is_delivered: false,
         key_number: typeof raw.key_number === "number" ? raw.key_number : null,
+        is_unknown: raw.is_unknown === true,
+        unknown_target_id: typeof raw.unknown_target_id === "string" ? raw.unknown_target_id : null,
+        unknown_name: typeof raw.unknown_name === "string" ? raw.unknown_name : null,
+        unknown_address: typeof raw.unknown_address === "string" ? raw.unknown_address : null,
+        unknown_latitude: typeof raw.unknown_latitude === "number" ? raw.unknown_latitude : null,
+        unknown_longitude: typeof raw.unknown_longitude === "number" ? raw.unknown_longitude : null,
         next_delivery_items: null,
       });
     }
@@ -1105,6 +1160,12 @@ async function queueOffline(req: OfflineQueue): Promise<Response> {
       "undeliverable_reason",
       "next_delivery_items",
       "delivered_items",
+      "is_unknown",
+      "unknown_target_id",
+      "unknown_name",
+      "unknown_address",
+      "unknown_latitude",
+      "unknown_longitude",
     ]));
     return jsonResponse(200, { stop: { id: params.stopId } });
   }

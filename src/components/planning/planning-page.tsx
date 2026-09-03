@@ -18,6 +18,9 @@ import {
   Store,
   Trash2,
   Truck,
+  KeyRound,
+  Pencil,
+  Plus,
 } from "lucide-react";
 import { cleanAddressLabel } from "@/lib/address";
 import { toast } from "sonner";
@@ -38,6 +41,8 @@ import { SetupHint } from "@/components/setup-hint";
 import { PhotoSelectDialog } from "./photo-select-dialog";
 import { PackView } from "./pack-view";
 import { PackDialog } from "./pack-dialog";
+import { KeySelectionDialog } from "./key-selection-dialog";
+import { UnknownTargetDialog } from "./unknown-target-dialog";
 import {
   defaultStartTime,
   formatMinutes,
@@ -53,6 +58,7 @@ import type {
   PlanningObject,
   RouteOptimizationResult,
   TourHistoryItem,
+  UnknownTarget,
 } from "@/types/api";
 
 const dateFormatter = new Intl.DateTimeFormat("de-DE", {
@@ -62,28 +68,34 @@ const dateFormatter = new Intl.DateTimeFormat("de-DE", {
   year: "numeric",
 });
 
-// Lokaler Zwischenspeicher für den Pack-Modus: Die berechnete Route wird
-// (nur für denselben Tag) in localStorage gehalten, damit ein Wechsel zu
-// Einstellungen/Inventar und zurück nicht die Routenberechnung erfordert.
-// Eine echte Tour entsteht erst mit „Ausfahren beginnen“. Der Speicher ist
-// pro Nutzer gescoped (geteilte Geräte – wie die übrigen Offline-Daten).
+// Session-Speicher: Ein Tab-Wechsel innerhalb der App erhält den Pack-Modus,
+// ein Schließen/Neustart der App verwirft Route und unbekannte Ziele.
 const PACK_DRAFT_KEY = "planning-pack-draft";
+const UNKNOWN_TARGETS_KEY = "planning-unknown-targets";
 
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
 
 /** localStorage-Schlüssel für den aktuellen Nutzer (null, wenn unbekannt). */
-function packDraftKey(): string | null {
+function sessionKey(base: string): string | null {
   const userId = getCurrentUserId();
-  return userId ? `${PACK_DRAFT_KEY}:${userId}` : null;
+  return userId ? `${base}:${userId}` : null;
+}
+
+function packDraftKey(): string | null {
+  return sessionKey(PACK_DRAFT_KEY);
+}
+
+function unknownTargetsKey(): string | null {
+  return sessionKey(UNKNOWN_TARGETS_KEY);
 }
 
 function savePackDraft(route: RouteOptimizationResult) {
   const key = packDraftKey();
   if (!key) return;
   try {
-    localStorage.setItem(key, JSON.stringify({ date: todayUtc(), route }));
+    sessionStorage.setItem(key, JSON.stringify({ date: todayUtc(), route }));
   } catch {
     // Speicher blockiert/überfüllt – der Pack-Modus funktioniert trotzdem.
   }
@@ -93,7 +105,7 @@ function loadPackDraft(): RouteOptimizationResult | null {
   const key = packDraftKey();
   if (!key) return null;
   try {
-    const raw = localStorage.getItem(key);
+    const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       date?: unknown;
@@ -101,7 +113,7 @@ function loadPackDraft(): RouteOptimizationResult | null {
     };
     // Veraltete Entwürfe (anderer Tag) sofort aufräumen.
     if (parsed.date !== todayUtc()) {
-      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
       return null;
     }
     if (
@@ -122,9 +134,46 @@ function clearPackDraft() {
   const key = packDraftKey();
   if (!key) return;
   try {
-    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
   } catch {
     // ignorieren
+  }
+}  function loadUnknownTargets(): UnknownTarget[] {
+  const key = unknownTargetsKey();
+  if (!key) return [];
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (target): target is UnknownTarget =>
+        Boolean(
+          target &&
+            typeof target === "object" &&
+            typeof (target as UnknownTarget).id === "string" &&
+            typeof (target as UnknownTarget).name === "string" &&
+            typeof (target as UnknownTarget).address === "string",
+        ),
+    ).map((target) => ({
+      ...target,
+      latitude:
+        typeof target.latitude === "number" ? target.latitude : null,
+      longitude:
+        typeof target.longitude === "number" ? target.longitude : null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function saveUnknownTargets(targets: UnknownTarget[]) {
+  const key = unknownTargetsKey();
+  if (!key) return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify(targets));
+  } catch {
+    // Speicher blockiert/überfüllt – die aktuelle Auswahl funktioniert trotzdem.
   }
 }
 
@@ -133,7 +182,10 @@ export function PlanningPage() {
 
 
   const [objects, setObjects] = useState<PlanningObject[]>([]);
+  const [unknownTargets, setUnknownTargets] = useState<UnknownTarget[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedUnknown, setSelectedUnknown] = useState<Set<string>>(new Set());
+  const [selectedKeyStopIds, setSelectedKeyStopIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [search, setSearch] = useState("");
@@ -146,6 +198,11 @@ export function PlanningPage() {
     objectId: string | null;
     objectName: string | null;
   }>({ open: false, objectId: null, objectName: null });
+  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [unknownDialog, setUnknownDialog] = useState<{
+    open: boolean;
+    target: UnknownTarget | null;
+  }>({ open: false, target: null });
   const [startingTour, setStartingTour] = useState(false);
   // Laufende Tour (packing oder in_transit) – damit der Fahrer seine Tour
   // auch nach Tab-/App-Neustart sofort wiederfindet. Nur Touren von HEUTE
@@ -208,14 +265,31 @@ export function PlanningPage() {
 
   useEffect(() => {
     void load();
+    const targets = loadUnknownTargets();
+    setUnknownTargets(targets);
+    setSelectedUnknown(new Set(targets.map((target) => target.id)));
   }, [load]);
+
+  useEffect(() => {
+    saveUnknownTargets(unknownTargets);
+  }, [unknownTargets]);
 
   // Berechnete Route aus dem lokalen Zwischenspeicher wiederherstellen
   // (gleicher Tag), damit der Wechsel zu Einstellungen/Inventar und zurück
   // den Pack-Modus nicht verwirft.
   useEffect(() => {
     const draft = loadPackDraft();
-    if (draft) setRoute(draft);
+    if (draft) {
+      setRoute(draft);
+      setSelectedKeyStopIds(
+        new Set(
+          draft.selected_key_stop_ids ??
+            draft.stops
+              .filter((stop) => !stop.is_unknown && stop.key_number != null)
+              .map((stop) => stop.object_id),
+        ),
+      );
+    }
   }, []);
 
   // Laufende Tour laden (nur eigene Touren, stale-while-revalidate). Nur
@@ -271,7 +345,56 @@ export function PlanningPage() {
     });
   }
 
+  function toggleUnknown(id: string, checked: boolean) {
+    setSelectedUnknown((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function addUnknownTarget() {
+    const target: UnknownTarget = {
+      id: crypto.randomUUID(),
+      name: `Unbekanntes Ziel ${unknownTargets.length + 1}`,
+      address: "",
+      latitude: null,
+      longitude: null,
+    };
+    setUnknownTargets((prev) => [...prev, target]);
+    setSelectedUnknown((prev) => new Set(prev).add(target.id));
+    setUnknownDialog({ open: true, target });
+  }
+
+  function updateUnknownTarget(
+    address: string,
+    latitude: number | null,
+    longitude: number | null,
+  ) {
+    const target = unknownDialog.target;
+    if (!target) return;
+    setUnknownTargets((prev) =>
+      prev.map((item) =>
+        item.id === target.id ? { ...item, address, latitude, longitude } : item,
+      ),
+    );
+  }
+  function deleteUnknownTarget(targetId: string) {
+    setUnknownTargets((prev) => prev.filter((target) => target.id !== targetId));
+    setSelectedUnknown((prev) => {
+      const next = new Set(prev);
+      next.delete(targetId);
+      return next;
+    });
+    setUnknownDialog({ open: false, target: null });
+  }
+
   async function runOptimize() {
+    const selectedTargets = unknownTargets.filter((target) =>
+      selectedUnknown.has(target.id),
+    );
+    if (selected.size === 0 && selectedTargets.length === 0) return;
     setOptimizing(true);
     try {
       const res = await offlineFetch("/api/planning/optimize", {
@@ -279,12 +402,15 @@ export function PlanningPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           object_ids: Array.from(selected),
+          unknown_targets: selectedTargets,
           // Startzeit im Browser (Gerätezeit) berechnen: aktuelle Uhrzeit +
-          // Vorbereitungszeit (3 Min/Stopp + 5 Min Schlüssel), auf 5 Min
+          // Vorbereitungszeit (4 Min/Stopp + 5 Min Schlüssel), auf 5 Min
           // gerundet. Der Server rechnet sonst in seiner Zeitzone (UTC) –
           // die Startzeit läge dann z. B. im Sommer ~2 Std. in der
           // Vergangenheit (siehe Fehlerbericht).
-          start_time: defaultStartTime(prepMinutesForCount(selected.size)),
+          start_time: defaultStartTime(
+            prepMinutesForCount(selected.size + selectedTargets.length),
+          ),
         }),
       });
       const body = await res.json();
@@ -293,7 +419,22 @@ export function PlanningPage() {
         return;
       }
       const routeBody = body as RouteOptimizationResult;
-      setRoute(routeBody);
+      const initialKeys = new Set(
+        routeBody.stops
+          .filter((stop) => !stop.is_unknown && stop.key_number != null)
+          .map((stop) => stop.object_id),
+      );
+      const routeWithKeys = {
+        ...routeBody,
+        selected_key_stop_ids: [...initialKeys],
+        key_selection_confirmed: false,
+      } as RouteOptimizationResult;
+      setSelectedKeyStopIds(initialKeys);
+      // Nicht ausgewählte unbekannte Ziele gehören nicht zur neu berechneten
+      // Tour und werden deshalb aus dem temporären Entwurf entfernt.
+      setUnknownTargets(selectedTargets);
+      setSelectedUnknown(new Set(selectedTargets.map((target) => target.id)));
+      setRoute(routeWithKeys);
       window.scrollTo({ top: 0, behavior: "smooth" });
       if (routeBody.warnings.length > 0) {
         toast.info("Route berechnet – bitte Hinweise beachten.");
@@ -302,7 +443,7 @@ export function PlanningPage() {
       }
       // Pack-Modus lokal zwischenspeichern: „Ausfahren beginnen“ legt die
       // echte Tour erst beim Start an (status „in_transit“).
-      savePackDraft(routeBody);
+      savePackDraft(routeWithKeys);
     } catch {
       toast.error("Routenberechnung fehlgeschlagen.");
     } finally {
@@ -311,7 +452,11 @@ export function PlanningPage() {
   }
 
   async function handleOptimize() {
-    if (selected.size === 0 || optimizing || checkingClock) return;
+    if (
+      (selected.size === 0 && selectedUnknown.size === 0) ||
+      optimizing ||
+      checkingClock
+    ) return;
     // Vor der Routenberechnung prüfen, ob bereits eingestempelt ist. Ist das
     // nicht der Fall, muss der Nutzer erst bestätigen (weiter ohne Einstempeln
     // oder erst zur Hauptseite zum Einstempeln).
@@ -371,9 +516,18 @@ export function PlanningPage() {
             toMinutes(route.warehouse_arrival) + delta,
           ),
           stops: route.stops.map((stop) => ({
-            object_id: stop.object_id,
-            key_number: stop.key_number ?? null,
+            object_id: stop.is_unknown ? null : stop.object_id,
+            key_number:
+              !stop.is_unknown && selectedKeyStopIds.has(stop.object_id)
+                ? stop.key_number ?? null
+                : null,
             arrival_time: formatMinutes(toMinutes(stop.arrival) + delta),
+            is_unknown: stop.is_unknown,
+            unknown_target_id: stop.unknown_target_id,
+            unknown_name: stop.unknown_name,
+            unknown_address: stop.unknown_address,
+            unknown_latitude: stop.latitude,
+            unknown_longitude: stop.longitude,
           })),
         }),
       });
@@ -383,6 +537,13 @@ export function PlanningPage() {
         return;
       }
       clearPackDraft();
+      try {
+        sessionStorage.removeItem(unknownTargetsKey() ?? "");
+      } catch {
+        // ignorieren
+      }
+      setUnknownTargets([]);
+      setSelectedUnknown(new Set());
       toast.success("Tour gestartet – los geht's!");
       router.push(`/tour/${body.tour.id}`);
     } catch {
@@ -492,12 +653,14 @@ export function PlanningPage() {
       </section>
     ) : null;
 
-  const openPackDialog = (stop: OptimizedStop) =>
+  const openPackDialog = (stop: OptimizedStop) => {
+    if (stop.is_unknown) return;
     setPackDialog({
       open: true,
       objectId: stop.object_id,
       objectName: stop.name,
     });
+  };
 
   return (
     <div className="container pb-44 pt-6 sm:pb-28 sm:pt-10">
@@ -521,7 +684,7 @@ export function PlanningPage() {
           {!route && (
             <Button
               onClick={() => void handleOptimize()}
-              disabled={selected.size === 0 || optimizing || checkingClock || loading}
+              disabled={(selected.size === 0 && selectedUnknown.size === 0) || optimizing || checkingClock || loading}
             >
               {optimizing ? (
                 <>
@@ -657,35 +820,116 @@ export function PlanningPage() {
         ) : route ? (
           <PackView
             route={route}
+            selectedKeyStopIds={selectedKeyStopIds}
             onOpenStop={openPackDialog}
+            onOpenKeys={() => setKeyDialogOpen(true)}
           />
-        ) : objects.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-              <Store className="h-6 w-6" />
-            </div>
-            <h2 className="mt-4 text-base font-semibold">
-              Noch keine Objekte angelegt
-            </h2>
-            <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-              Lege zuerst Objekte in der Objektverwaltung an, dann kannst du
-              hier deine Tour zusammenstellen.
-            </p>
-            <Link
-              href="/objects"
-              className="mt-5 inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
-            >
-              Zur Objektverwaltung
-            </Link>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-            Keine Objekte gefunden, die zu „{search}“ passen.
-          </div>
         ) : (
           <div className="space-y-6">
-            {renderGroup("Objekte", objectsGroup)}
-            {renderGroup("Treppenhäuser", treppenhausGroup)}
+            {/* Einziger Button zum Anlegen unbekannter Ziele (auch bei
+                leerer Liste sichtbar); die Überschrift verschwindet, wenn
+                es keine unbekannten Ziele gibt. */}
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={addUnknownTarget} className="gap-1.5">
+                <Plus className="h-4 w-4" />
+                Unbekanntes Ziel
+              </Button>
+            </div>
+            {unknownTargets.length > 0 && (
+              <section className="space-y-2">
+                <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Unbekannte Ziele ({unknownTargets.length})
+                </h2>
+                <ul className="space-y-1.5">
+                  {unknownTargets.map((target, index) => {
+                    const isSelected = selectedUnknown.has(target.id);
+                    return (
+                      <li key={target.id}>
+                        <label
+                          className={[
+                            "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+                            isSelected
+                              ? "border-primary/50 bg-primary/5"
+                              : "border-transparent bg-card hover:border-border hover:bg-accent/40",
+                          ].join(" ")}
+                        >
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={(value) => toggleUnknown(target.id, value === true)}
+                            aria-label={`${target.name} auswählen`}
+                          />
+                          {/* Antippen der Zeile wählt ab/aus (wie bei den
+                              Objekt-Zielen); der Stift-Button öffnet den
+                              Dialog zum Bearbeiten der Adresse. */}
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              toggleUnknown(target.id, !isSelected);
+                            }}
+                          >
+                            <span className="block font-medium">{target.name || `Unbekanntes Ziel ${index + 1}`}</span>
+                            <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                              <MapPin className="h-3 w-3 shrink-0" />
+                              {cleanAddressLabel(target.address) || "Adresse fehlt"}
+                            </span>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground"
+                            aria-label={`${target.name} bearbeiten`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              setUnknownDialog({ open: true, target });
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Check
+                            className={[
+                              "h-5 w-5 shrink-0 transition-opacity",
+                              isSelected ? "text-primary opacity-100" : "opacity-0",
+                            ].join(" ")}
+                          />
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
+            {objects.length === 0 && unknownTargets.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-12 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Store className="h-6 w-6" />
+                </div>
+                <h2 className="mt-4 text-base font-semibold">
+                  Noch keine Objekte angelegt
+                </h2>
+                <p className="mx-auto mt-1 max-w-sm text-muted-foreground text-sm">
+                  Lege zuerst Objekte in der Objektverwaltung an, dann kannst du
+                  hier deine Tour zusammenstellen.
+                </p>
+                <Link
+                  href="/objects"
+                  className="mt-5 inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
+                >
+                  Zur Objektverwaltung
+                </Link>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+                Keine Objekte gefunden, die zu „{search}“ passen.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {renderGroup("Objekte", objectsGroup)}
+                {renderGroup("Treppenhäuser", treppenhausGroup)}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -702,6 +946,39 @@ export function PlanningPage() {
         objectName={packDialog.objectName}
         onOpenChange={(open) =>
           setPackDialog((prev) => ({ ...prev, open }))
+        }
+      />
+      <KeySelectionDialog
+        open={keyDialogOpen}
+        stops={route?.stops ?? []}
+        selectedStopIds={selectedKeyStopIds}
+        onOpenChange={setKeyDialogOpen}
+        onConfirm={(ids) => {
+          setSelectedKeyStopIds(ids);
+          if (route) {
+            const updated = {
+              ...route,
+              selected_key_stop_ids: [...ids],
+              key_selection_confirmed: true,
+            };
+            setRoute(updated);
+            savePackDraft(updated);
+          }
+        }}
+      />
+      <UnknownTargetDialog
+        open={unknownDialog.open}
+        target={unknownDialog.target}
+        onOpenChange={(open) =>
+          setUnknownDialog((prev) => ({ ...prev, open }))
+        }
+        onSave={({ address, latitude, longitude }) => {
+          updateUnknownTarget(address, latitude, longitude);
+        }}
+        onDelete={
+          unknownDialog.target
+            ? () => deleteUnknownTarget(unknownDialog.target!.id)
+            : undefined
         }
       />
 

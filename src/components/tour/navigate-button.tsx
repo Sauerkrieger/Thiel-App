@@ -11,6 +11,8 @@ type Props = {
   longitude: number | null;
   /** Zielname für den Accessibility-Label. */
   label: string;
+  /** Öffnet nur die Google-Maps-Suche, ohne eine Navigationsroute zu starten. */
+  openOnly?: boolean;
 };
 
 /**
@@ -25,7 +27,7 @@ type Props = {
  * OSM/Photon/ORS und weichen teils vom Google-Treffer ab). Nur wenn keine
  * Adresse vorliegt, werden die Koordinaten direkt genutzt.
  */
-export function NavigateButton({ address, latitude, longitude, label }: Props) {
+export function NavigateButton({ address, latitude, longitude, label, openOnly = false }: Props) {
   if (!address && (latitude == null || longitude == null)) return null;
 
   function handleNavigate(e: React.MouseEvent) {
@@ -34,9 +36,11 @@ export function NavigateButton({ address, latitude, longitude, label }: Props) {
     const destination = address
       ? encodeURIComponent(address)
       : `${latitude},${longitude}`;
-    const url = isIOS
-      ? `https://maps.apple.com/?daddr=${destination}`
-      : `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+    const url = openOnly
+      ? `https://www.google.com/maps/search/?api=1&query=${destination}`
+      : isIOS
+        ? `https://maps.apple.com/?daddr=${destination}`
+        : `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
@@ -46,8 +50,8 @@ export function NavigateButton({ address, latitude, longitude, label }: Props) {
       variant="outline"
       size="icon"
       onClick={handleNavigate}
-      aria-label={`Navigation zu ${label} starten`}
-      title="Navigation starten"
+      aria-label={openOnly ? `Google Maps für ${label} öffnen` : `Navigation zu ${label} starten`}
+      title={openOnly ? "In Google Maps öffnen" : "Navigation starten"}
       className="h-8 w-8 shrink-0"
     >
       <Navigation className="h-4 w-4" />

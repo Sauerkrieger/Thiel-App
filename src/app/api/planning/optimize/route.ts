@@ -33,13 +33,40 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const objectIds = body.object_ids;
+    const unknownTargets = body.unknown_targets;
     const startTime = body.start_time;
 
     if (
       !Array.isArray(objectIds) ||
-      objectIds.length === 0 ||
       objectIds.some((id) => typeof id !== "string")
     ) {
+      return NextResponse.json(
+        { error: "Ungültige Objektauswahl." },
+        { status: 400 },
+      );
+    }
+    if (
+      unknownTargets !== undefined &&
+      (!Array.isArray(unknownTargets) ||
+        unknownTargets.some(
+          (target) =>
+            !target ||
+            typeof target !== "object" ||
+            typeof target.id !== "string" ||
+            typeof target.name !== "string" ||
+            typeof target.address !== "string" ||
+            !target.name.trim() ||
+            !target.address.trim() ||
+            (target.latitude !== undefined && target.latitude !== null && typeof target.latitude !== "number") ||
+            (target.longitude !== undefined && target.longitude !== null && typeof target.longitude !== "number"),
+        ))
+    ) {
+      return NextResponse.json(
+        { error: "Ungültige unbekannte Ziele." },
+        { status: 400 },
+      );
+    }
+    if (objectIds.length === 0 && (!Array.isArray(unknownTargets) || unknownTargets.length === 0)) {
       return NextResponse.json(
         { error: "Bitte mindestens ein Objekt auswählen." },
         { status: 400 },
@@ -53,23 +80,25 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-    const { data: objects, error } = await supabase
-      .from("objects")
-      .select(
-        "id, name, address, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, latitude, longitude",
-      )
-      .in("id", objectIds as string[]);
+    const { data: objects, error } = objectIds.length
+      ? await supabase
+          .from("objects")
+          .select(
+            "id, name, address, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, latitude, longitude",
+          )
+          .in("id", objectIds as string[])
+      : { data: [], error: null };
 
     if (error) throw error;
-    if (!objects || objects.length === 0) {
+    if ((!objects || objects.length === 0) && (!Array.isArray(unknownTargets) || unknownTargets.length === 0)) {
       return NextResponse.json(
-        { error: "Keine Objekte gefunden." },
+        { error: "Keine Ziele gefunden." },
         { status: 404 },
       );
     }
 
-    const routeObjects: RouteObject[] = (objects as RouteObject[]).map(
-      (obj) => ({
+    const routeObjects: RouteObject[] = [
+      ...((objects ?? []) as RouteObject[]).map((obj) => ({
         id: obj.id,
         name: obj.name,
         address: obj.address,
@@ -80,8 +109,31 @@ export async function POST(request: Request) {
         remark: obj.remark ?? null,
         latitude: obj.latitude ?? null,
         longitude: obj.longitude ?? null,
-      }),
-    );
+      })),
+      ...((Array.isArray(unknownTargets) ? unknownTargets : []) as Array<{
+        id: string;
+        name: string;
+        address: string;
+        latitude?: number | null;
+        longitude?: number | null;
+      }>).map((target) => ({
+        id: `unknown:${target.id}`,
+        is_unknown: true,
+        unknown_target_id: target.id,
+        name: target.name.trim(),
+        address: target.address.trim(),
+        category: "objekt" as const,
+        is_pedestrian_zone_until_11: false,
+        key_number: null,
+        opens_at: null,
+        remark: null,
+        // Aus der Vorschlags-Auswahl verifizierte Koordinaten direkt
+        // übernehmen – die Berechnung muss die Adresse dann nicht erneut
+        // geocoden (schnellere Routenberechnung, weniger API-Aufrufe).
+        latitude: typeof target.latitude === "number" ? target.latitude : null,
+        longitude: typeof target.longitude === "number" ? target.longitude : null,
+      })),
+    ];
 
     const result = await optimizeRoute(routeObjects, startTime ?? undefined);
     return NextResponse.json(result);

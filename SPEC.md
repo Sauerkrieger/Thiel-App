@@ -115,7 +115,8 @@ Der Ablauf ist als **Rundtour** modelliert: Start und Ziel ist immer das Lager
 
 ### `active_tours` + `tour_stops` – Touren
 - `active_tours`: `id`, `driver_id`, `date`, `status` (packing → in_transit → completed), `start_time`, `warehouse_arrival` (geplante Rückkehr ins Lager), `total_duration_minutes`
-- `tour_stops`: `id`, `tour_id` (FK cascade), `object_id`, `stop_order` (unique je Tour), `arrival_time`, `is_delivered`, `next_delivery_items` (jsonb – vorgemerkte Extra-Items für die **nächste** Belieferung)
+- `tour_stops`: `id`, `tour_id` (FK cascade), `object_id` (**nullable** – bei temporären Zielen), `stop_order` (unique je Tour), `arrival_time`, `is_delivered`, `key_number` (explizit im Pack-Modus ausgewählte Schlüssel), `next_delivery_items` (jsonb – vorgemerkte Extra-Items für die **nächste** Belieferung)
+- **Temporäre/unbekannte Ziele** (Migration `20260903000000_unknown_tour_targets.sql`): `is_unknown` (bool), `unknown_target_id` (Client-Id), `unknown_name`, `unknown_address`, `unknown_latitude`, `unknown_longitude` – Snapshots nur des Tour-Stopp; kein Eintrag in `objects`, nur für diese Tour sichtbar (inkl. Historie), beim Löschen der Tour bzw. bei Neuberechnung ohne Auswahl entfernt
 
 ### Passkeys & Challenges
 - `passkeys`: `id`, `user_id` (FK cascade), `credential_id` (unique), `public_key` (base64url), `counter`, `transports` (jsonb), `last_used_at` – **Passkeys sind strikt benutzerspezifisch**
@@ -164,6 +165,7 @@ Drei Import-Arten über `/api/objects/import/*` (Gemini-OCR):
 
 ### 5.3 Tourenplanung (`/planung`)
 - **Manuelle Auswahl:** Objekte werden pro Tour manuell ausgewählt (Wochentags-Vorauswahl/-Speichern wurde entfernt). Über der Liste zeigt ein Zähler `ausgewählt/gesamt` (z. B. „5/42“) den Fortschritt
+- **Unbekannte Ziele:** Ein einzelner Button „+ Unbekanntes Ziel“ (über der Objektliste) legt ein temporäres Ziel an. Im Dialog wird die Adresse per **Autocomplete** gesetzt – speicherbar ist nur ein ausgewählter Vorschlag (gültige Adresse + Koordinaten); ein Maps-Icon neben dem Eingabefeld öffnet die Adresse als Suche in Google Maps. Neue Ziele erscheinen unter „Unbekannte Ziele (x)“ **ganz oben**, sind automatisch ausgewählt und per Checkbox bzw. Zeilen-Tipp ab-/anwählbar (der Pencil-Button öffnet den Dialog zum Bearbeiten/Löschen). Sie fließen in die Routenberechnung ein, haben kein Item-Fenster, werden im Tour-Modus direkt als „beliefert“ abhakbar angezeigt und in der Historie mit Name + Adresse (ohne Items/Schlüssel) gelistet. Speicherung nur für die aktuelle Tour: Tab-Wechsel erhält sie (sessionStorage), App-Neustart oder Tour-Start löscht sie; bei Neuberechnung bleiben nur ausgewählte Ziele erhalten
 - **Foto-Auswahl** (`/api/planning/photo`): abfotografierte Routenliste → Häkchen automatisch setzen (Match per Adresse/Name, Unmatched werden aufgelistet)
 - **Startzeit** automatisch (aktuelle Uhrzeit + Vorbereitungszeit, auf 5 Min gerundet) – kein manuelles Auswahlfeld mehr
 
@@ -178,26 +180,30 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
    - `opens_at` → **frühester Zeitpunkt** (Ankunft DARF erst danach)
    - Fußgängerzone → **zwei Varianten werden berechnet**: (A) direkt zum Objekt, nur bis 11:00 Uhr möglich (Deadline 11:00); (B) über den per Overpass gesuchten **nächstgelegenen befahrbaren Haltepunkt** (`findNearestDrivablePoint`) + Restweg **zu Fuß** (keine Deadline)
 4. **Die schnellere Variante gewinnt:** Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
-5. **Vorbereitungszeit** am Lager: 3 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
-6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 3 Min, Objekt 5 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
+5. **Vorbereitungszeit** am Lager: 4 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
+6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 6 Min, Objekt 8 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
 7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
 
 Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
 
 ### 5.5 Pack-Modus (`/planung` nach Optimierung)
 - Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
-- **Geschätztes Arbeitsende** wird angezeigt (Lager-Rückkehr + Aufräumzeit: 3 Min/Stopp + 5 Min) – bewusst ohne Rechnungsweg
-- Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht)
+- **Geschätztes Arbeitsende** wird angezeigt (Lager-Rückkehr + Aufräumzeit: 4 Min/Stopp + 5 Min) – bewusst ohne Rechnungsweg
+- **Schlüssel-Auswahl:** Ein Button „Schlüssel auswählen“ öffnet einen Dialog mit allen Objekten der Tour und ihren Schlüsselnummern (Checkbox je Objekt, Mehrfachauswahl, Bestätigen schließt). Nach Bestätigung zeigt der Button „Schlüssel: Nr. x, Nr. y, …“ und bleibt zum Nachbessern antippbar. Nur bestätigte Schlüssel werden mit der Tour gespeichert, im Tour-Modus angezeigt und in der Historie unter „Schlüssel mitgenommen“ gelistet
+- Klick auf Stopp → **Packliste** (`/api/objects/[id]/pack-info`): Standard-Items + vorgemerkte Extra-Items der letzten Tour; Items mit Foto sind antippbar (Bildansicht); die Item-Liste zeigt oben die Schlüsselnummer („Nr. x“) des Objekts
 - **Karte unten** (Leaflet): Rundtour Lager → alle Stopps → Lager inkl. Rückweg, nummerierte Marker, Fußweg-Anteile
 - **„Ausfahren beginnen"** → Tour anlegen (`/api/tours`) und in den Tour-Modus wechseln
 
 ### 5.6 Tour-Modus (`/tour/[id]`)
 - Stopps in optimierter Reihenfolge mit Fortschrittsbalken, **Karte unten** (belieferte Stopps grün mit Häkchen)
 - Klick auf Stopp → Item-Liste: Standard-Items fest gecheckt/ausgegraut, variable Items für die **nächste Belieferung** an-/abwählbar (wird als `next_delivery_items` gespeichert)
+- Objekt-Stopps zeigen Badge „Nr. x“ mit der im Pack-Modus ausgewählten Schlüsselnummer
+- **Unbekannte Ziele** erscheinen ebenfalls (Name + Adresse, nicht antippbar, ohne Item-Dialog) und werden direkt per Check-Button als „beliefert“ markiert
 - **„Beliefern fertig"** → Stopp abhaken; alle Stopps fertig → Tour `completed`
 
 ### 5.7 Historie (`/historie`)
 - Vergangene Touren mit Datum, Fahrer, Anzahl belieferter Stopps und belieferten Objekten (`GET /api/tours`)
+- **Unbekannte Ziele** werden als eigene Sektion mit Name + Adresse angezeigt (ohne Items/Schlüssel); Schlüsselnummern der Tour erscheinen unter „Schlüssel mitgenommen“; die Suche deckt Namen/Adressen unbekannter Ziele ab
 
 ### 5.8 Chat (`/chat`)
 - Kontaktliste mit Suche, Rollenfilter und Admin-Broadcast an mehrere Mitarbeiter
@@ -240,6 +246,8 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 - Offline-Schreibvorgänge werden in IndexedDB als `pending_upload` gespeichert und beim Reconnect über `POST /api/sync` synchronisiert. Last-Write-Wins verwendet `client_updated_at`; bei Konflikten übernimmt der Client den Server-Datensatz. Die Serverzeit wird über `GET /api/time` an die Client-Uhr angeglichen.
 - Die Sync-Engine synchronisiert in Abhängigkeitsreihenfolge (Touren vor Tourstopps), verarbeitet Batches und schützt lokale Änderungen, die während eines laufenden Syncs entstanden sind.
 - Löschen, Foto-/OCR-Import, Authentifizierung, Passwort-/Passkey-Verwaltung und Benutzeranlage bleiben online-only. Lesbare Daten werden je nach Endpunkt aus IndexedDB bereitgestellt; der Service Worker cached die App-Shell, greift aber nicht in `/api/*` ein.
+- Schlüssel-Auswahl und unbekannte Ziele sind offline voll funktionsfähig: Der Sync-Whitelist für `tour_stops` sind die Felder `key_number`, `is_unknown` und die unbekannt-Ziel-Spalten bekannt; die Offline-Historie/Tour-Ansicht rekonstruiert sie aus dem Cache. Das Adress-Autocomplete braucht für neue Vorschläge hingegen eine Online-Verbindung.
+- Performance: Cache-Schreibvorgänge laufen als Batch in je einer Lese- + Schreib-Transaktion pro Tabelle (statt zwei Transaktionen je Zeile); die Offline-Queue liest pending-Einträge über einen `sync_status`-Index (IndexedDB v6); der Historie-/Tour-Assembler gruppiert Stopps einmalig pro `tour_id` statt eines Vollscans je Tour.
 - Der Sync-/Offline-Indikator zeigt Online-/Offline-Status, laufende Synchronisierung, offene Einträge, letzten Sync und Fehler an.
 
 ## 7. Karten (Leaflet)

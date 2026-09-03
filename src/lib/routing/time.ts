@@ -6,18 +6,18 @@
 import type { ObjectCategory } from "@/types/database";
 
 /** Packzeit am Lager pro Stopp/Objekt vor Abfahrt. */
-export const PREP_MINUTES_PER_STOP = 3;
+export const PREP_MINUTES_PER_STOP = 4;
 /** Einmalige Zeit am Lager zum Einsammeln der Schlüssel. */
 export const KEY_COLLECTION_MINUTES = 5;
 
-/** Vorbereitungszeit für eine Tour mit `count` Stopps (3 Min/Stopp + 5 Min Schlüssel). */
+/** Vorbereitungszeit für eine Tour mit `count` Stopps (4 Min/Stopp + 5 Min Schlüssel). */
 export function prepMinutesForCount(count: number): number {
   return count * PREP_MINUTES_PER_STOP + KEY_COLLECTION_MINUTES;
 }
 
-/** Haltzeit an einem Ziel: Objekt 5 Min, Treppenhaus 3 Min. */
-export const SERVICE_MINUTES_OBJECT = 7;
-export const SERVICE_MINUTES_TREPPENHAUS = 5;
+/** Haltzeit an einem Ziel: Objekt 8 Min, Treppenhaus 6 Min. */
+export const SERVICE_MINUTES_OBJECT = 8;
+export const SERVICE_MINUTES_TREPPENHAUS = 6;
 
 /** Haltzeit (Servicezeit) je Kategorie. */
 export function serviceMinutesForCategory(category: ObjectCategory): number {

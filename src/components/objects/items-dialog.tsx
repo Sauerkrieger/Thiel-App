@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImagePlus, ListChecks, Plus, Trash2, X } from "lucide-react";
+import { ImagePlus, KeyRound, ListChecks, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -187,6 +187,12 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
           <DialogTitle className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-primary" />
             Items – {object?.name}
+            {object?.key_number != null && (
+              <span className="inline-flex items-center gap-1 text-sm font-medium tabular-nums text-muted-foreground">
+                <KeyRound className="h-3.5 w-3.5" />
+                Nr. {object.key_number}
+              </span>
+            )}
           </DialogTitle>
           <DialogDescription>
             {readOnly

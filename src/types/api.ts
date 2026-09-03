@@ -39,6 +39,16 @@ export type PlanningObject = Pick<
   | "remark"
 >;
 
+/** Temporäres Ziel, das nur zur aktuellen Planung gehört. */
+export type UnknownTarget = {
+  id: string;
+  name: string;
+  address: string;
+  /** Verifizierte Koordinaten aus der Adress-Auswahl (Routenberechnung). */
+  latitude: number | null;
+  longitude: number | null;
+};
+
 /** Antwort von GET /api/planning. */
 export type PlanningData = {
   objects: PlanningObject[];
@@ -71,6 +81,10 @@ export type PhotoSelectResult = {
 /** Sortierter Stopp der optimierten Rundtour. */
 export type OptimizedStop = {
   object_id: string;
+  is_unknown: boolean;
+  unknown_target_id: string | null;
+  unknown_name: string | null;
+  unknown_address: string | null;
   name: string;
   address: string;
   arrival: string;
@@ -94,7 +108,7 @@ export type RouteOptimizationResult = {
   mode: "ors-optimization" | "ors-matrix" | "google-matrix" | "haversine";
   /** Vom Nutzer gewählte Startzeit = Abfahrtszeit (Beginn der Tour). */
   start_time: string;
-  /** Dauer der Vorbereitung am Lager (3 Min/Stopp + 5 Min Schlüssel). */
+  /** Dauer der Vorbereitung am Lager (4 Min/Stopp + 5 Min Schlüssel). */
   prep_duration_minutes: number;
   /** Beginn der Vorbereitung am Lager (start_time − Vorbereitungszeit). */
   prep_begin: string;
@@ -113,6 +127,10 @@ export type RouteOptimizationResult = {
     latitude: number | null;
     longitude: number | null;
   } | null;
+  /** Explizit ausgewählte Schlüssel im Pack-Modus (nur UI-Draft). */
+  selected_key_stop_ids?: string[];
+  /** true, sobald die Schlüssel-Auswahl im Dialog bestätigt wurde. */
+  key_selection_confirmed?: boolean;
 };
 
 /** Für die nächste Belieferung vorgemerktes Item (Name + optionale Bemerkung). */
@@ -141,6 +159,7 @@ export type TourStopWithObject = {
   key_number: number | null;
   next_delivery_items: DeliveryItem[];
   delivered_items: DeliveredItem[];
+  /** Für unbekannte Ziele null; sie werden aus den Snapshot-Feldern gerendert. */
   object: {
     id: string;
     name: string;
@@ -150,7 +169,14 @@ export type TourStopWithObject = {
     longitude: number | null;
     /** Bemerkung zum Objekt (für alle sichtbar). */
     remark: string | null;
-  };
+  } | null;
+  /** Snapshot-Daten eines temporären Ziels. */
+  is_unknown: boolean;
+  unknown_target_id: string | null;
+  unknown_name: string | null;
+  unknown_address: string | null;
+  unknown_latitude: number | null;
+  unknown_longitude: number | null;
 };
 
 /** Antwort von GET /api/tours/[id]. */
@@ -371,6 +397,13 @@ export type TourHistoryItem = {
   total_stops: number;
   /** Schlüsselnummern, die für diese Tour eingeplant waren. */
   key_numbers: number[];
+  /** Temporäre Ziele dieser Tour inklusive Adresse (auch vor Belieferung). */
+  unknown_targets: Array<{
+    name: string;
+    address: string;
+    delivered: boolean;
+    undeliverable: boolean;
+  }>;
 };
 
 /** Antwort von GET /api/tours (Historie). */

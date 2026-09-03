@@ -712,7 +712,7 @@ export interface Database {
         Row: {
           id: string;
           tour_id: string;
-          object_id: string;
+          object_id: string | null;
           stop_order: number;
           arrival_time: string | null;
           is_delivered: boolean;
@@ -720,6 +720,13 @@ export interface Database {
           key_number: number | null;
           /** JSON-Liste der wählbaren Items für die nächste Belieferung. */
           next_delivery_items: Json;
+          /** Temporäres Ziel: kein Objekt-/Item-Datensatz. */
+          is_unknown: boolean;
+          unknown_target_id: string | null;
+          unknown_name: string | null;
+          unknown_address: string | null;
+          unknown_latitude: number | null;
+          unknown_longitude: number | null;
           /** Snapshot der tatsächlich gelieferten Items dieses Stopps. */
           delivered_items: Json;
           /** true = Stopp konnte nicht beliefert werden (schließt is_delivered aus). */
@@ -736,10 +743,16 @@ export interface Database {
         Insert: {
           id?: string;
           tour_id: string;
-          object_id: string;
+          object_id?: string | null;
           stop_order: number;
           arrival_time?: string | null;
           is_delivered?: boolean;
+          is_unknown?: boolean;
+          unknown_target_id?: string | null;
+          unknown_name?: string | null;
+          unknown_address?: string | null;
+          unknown_latitude?: number | null;
+          unknown_longitude?: number | null;
           key_number?: number | null;
           next_delivery_items?: Json;
           delivered_items?: Json;
@@ -753,10 +766,16 @@ export interface Database {
         Update: {
           id?: string;
           tour_id?: string;
-          object_id?: string;
+          object_id?: string | null;
           stop_order?: number;
           arrival_time?: string | null;
           is_delivered?: boolean;
+          is_unknown?: boolean;
+          unknown_target_id?: string | null;
+          unknown_name?: string | null;
+          unknown_address?: string | null;
+          unknown_latitude?: number | null;
+          unknown_longitude?: number | null;
           key_number?: number | null;
           next_delivery_items?: Json;
           delivered_items?: Json;

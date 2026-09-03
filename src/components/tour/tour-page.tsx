@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -106,9 +107,15 @@ export function TourPage({ tourId }: Props) {
     () =>
       stops.map((stop) => ({
         id: stop.id,
-        name: stop.object?.name ?? "Unbekanntes Objekt",
-        latitude: stop.object?.latitude ?? null,
-        longitude: stop.object?.longitude ?? null,
+        name: stop.is_unknown
+          ? stop.unknown_name ?? "Unbekanntes Ziel"
+          : stop.object?.name ?? "Unbekanntes Objekt",
+        latitude: stop.is_unknown
+          ? stop.unknown_latitude
+          : stop.object?.latitude ?? null,
+        longitude: stop.is_unknown
+          ? stop.unknown_longitude
+          : stop.object?.longitude ?? null,
         delivered: stop.is_delivered,
       })),
     [stops],
@@ -181,7 +188,28 @@ export function TourPage({ tourId }: Props) {
   }
 
   function openStop(stop: TourStopWithObject) {
+    if (stop.is_unknown) return;
     setDialog({ open: true, stop });
+  }
+
+  async function deliverUnknownStop(stop: TourStopWithObject) {
+    if (!stop.is_unknown || stop.is_delivered || stop.is_undeliverable) return;
+    try {
+      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_delivered: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        toast.error(body.error ?? "Speichern fehlgeschlagen.");
+        return;
+      }
+      toast.success(`„${stop.unknown_name ?? "Unbekanntes Ziel"}" als beliefert markiert.`);
+      await load(true);
+    } catch {
+      toast.error("Speichern fehlgeschlagen.");
+    }
   }
 
   return (
@@ -296,21 +324,22 @@ export function TourPage({ tourId }: Props) {
                 return (
                   <li key={stop.id}>
                     <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openStop(stop)}
-                      onKeyDown={(e) => {
-                        // Nur reagieren, wenn die Zeile selbst fokussiert ist
-                        // (Enter/Space auf inneren Buttons wie Navigation /
-                        // Bemerkung soll NICHT zusätzlich den Dialog öffnen).
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          openStop(stop);
-                        }
-                      }}
+                      role={stop.is_unknown ? undefined : "button"}
+                      tabIndex={stop.is_unknown ? undefined : 0}
+                      onClick={stop.is_unknown ? undefined : () => openStop(stop)}
+                      onKeyDown={
+                        stop.is_unknown
+                          ? undefined
+                          : (e) => {
+                              if (e.target !== e.currentTarget) return;
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openStop(stop);
+                              }
+                            }
+                      }
                       className={[
-                        "flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                        "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
                         delivered
                           ? "border-success/30 bg-success/5 hover:bg-success/10"
                           : undeliverable
@@ -345,8 +374,13 @@ export function TourPage({ tourId }: Props) {
                                 : "font-medium"
                             }
                           >
-                            {stop.object?.name ?? "Unbekanntes Objekt"}
+                            {stop.is_unknown
+                              ? stop.unknown_name ?? "Unbekanntes Ziel"
+                              : stop.object?.name ?? "Unbekanntes Objekt"}
                           </span>
+                          {!stop.is_unknown && stop.key_number != null && (
+                            <Badge variant="secondary">Nr. {stop.key_number}</Badge>
+                          )}
                           {delivered && (
                             <Badge variant="success" className="gap-1">
                               <CheckCircle2 className="h-3 w-3" />
@@ -363,7 +397,9 @@ export function TourPage({ tourId }: Props) {
                         <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                           <MapPin className="h-3 w-3 shrink-0" />
                           {cleanAddressLabel(
-                            stop.object?.address ?? "Adresse unbekannt",
+                            stop.is_unknown
+                              ? stop.unknown_address ?? "Adresse unbekannt"
+                              : stop.object?.address ?? "Adresse unbekannt",
                           )}
                         </span>
                         {undeliverable && stop.undeliverable_reason && (
@@ -373,26 +409,44 @@ export function TourPage({ tourId }: Props) {
                         )}
                         {stop.object?.remark && (
                           <ObjectRemark
-                            remark={stop.object.remark}
-                            objectName={stop.object.name}
+                            remark={stop.object?.remark ?? ""}
+                            objectName={stop.object?.name ?? "Unbekanntes Objekt"}
                             className="mt-0.5"
                           />
                         )}
                       </span>
                       {stop.arrival_time && (
                         <span className="shrink-0 text-sm font-semibold tabular-nums">
-                          {stop.arrival_time.slice(0, 5)}
+                          {stop.arrival_time?.slice(0, 5)}
                         </span>
                       )}
                       <NavigateButton
-                        address={stop.object?.address ?? null}
-                        latitude={stop.object?.latitude ?? null}
-                        longitude={stop.object?.longitude ?? null}
-                        label={stop.object?.name ?? "Objekt"}
+                        address={stop.is_unknown ? stop.unknown_address : stop.object?.address ?? null}
+                        latitude={stop.is_unknown ? stop.unknown_latitude : stop.object?.latitude ?? null}
+                        longitude={stop.is_unknown ? stop.unknown_longitude : stop.object?.longitude ?? null}
+                        label={stop.is_unknown ? stop.unknown_name ?? "Unbekanntes Ziel" : stop.object?.name ?? "Objekt"}
                       />
-                      <ChevronRight
-                        className={delivered ? "h-4 w-4 shrink-0 text-muted-foreground" : "h-4 w-4 shrink-0 text-primary"}
-                      />
+                      {stop.is_unknown && !delivered && !undeliverable && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          aria-label={`${stop.unknown_name ?? "Unbekanntes Ziel"} als beliefert markieren`}
+                          title="Als beliefert markieren"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void deliverUnknownStop(stop);
+                          }}
+                        >
+                          <Check className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {!stop.is_unknown && (
+                        <ChevronRight
+                          className={delivered ? "h-4 w-4 shrink-0 text-muted-foreground" : "h-4 w-4 shrink-0 text-primary"}
+                        />
+                      )}
                     </div>
                   </li>
                 );
@@ -435,8 +489,7 @@ export function TourPage({ tourId }: Props) {
             <RouteMap warehouse={tour.warehouse} stops={mapStops} />
 
             <p className="text-center text-xs text-muted-foreground">
-              Tippe auf einen Stopp, um die Lieferung zu bestätigen und Items
-              für das nächste Mal vorzumerken.
+              Tippe auf einen Objekt-Stopp, um die Lieferung zu bestätigen. Unbekannte Ziele werden direkt als beliefert markiert.
             </p>
           </div>
         )}
