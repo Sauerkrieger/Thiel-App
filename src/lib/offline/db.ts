@@ -14,8 +14,10 @@ import { SYNC_TABLES, type SyncTable } from "@/lib/sync-tables";
 const DB_NAME = "thiel-offline";
 // Version erhöhen, damit bestehende Installationen neue Stores und
 // Indizes beim nächsten Öffnen anlegen (v6: sync_status-Index für
-// schnelles Auslesen der Offline-Queue).
-const DB_VERSION = 6;
+// schnelles Auslesen der Offline-Queue; v7: gleicher Index auch für
+// chat_messages, damit getPendingRecords dort nicht per NotFoundError
+// den kompletten Sync abschießt).
+const DB_VERSION = 7;
 
 export type OfflineTable = SyncTable | "chat_messages";
 export type SyncStatus = "synced" | "pending_upload";
@@ -46,9 +48,9 @@ function openDb(): Promise<IDBDatabase> {
             : db.createObjectStore(storeNameValue, { keyPath: "id" });
           // sync_status-Index: getPendingRecords muss nicht mehr die ganze
           // Tabelle scannen, bevor gefiltert wird (Offline-Queue-Status wird
-          // nach jeder Mutation aktualisiert).
+          // nach jeder Mutation aktualisiert). Gilt auch für chat_messages –
+          // auch dort wartet die Offline-Queue auf den Upload.
           if (
-            table !== "chat_messages" &&
             store &&
             !store.indexNames.contains("sync_status")
           ) {
