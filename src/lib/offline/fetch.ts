@@ -630,6 +630,8 @@ async function readOffline(req: OfflineRead): Promise<Response> {
   }
 
   if (path === "/api/planning") {
+    // latitude/longitude inklusive – die Pack-Modus-Karte braucht sie auch
+    // offline (sonst fehlen Ziele auf der Karte, die Liste zeigt sie aber).
     const objects = (await cacheRowsOf("objects")).map((row) => ({
       id: row.id,
       name: row.name,
@@ -638,6 +640,8 @@ async function readOffline(req: OfflineRead): Promise<Response> {
       is_pedestrian_zone_until_11: row.is_pedestrian_zone_until_11,
       opens_at: row.opens_at,
       remark: row.remark,
+      latitude: typeof row.latitude === "number" ? row.latitude : null,
+      longitude: typeof row.longitude === "number" ? row.longitude : null,
     }));
     return jsonResponse(200, { objects });
   }

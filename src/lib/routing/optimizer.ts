@@ -48,6 +48,7 @@ import {
   WAREHOUSE_NAME,
   WAREHOUSE_ADDRESS,
 } from "@/lib/warehouse";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { ObjectCategory } from "@/types/database";
 
 // Re-Export für bestehende Importe
@@ -331,7 +332,7 @@ async function solveWithOrsOptimization(
       location: [c.lng, c.lat],
       // Bei Custom-Matrix: expliziter Index in der Fahrzeitmatrix (0..n-1)
       ...(useMatrix ? { location_index: index } : {}),
-      // Haltzeit je Kategorie (Treppenhaus 6 Min, Objekt 8 Min)
+      // Haltzeit je Kategorie (Treppenhaus 6 Min, Objekt 7 Min)
       service: serviceMinutes[node] * 60,
       time_windows: timeWindows,
     };
@@ -812,6 +813,107 @@ async function solveVariant(
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Koordinaten-Backfill für die Karte                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Füllt fehlende Koordinaten von Stopp-Ergebnissen aus der Objekt-Datenbank
+ * auf (bzw. geocodet die Adresse einmalig und persistiert das Ergebnis).
+ *
+ * Hintergrund: Die Karte im Pack-/Tour-Modus zeichnet nur Stopps mit
+ * Koordinaten – die Stopp-Liste zeigt alle. Läuft die Optimierung in den
+ * Fallback (keine echten Koordinaten, Demo-Modus), fehlen die betreffenden
+ * Ziele auf der Karte, obwohl sie normal angezeigt werden. Der Backfill
+ * hält Karte und Liste konsistent; gefundene Koordinaten werden in der DB
+ * gespeichert, damit künftige Optimierungen sie direkt nutzen können.
+ */
+async function backfillMissingCoordinates(stops: OptimizedStop[]): Promise<void> {
+  const missing = stops.filter(
+    (stop) =>
+      !stop.is_unknown &&
+      !(
+        typeof stop.latitude === "number" &&
+        typeof stop.longitude === "number"
+      ),
+  );
+  if (missing.length === 0) return;
+
+  let supabase: ReturnType<typeof getSupabaseAdmin>;
+  try {
+    supabase = getSupabaseAdmin();
+  } catch {
+    // Ohne Supabase-Konfiguration kein Backfill möglich (Demo-Umgebung).
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("objects")
+    .select("id, latitude, longitude")
+    .in(
+      "id",
+      missing.map((stop) => stop.object_id),
+    );
+  if (error) {
+    console.warn(
+      "[Optimizer] Koordinaten-Backfill fehlgeschlagen:",
+      error.message,
+    );
+    return;
+  }
+
+  const coordsById = new Map(
+    (data ?? []).map((row) => [
+      String(row.id),
+      { lat: row.latitude, lng: row.longitude },
+    ]),
+  );
+
+  const toPersist: Array<{ id: string; latitude: number; longitude: number }> = [];
+  for (const stop of missing) {
+    const hit = coordsById.get(stop.object_id);
+    if (
+      hit &&
+      typeof hit.lat === "number" &&
+      typeof hit.lng === "number" &&
+      Number.isFinite(hit.lat) &&
+      Number.isFinite(hit.lng)
+    ) {
+      stop.latitude = hit.lat;
+      stop.longitude = hit.lng;
+      continue;
+    }
+    // Auch die DB hat keine Koordinaten: über die Adresse geocoden und
+    // dauerhaft speichern (keine Hash-/Demo-Koordinaten!).
+    const geo = await geocodeAddress(stop.address);
+    if (!geo.fallback) {
+      stop.latitude = geo.coord.lat;
+      stop.longitude = geo.coord.lng;
+      toPersist.push({
+        id: stop.object_id,
+        latitude: geo.coord.lat,
+        longitude: geo.coord.lng,
+      });
+    }
+  }
+
+  if (toPersist.length > 0) {
+    // Gezielte Updates (nur Koordinaten-Spalten, keine vollständigen Zeilen).
+    const results = await Promise.all(
+      toPersist.map((row) =>
+        supabase.from("objects").update({ latitude: row.latitude, longitude: row.longitude }).eq("id", row.id),
+      ),
+    );
+    const updateError = results.find((r) => r.error)?.error;
+    if (updateError) {
+      console.warn(
+        "[Optimizer] Persistierung der Koordinaten fehlgeschlagen:",
+        updateError.message,
+      );
+    }
+  }
+}
+
 export async function optimizeRoute(
   objects: RouteObject[],
   startTime?: string,
@@ -819,7 +921,7 @@ export async function optimizeRoute(
   const warnings: string[] = [];
   // Vorbereitung am Lager: 4 Min Packzeit pro Stopp + einmalig 5 Min Schlüssel
   const prepMinutes = prepMinutesForCount(objects.length);
-  // Haltzeit je Ziel: Treppenhaus 6 Min, Objekt 8 Min (Node 0 = Lager, 0 Min)
+  // Haltzeit je Ziel: Treppenhaus 6 Min, Objekt 7 Min (Node 0 = Lager, 0 Min)
   const serviceMinutes = [
     0,
     ...objects.map((o) => serviceMinutesForCategory(o.category)),
@@ -854,6 +956,47 @@ export async function optimizeRoute(
   );
   const objectCoords = objectGeos.map((g) => g.coord);
   const coords: Coordinate[] = [warehouseCoord, ...objectCoords];
+
+  // Frisch geocodete Objekt-Adressen dauerhaft speichern (nur echte Treffer,
+  // keine Hash-/Demo-Koordinaten). Sonst geocodet jede Optimierung erneut und
+  // die Tour-Karte (die die DB-Koordinaten nutzt) zeigt diese Ziele nie.
+  const geocodedToPersist: Array<{
+    id: string;
+    latitude: number;
+    longitude: number;
+  }> = [];
+  objects.forEach((obj, index) => {
+    if (!needsGeocode[index]) return;
+    const geo = objectGeos[index];
+    if (geo.fallback) return; // Hash-/Demo-Koordinaten nie speichern
+    geocodedToPersist.push({
+      id: obj.id,
+      latitude: geo.coord.lat,
+      longitude: geo.coord.lng,
+    });
+  });
+  if (geocodedToPersist.length > 0) {
+    try {
+      const supabase = getSupabaseAdmin();
+      const results = await Promise.all(
+        geocodedToPersist.map((row) =>
+          supabase
+            .from("objects")
+            .update({ latitude: row.latitude, longitude: row.longitude })
+            .eq("id", row.id),
+        ),
+      );
+      const updateError = results.find((r) => r.error)?.error;
+      if (updateError) {
+        console.warn(
+          "[Optimizer] Persistierung frisch geocodeter Koordinaten fehlgeschlagen:",
+          updateError.message,
+        );
+      }
+    } catch {
+      // Persistierung darf die Optimierung nie blockieren (Demo-Umgebung).
+    }
+  }
 
   // Zeitfenster (Node 0 = Lager)
   const earliest = [
@@ -1017,6 +1160,11 @@ export async function optimizeRoute(
   const warehouseArrival = formatMinutes(
     chosen.departureMinutes + chosen.totalMinutes,
   );
+
+  // Karte konsistent halten: Stopps ohne Koordinaten (Fallback-/Demo-Modus)
+  // bekommen die DB-/Geocode-Koordinaten – sonst fehlen sie auf der Pack-/
+  // Tour-Karte, während die Liste sie normal anzeigt.
+  await backfillMissingCoordinates(stops);
 
   return {
     mode: chosen.mode,

@@ -15,8 +15,11 @@ export function prepMinutesForCount(count: number): number {
   return count * PREP_MINUTES_PER_STOP + KEY_COLLECTION_MINUTES;
 }
 
-/** Haltzeit an einem Ziel: Objekt 8 Min, Treppenhaus 6 Min. */
-export const SERVICE_MINUTES_OBJECT = 8;
+/**
+ * Haltzeit an einem Ziel: Objekt 7 Min, Treppenhaus 6 Min.
+ * (Objekte werden mit 1 Min weniger Parkzeit berechnet als Treppenhäuser.)
+ */
+export const SERVICE_MINUTES_OBJECT = 7;
 export const SERVICE_MINUTES_TREPPENHAUS = 6;
 
 /** Haltzeit (Servicezeit) je Kategorie. */

@@ -43,6 +43,7 @@ import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
 import { startTour } from "@/lib/offline/start-tour";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
@@ -70,8 +71,11 @@ export function TourPage({ tourId }: Props) {
   const load = useCallback(async (fresh = false) => {
     setError(null);
     const url = `/api/tours/${tourId}`;
+    startListPerf("tour-page");
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached?.tour) {
+      const cachedStops = (cached.tour as TourWithStops).tour_stops ?? [];
+      markFirstData("tour-page", "cache", cachedStops.length);
       setTour(cached.tour as TourWithStops);
       setLoading(false);
     } else {
@@ -88,10 +92,15 @@ export function TourPage({ tourId }: Props) {
         return;
       }
       setTour(body.tour);
+      endListPerf("tour-page", {
+        source: typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "network",
+        count: (body.tour?.tour_stops ?? []).length,
+      });
     } catch {
       if (!cached) {
         setError({ message: "Netzwerkfehler beim Laden der Tour." });
       }
+      endListPerf("tour-page", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }
@@ -120,6 +129,10 @@ export function TourPage({ tourId }: Props) {
       })),
     [stops],
   );
+  // Hinweis: Die Karte zeigt nur Stopps mit Koordinaten. Vollständigkeit ist
+  // sichergestellt durch den Koordinaten-Backfill in GET /api/tours/[id]
+  // (Objekte ohne Koordinaten werden beim Laden geocodet + persistiert) –
+  // offline greift der Objekt-Cache mit lat/lng.
   const total = stops.length;
   const deliveredCount = stops.filter((stop) => stop.is_delivered).length;
   const undeliverableCount = stops.filter(

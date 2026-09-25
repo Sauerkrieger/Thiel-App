@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { SetupHint } from "@/components/setup-hint";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import type { ApiError } from "@/types/api";
 import type { InventoryItem } from "@/types/database";
 
@@ -61,8 +62,10 @@ export function InventoryPage() {
   // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
   const load = useCallback(async (fresh = false) => {
     setError(null);
+    startListPerf("inventory");
     const cached = fresh ? null : await offlineReadCached("/api/inventory");
     if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
+      markFirstData("inventory", "cache", (cached.items as InventoryItem[]).length);
       setItems(cached.items as InventoryItem[]);
       setLoading(false);
     } else {
@@ -82,10 +85,12 @@ export function InventoryPage() {
         return;
       }
       setItems(body.items ?? []);
+      endListPerf("inventory", { source: "network", count: (body.items ?? []).length });
     } catch {
       if (!cached) {
         setError({ message: "Netzwerkfehler beim Laden des Inventars." });
       }
+      endListPerf("inventory", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }

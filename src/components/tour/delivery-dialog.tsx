@@ -40,7 +40,8 @@ import {
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
 import { NavigateButton } from "./navigate-button";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo, TourStopWithObject } from "@/types/api";
 
@@ -125,7 +126,22 @@ export function DeliveryDialog({
 
   const load = useCallback(async () => {
     if (!stop?.object?.id) return;
-    setLoading(true);
+    startListPerf("delivery-dialog");
+    // Stale-while-revalidate: Cache-Stand sofort zeigen (offline/schwaches
+    // Netz), frische Daten parallel nachladen.
+    const cached = await offlineReadCached(
+      `/api/objects/${stop.object.id}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`,
+    );
+    if (cached) {
+      const cachedInfo = cached as unknown as PackInfo;
+      const cachedCount = (cachedInfo.items ?? []).length;
+      markFirstData("delivery-dialog", "cache", cachedCount);
+      setItems(cachedInfo.items ?? []);
+      setPreviousExtras(cachedInfo.previous_extras ?? []);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch(
         `/api/objects/${stop.object.id}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`,
@@ -133,7 +149,9 @@ export function DeliveryDialog({
       );
       const body = await res.json();
       if (!res.ok) {
-        toast.error(body.error ?? "Items konnten nicht geladen werden.");
+        if (!cached) {
+          toast.error(body.error ?? "Items konnten nicht geladen werden.");
+        }
         return;
       }
       const info = body as PackInfo;
@@ -155,8 +173,12 @@ export function DeliveryDialog({
         }
       }
       setExtras(merged);
+      endListPerf("delivery-dialog", { source: "network", count: (info.items ?? []).length });
     } catch {
-      toast.error("Items konnten nicht geladen werden.");
+      if (!cached) {
+        toast.error("Items konnten nicht geladen werden.");
+      }
+      endListPerf("delivery-dialog", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }

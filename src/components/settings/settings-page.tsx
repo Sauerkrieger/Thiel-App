@@ -9,6 +9,7 @@ import {
   Loader2,
   LogOut,
   Plus,
+  Search,
   Shield,
   Trash2,
   User,
@@ -513,6 +514,8 @@ function UsersSection({
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  // Suchbegriff für die Benutzerliste (filtert nach Anzeigename/Benutzername).
+  const [userQuery, setUserQuery] = useState("");
 
   // Lösch-Bestätigung für einen Benutzer (gestalteter Dialog)
   const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
@@ -785,6 +788,16 @@ function UsersSection({
     }
   }
 
+  /** Filtert die Benutzerliste nach dem Suchbegriff (Name oder @Benutzername). */
+  const query = userQuery.trim().toLowerCase();
+  const visibleUsers = query
+    ? users.filter(
+        (u) =>
+          u.name.toLowerCase().includes(query) ||
+          u.username.toLowerCase().includes(query),
+      )
+    : users;
+
   /** Löscht den im Dialog bestätigten Benutzer. */
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -981,11 +994,26 @@ function UsersSection({
           </Button>
         </form>
 
-        {users.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Keine Benutzer vorhanden.</p>
+        {users.length > 0 && (
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              className="pl-9"
+              placeholder="Name suchen…"
+              value={userQuery}
+              onChange={(event) => setUserQuery(event.target.value)}
+              aria-label="Benutzer nach Name suchen"
+            />
+          </div>
+        )}
+        {visibleUsers.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {users.length === 0 ? "Keine Benutzer vorhanden." : "Keine Benutzer gefunden."}
+          </p>
         ) : (
           <div className="space-y-2">
-            {users.map((u) => (
+            {visibleUsers.map((u) => (
               <div key={u.id} className="space-y-1.5 rounded-md border p-3">
                 {/* Name + Rollen-Badge (immer voll sichtbar) */}
                 <div className="flex min-w-0 items-center gap-2 text-sm font-medium">

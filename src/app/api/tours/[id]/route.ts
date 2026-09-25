@@ -6,7 +6,8 @@ import { requireUser, isAdmin } from "@/lib/auth";
 import { checkLww } from "@/lib/lww";
 import { lwwConflictResponse } from "@/lib/http";
 import type { Database } from "@/types/database";
-import { orsGeocodeSearch } from "@/lib/ors";
+import { orsGeocodeSearch, normalizeAddressForGeocoding } from "@/lib/ors";
+import { photonGeocodeSearch } from "@/lib/photon";
 import { WAREHOUSE_NAME, WAREHOUSE_ADDRESS } from "@/lib/warehouse";
 import type { TourStatus } from "@/types/database";
 
@@ -68,6 +69,72 @@ async function assertTourAccess(id: string, userId: string, isAdminUser: boolean
   return tour.driver_id === userId;
 }
 
+/**
+ * Koordinaten-Backfill für die Tour-Karte: Objekte der Tour ohne Koordinaten
+ * werden einmalig über die Adresse geocodet und in der DB persistiert.
+ * Damit zeigt die Karte im Tour-Modus (Ausfahren) alle Ziele – auch wenn sie
+ * beim Speichern des Objekts noch nicht geocodet wurden.
+ *
+ * Läuft parallel (alle fehlenden Objekte gleichzeitig) und mit Gesamt-Timeout
+ * (3 s): Nur Objekte mit echtem Geocoding-Treffer werden in dieser Antwort
+ * angereichert, alle Treffer werden persistiert. Schläft das Netz/Geocoding,
+ * antwortet der Endpunkt trotzdem spätestens nach dem Timeout (dann ohne
+ * Anreicherung – der nächste Aufruf hat die persistierten Koordinaten).
+ */
+const BACKFILL_TIMEOUT_MS = 3_000;
+
+async function backfillStopObjectCoordinates(
+  stops: unknown[],
+): Promise<void> {
+  const missing = stops
+    .map((stop) => (stop as { object?: unknown }).object)
+    .filter(
+      (obj): obj is { id: string; address: string; latitude: number | null; longitude: number | null } =>
+        Boolean(obj) &&
+        typeof (obj as { id?: unknown }).id === "string" &&
+        typeof (obj as { address?: unknown }).address === "string" &&
+        !(
+          typeof (obj as { latitude?: unknown }).latitude === "number" &&
+          typeof (obj as { longitude?: unknown }).longitude === "number"
+        ),
+    );
+  if (missing.length === 0) return;
+
+  const timeout = new Promise<null>((resolve) =>
+    setTimeout(() => resolve(null), BACKFILL_TIMEOUT_MS),
+  );
+
+  const work = (async () => {
+    const supabase = getSupabaseAdmin();
+    await Promise.all(
+      missing.map(async (obj) => {
+        const normalized = normalizeAddressForGeocoding(obj.address);
+        // Reihenfolge wie im Optimierer: Photon (fuzzy) → ORS (exakt).
+        const hit =
+          (await photonGeocodeSearch(normalized)) ??
+          (await orsGeocodeSearch(normalized));
+        if (!hit) return;
+        const { error } = await supabase
+          .from("objects")
+          .update({ latitude: hit.latitude, longitude: hit.longitude })
+          .eq("id", obj.id);
+        if (!error) {
+          // Antwortobjekt anreichern, damit diese Antwort die Koordinaten
+          // bereits enthält (Karte sofort vollständig).
+          obj.latitude = hit.latitude;
+          obj.longitude = hit.longitude;
+        }
+      }),
+    );
+  })();
+
+  try {
+    await Promise.race([work, timeout]);
+  } catch {
+    /* Backfill darf den Tour-Ladevorgang nie blockieren */
+  }
+}
+
 export async function GET(_request: Request, { params }: Context) {
   const auth = await requireUser();
   if (!auth.user) {
@@ -121,6 +188,9 @@ export async function GET(_request: Request, { params }: Context) {
         delivered_items: parseDeliveredItems(stop.delivered_items),
       })),
     };
+    // Karte im Tour-Modus vollständig halten: Objekte ohne Koordinaten
+    // geocoden (begrenzt auf 3 s, persistiert für künftige Requests).
+    await backfillStopObjectCoordinates(tour.tour_stops);
     return NextResponse.json({ tour: { ...tour, warehouse: await resolveWarehouse() } });
   } catch (e) {
     return apiErrorResponse(e);

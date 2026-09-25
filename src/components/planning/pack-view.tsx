@@ -64,6 +64,10 @@ export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: 
       })),
     [route],
   );
+  // Hinweis: Vollständigkeit der Karten-Koordinaten ist sichergestellt durch
+  // den Koordinaten-Fallback in runOptimize (Planungs-Auswahl) und den
+  // Backfill im Optimierer; RouteMap zeigt ein Overlay, wenn gar keine
+  // Koordinaten vorliegen.
 
   // Nur die im Pack-Modus bestätigten Schlüssel werden angezeigt.
   const sortedKeys = [...new Set(

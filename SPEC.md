@@ -181,10 +181,11 @@ Eingebettet in `src/lib/routing/optimizer.ts`:
    - Fußgängerzone → **zwei Varianten werden berechnet**: (A) direkt zum Objekt, nur bis 11:00 Uhr möglich (Deadline 11:00); (B) über den per Overpass gesuchten **nächstgelegenen befahrbaren Haltepunkt** (`findNearestDrivablePoint`) + Restweg **zu Fuß** (keine Deadline)
 4. **Die schnellere Variante gewinnt:** Die Fußweg-Zeit (≈ 5 km/h) wird beim Vergleich von Variante B berücksichtigt. Bei Variante B zeigt der Stopp „x m zu Fuß" (`approach_by_foot`); ist A nicht machbar, gewinnt B automatisch (sofern ein Haltepunkt gefunden wurde)
 5. **Vorbereitungszeit** am Lager: 4 Min/Stopp + 5 Min Schlüssel (`prep_begin` = Abfahrt − Vorbereitung)
-6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 6 Min, Objekt 8 Min (Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
+6. **Haltzeit je Ziel** nach Kategorie: Treppenhaus 6 Min, Objekt 7 Min (Objekte mit 1 Min weniger Parkzeit; Servicezeit fließt in VROOM/TSP-Solver und Ankunfts-/Abfahrtszeiten ein)
 7. Warnungen (z. B. nicht erfüllbare Restriktionen) als `warnings[]`
 
 Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | `google-matrix` | `haversine`), sortierte Stopps mit Ankunft/Abfahrt, Koordinaten, Gesamtdauer, Lager (`warehouse`). Im **Demo-Modus** (kein ORS-Key) `null`-Koordinaten – keine erfundenen Hash-Koordinaten.
+- **Koordinaten-Persistierung:** Frisch geocodete Objekt-Adressen (kein Hash-Fallback) werden von der Optimierung **dauerhaft in der DB gespeichert** – Folge-Optimierungen und die Pack-/Tour-Karte nutzen sie ohne erneutes Geocoding
 
 ### 5.5 Pack-Modus (`/planung` nach Optimierung)
 - Stopp-Timeline mit Ankunftszeiten, **grünes/rotes Status-Badge** („Optimierung erfolgreich" / „Optimierung fehlgeschlagen")
@@ -199,7 +200,8 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 - Klick auf Stopp → Item-Liste: Standard-Items fest gecheckt/ausgegraut, variable Items für die **nächste Belieferung** an-/abwählbar (wird als `next_delivery_items` gespeichert)
 - Objekt-Stopps zeigen Badge „Nr. x“ mit der im Pack-Modus ausgewählten Schlüsselnummer
 - **Unbekannte Ziele** erscheinen ebenfalls (Name + Adresse, nicht antippbar, ohne Item-Dialog) und werden direkt per Check-Button als „beliefert“ markiert
-- **„Beliefern fertig"** → Stopp abhaken; alle Stopps fertig → Tour `completed`
+- **„Beliefern fertig“** → Stopp abhaken; alle Stopps fertig → Tour `completed`
+- **Karten-Vollständigkeit:** Objekte ohne gespeicherte Koordinaten werden beim Tour-Laden (`GET /api/tours/[id]`) einmalig per Photon/ORS geocodet und **in der DB persistiert** (3-s-Timeout, blockiert die Antwort nicht) – die Karte zeigt damit alle Ziele; beim Anlegen einer Tour werden die verifizierten Koordinaten unbekannter Ziele als Stopps-Snapshot gespeichert
 
 ### 5.7 Historie (`/historie`)
 - Vergangene Touren mit Datum, Fahrer, Anzahl belieferter Stopps und belieferten Objekten (`GET /api/tours`)
@@ -248,6 +250,7 @@ Ergebnis (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` 
 - Löschen, Foto-/OCR-Import, Authentifizierung, Passwort-/Passkey-Verwaltung und Benutzeranlage bleiben online-only. Lesbare Daten werden je nach Endpunkt aus IndexedDB bereitgestellt; der Service Worker cached die App-Shell, greift aber nicht in `/api/*` ein.
 - Schlüssel-Auswahl und unbekannte Ziele sind offline voll funktionsfähig: Der Sync-Whitelist für `tour_stops` sind die Felder `key_number`, `is_unknown` und die unbekannt-Ziel-Spalten bekannt; die Offline-Historie/Tour-Ansicht rekonstruiert sie aus dem Cache. Das Adress-Autocomplete braucht für neue Vorschläge hingegen eine Online-Verbindung.
 - Performance: Cache-Schreibvorgänge laufen als Batch in je einer Lese- + Schreib-Transaktion pro Tabelle (statt zwei Transaktionen je Zeile); die Offline-Queue liest pending-Einträge über einen `sync_status`-Index (IndexedDB v6); der Historie-/Tour-Assembler gruppiert Stopps einmalig pro `tour_id` statt eines Vollscans je Tour.
+- **Ladezeit-Messung (`src/lib/perf.ts`):** Unsichtbare Instrumentierung aller Item-Listen (Tour, Liefer-Dialog, Pack-Dialog, Items-Dialog, Inventar, Historie, Planung) mit Stale-while-revalidate-Kennung (Cache-Stand vs. Netz), Zeilenanzahl und Netzwerktyp (Network-Information-API); Logging nur in der Dev-Konsole bei Werten > 1 s, keine UI, kein Verhaltens-Einfluss
 - Der Sync-/Offline-Indikator zeigt Online-/Offline-Status, laufende Synchronisierung, offene Einträge, letzten Sync und Fehler an.
 
 ## 7. Karten (Leaflet)

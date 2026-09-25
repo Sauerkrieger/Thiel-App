@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 import { SetupHint } from "@/components/setup-hint";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import type { ApiError, TourHistoryItem, UserListItem } from "@/types/api";
 
@@ -65,8 +66,10 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       params.set("user_id", filterUserId);
     }
     const url = `/api/tours?${params.toString()}`;
+    startListPerf("history");
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached && Array.isArray(cached.tours) && cached.tours.length > 0) {
+      markFirstData("history", "cache", (cached.tours as TourHistoryItem[]).length);
       setTours(cached.tours as TourHistoryItem[]);
       setLoading(false);
     } else {
@@ -85,10 +88,12 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
         return;
       }
       setTours(body.tours ?? []);
+      endListPerf("history", { source: "network", count: (body.tours ?? []).length });
     } catch {
       if (!cached) {
         setError({ message: "Netzwerkfehler beim Laden der Tourenhistorie." });
       }
+      endListPerf("history", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }

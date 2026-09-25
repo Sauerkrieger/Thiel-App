@@ -17,7 +17,8 @@ import {
 } from "@/components/ui/dialog";
 import { formatItemLabel } from "@/lib/items";
 import { itemPhotoUrl } from "@/lib/storage";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import type { ObjectItem } from "@/types/database";
 import type { ObjectWithItems } from "@/types/api";
 
@@ -32,6 +33,21 @@ type Props = {
   readOnly?: boolean;
 };
 
+/**
+ * Sortiert Items wie die Items-API (GET /api/objects/[id]/items):
+ * Standard-Items zuerst, innerhalb gleicher Priorität die ältesten zuerst.
+ * Dadurch sieht die sofort angezeigte Cache-Liste genauso aus wie die
+ * nachgeladene Server-Liste (kein sichtbares Umspringen beim Refresh).
+ */
+function sortItemsForDisplay(items: ObjectItem[]): ObjectItem[] {
+  return [...items].sort((a, b) => {
+    if (a.is_always_required !== b.is_always_required) {
+      return a.is_always_required ? -1 : 1;
+    }
+    return a.created_at.localeCompare(b.created_at);
+  });
+}
+
 export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete = true, readOnly = false }: Props) {
   const [items, setItems] = useState<ObjectItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,19 +60,53 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
 
   const loadItems = useCallback(async () => {
     if (!object) return;
-    setLoading(true);
+    startListPerf("items-dialog");
+    // Stale-while-revalidate: zuerst den gecachten Stand sofort anzeigen
+    // (kein Skeleton + Netz-Warteschleife bei schwachem Netz oder offline),
+    // frische Daten parallel vom Server nachladen. Leere Cache-Listen zählen
+    // nicht als Daten (sonst blinkt kurz „Keine Items“, bis die frischen
+    // Daten eintreffen).
+    let initialItems: ObjectItem[] | null = null;
+    const cached = await offlineReadCached(`/api/objects/${object.id}/items`);
+    const cachedItems = (cached?.items as ObjectItem[] | undefined) ?? [];
+    if (cachedItems.length > 0) {
+      initialItems = cachedItems;
+    } else if (
+      Array.isArray(object.object_items) &&
+      object.object_items.length > 0
+    ) {
+      // Fallback: eingebettete Items aus der Objektliste, falls der
+      // Cache-Store (z. B. direkt nach einem Sync) noch leer ist.
+      initialItems = object.object_items;
+    }
+    if (initialItems) {
+      markFirstData("items-dialog", "cache", initialItems.length);
+      setItems(sortItemsForDisplay(initialItems));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch(`/api/objects/${object.id}/items`, {
         cache: "no-store",
       });
       const body = await res.json();
       if (!res.ok) {
-        toast.error(body.error ?? "Items konnten nicht geladen werden.");
+        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung
+        // ersetzen (gleiches Verhalten wie auf der Objektübersicht).
+        if (!initialItems) {
+          toast.error(body.error ?? "Items konnten nicht geladen werden.");
+        }
         return;
       }
-      setItems(body.items ?? []);
+      const freshItems = (body.items ?? []) as ObjectItem[];
+      setItems(sortItemsForDisplay(freshItems));
+      endListPerf("items-dialog", { source: "network", count: freshItems.length });
     } catch {
-      toast.error("Items konnten nicht geladen werden.");
+      if (!initialItems) {
+        toast.error("Items konnten nicht geladen werden.");
+      }
+      endListPerf("items-dialog", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }

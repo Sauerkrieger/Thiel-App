@@ -129,7 +129,15 @@ export function RouteMap({ warehouse, stops, className }: Props) {
     };
   }, []);
 
-  // ORS-Straßenverlauf für die Wegpunkt-Reihenfolge abrufen (Rundtour)
+  // ORS-Straßenverlauf für die Wegpunkt-Reihenfolge abrufen (Rundtour).
+  // Nur die Wegpunkt-Koordinaten als Dependency nutzen (String-Key), damit
+  // neue Array-Referenzen (z. B. nach „Stopp beliefert“) die Anfrage nicht
+  // erneut auslösen – sonst flackert die Route bei jedem Fortschritt und
+  // erscheint zwischendrin unvollständig.
+  const waypointsKey = useMemo(
+    () => waypoints.map((w) => `${w.lat.toFixed(6)},${w.lng.toFixed(6)}`).join("|"),
+    [waypoints],
+  );
   useEffect(() => {
     if (waypoints.length < 2) {
       setLine(null);
@@ -179,7 +187,11 @@ export function RouteMap({ warehouse, stops, className }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [waypoints]);
+    // waypointsKey repräsentiert die Koordinaten-Reihenfolge exakt (siehe
+    // useMemo oben); die Anfrage hängt nur davon ab, nicht von der Identität
+    // des waypoints-Arrays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waypointsKey]);
 
   // Linie + Marker zeichnen
   useEffect(() => {

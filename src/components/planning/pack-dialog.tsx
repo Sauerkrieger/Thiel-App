@@ -23,7 +23,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
-import { offlineFetch } from "@/lib/offline/fetch";
+import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo } from "@/types/api";
 
@@ -140,21 +141,39 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
 
   const load = useCallback(async () => {
     if (!objectId) return;
-    setLoading(true);
+    startListPerf("pack-dialog");
+    // Stale-while-revalidate: Cache-Stand sofort zeigen (offline/schwaches
+    // Netz), frische Daten parallel nachladen.
+    const cached = await offlineReadCached(`/api/objects/${objectId}/pack-info`);
+    if (cached) {
+      const cachedInfo = cached as unknown as PackInfo;
+      markFirstData("pack-dialog", "cache", (cachedInfo.items ?? []).length);
+      setItems(cachedInfo.items ?? []);
+      setPreviousExtras(cachedInfo.previous_extras ?? []);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await offlineFetch(`/api/objects/${objectId}/pack-info`, {
         cache: "no-store",
       });
       const body = await res.json();
       if (!res.ok) {
-        toast.error(body.error ?? "Packliste konnte nicht geladen werden.");
+        if (!cached) {
+          toast.error(body.error ?? "Packliste konnte nicht geladen werden.");
+        }
         return;
       }
       const info = body as PackInfo;
       setItems(info.items ?? []);
       setPreviousExtras(info.previous_extras ?? []);
+      endListPerf("pack-dialog", { source: "network", count: (info.items ?? []).length });
     } catch {
-      toast.error("Packliste konnte nicht geladen werden.");
+      if (!cached) {
+        toast.error("Packliste konnte nicht geladen werden.");
+      }
+      endListPerf("pack-dialog", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }

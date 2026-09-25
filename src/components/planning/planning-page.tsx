@@ -50,6 +50,7 @@ import {
   toMinutes,
 } from "@/lib/routing/time";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import { getCurrentUserId } from "@/lib/offline/sync";
 import type {
   ApiError,
@@ -234,8 +235,10 @@ export function PlanningPage() {
   const load = useCallback(async (fresh = false) => {
     setError(null);
     const url = "/api/planning";
+    startListPerf("planning");
     const cached = fresh ? null : await offlineReadCached(url);
     if (cached) {
+      markFirstData("planning", "cache", ((cached.objects as PlanningObject[]) ?? []).length);
       setObjects((cached.objects as PlanningObject[]) ?? []);
       setLoading(false);
     } else {
@@ -254,10 +257,12 @@ export function PlanningPage() {
         return;
       }
       setObjects(body.objects ?? []);
+      endListPerf("planning", { source: "network", count: (body.objects ?? []).length });
     } catch {
       if (!cached) {
         setError({ message: "Netzwerkfehler beim Laden der Tourenplanung." });
       }
+      endListPerf("planning", { source: "offline", count: null });
     } finally {
       setLoading(false);
     }
@@ -419,6 +424,26 @@ export function PlanningPage() {
         return;
       }
       const routeBody = body as RouteOptimizationResult;
+      // Fallback-Koordinaten aus der Planungsauswahl einsetzen: Stopps ohne
+      // Koordinaten (Demo-Modus/Geocoding-Fallback) bekommen die verifizierten
+      // DB-Koordinaten der Objektliste – sonst fehlen sie später auf der
+      // Pack-/Tour-Karte, während die Liste sie normal anzeigt.
+      const coordByObjectId = new Map(
+        objects.map((o) => [o.id, { latitude: o.latitude ?? null, longitude: o.longitude ?? null }]),
+      );
+      const stopsWithCoords = routeBody.stops.map((stop) => {
+        if (stop.is_unknown) return stop;
+        if (typeof stop.latitude === "number" && typeof stop.longitude === "number") return stop;
+        const fallback = coordByObjectId.get(stop.object_id);
+        if (
+          fallback &&
+          typeof fallback.latitude === "number" &&
+          typeof fallback.longitude === "number"
+        ) {
+          return { ...stop, latitude: fallback.latitude, longitude: fallback.longitude };
+        }
+        return stop;
+      });
       const initialKeys = new Set(
         routeBody.stops
           .filter((stop) => !stop.is_unknown && stop.key_number != null)
@@ -426,6 +451,7 @@ export function PlanningPage() {
       );
       const routeWithKeys = {
         ...routeBody,
+        stops: stopsWithCoords,
         selected_key_stop_ids: [...initialKeys],
         key_selection_confirmed: false,
       } as RouteOptimizationResult;
@@ -515,20 +541,31 @@ export function PlanningPage() {
           warehouse_arrival: formatMinutes(
             toMinutes(route.warehouse_arrival) + delta,
           ),
-          stops: route.stops.map((stop) => ({
-            object_id: stop.is_unknown ? null : stop.object_id,
-            key_number:
-              !stop.is_unknown && selectedKeyStopIds.has(stop.object_id)
-                ? stop.key_number ?? null
-                : null,
-            arrival_time: formatMinutes(toMinutes(stop.arrival) + delta),
-            is_unknown: stop.is_unknown,
-            unknown_target_id: stop.unknown_target_id,
-            unknown_name: stop.unknown_name,
-            unknown_address: stop.unknown_address,
-            unknown_latitude: stop.latitude,
-            unknown_longitude: stop.longitude,
-          })),
+          stops: route.stops.map((stop) => {
+            // Unbekannte Ziele: die verifizierten Koordinaten aus dem lokalen
+            // Ziel-Entwurf (Adress-Auswahl) als Stop-Snapshot speichern –
+            // sonst fehlt das Ziel später auf der Tour-Karte. Fallback: die
+            // Koordinaten, mit denen die Route berechnet wurde.
+            const target = stop.is_unknown
+              ? unknownTargets.find((t) => t.id === stop.unknown_target_id)
+              : undefined;
+            return {
+              object_id: stop.is_unknown ? null : stop.object_id,
+              key_number:
+                !stop.is_unknown && selectedKeyStopIds.has(stop.object_id)
+                  ? stop.key_number ?? null
+                  : null,
+              arrival_time: formatMinutes(toMinutes(stop.arrival) + delta),
+              is_unknown: stop.is_unknown,
+              unknown_target_id: stop.unknown_target_id,
+              unknown_name: stop.unknown_name,
+              unknown_address: stop.unknown_address,
+              unknown_latitude:
+                target?.latitude ?? (stop.is_unknown ? stop.latitude : null),
+              unknown_longitude:
+                target?.longitude ?? (stop.is_unknown ? stop.longitude : null),
+            };
+          }),
         }),
       });
       const body = await res.json();

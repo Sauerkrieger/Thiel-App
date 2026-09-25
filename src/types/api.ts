@@ -37,7 +37,11 @@ export type PlanningObject = Pick<
   | "is_pedestrian_zone_until_11"
   | "opens_at"
   | "remark"
->;
+> & {
+  /** Verifizierte Koordinaten (Fallback für die Pack-/Tour-Karte, wenn die Optimierung ohne echte Koordinaten läuft). */
+  latitude?: number | null;
+  longitude?: number | null;
+};
 
 /** Temporäres Ziel, das nur zur aktuellen Planung gehört. */
 export type UnknownTarget = {

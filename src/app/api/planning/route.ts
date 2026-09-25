@@ -28,10 +28,13 @@ export async function GET() {
   }
 
   try {
+    // latitude/longitude mitliefern: Sie landen über den Offline-Cache in
+    // IndexedDB und stellen sicher, dass die Pack-Modus-Karte auch offline
+    // alle Ziele zeigt (nicht nur die Liste).
     const { data: objects, error } = await getSupabaseAdmin()
       .from("objects")
       .select(
-        "id, name, address, category, is_pedestrian_zone_until_11, opens_at, remark",
+        "id, name, address, category, is_pedestrian_zone_until_11, opens_at, remark, latitude, longitude",
       )
       .order("name");
     if (error) throw error;
