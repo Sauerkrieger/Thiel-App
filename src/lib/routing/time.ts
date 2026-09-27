@@ -29,8 +29,13 @@ export function serviceMinutesForCategory(category: ObjectCategory): number {
     : SERVICE_MINUTES_OBJECT;
 }
 
-/** "HH:MM" → Minuten seit 0 Uhr. */
-export function toMinutes(time: string): number {
+/**
+ * "HH:MM" → Minuten seit 0 Uhr. Akzeptiert auch null/undefined (z. B.
+ * fehlende Felder in alten Pack-Entwürfen) und ungültige Formate –
+ * zurück kommt dann 0 statt eines Crashes (undefined.split).
+ */
+export function toMinutes(time: string | null | undefined): number {
+  if (typeof time !== "string") return 0;
   const [h, m] = time.split(":").map((p) => Number.parseInt(p, 10));
   if (Number.isNaN(h) || Number.isNaN(m)) return 0;
   return h * 60 + m;

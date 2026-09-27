@@ -50,8 +50,10 @@ import {
   toMinutes,
 } from "@/lib/routing/time";
 import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { nowServerAligned } from "@/lib/offline/clock";
 import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
 import { getCurrentUserId } from "@/lib/offline/sync";
+import { newUuid } from "@/lib/offline/db";
 import type {
   ApiError,
   OptimizedStop,
@@ -121,7 +123,12 @@ function loadPackDraft(): RouteOptimizationResult | null {
       !parsed.route ||
       !Array.isArray(parsed.route.stops) ||
       !Array.isArray(parsed.route.warnings) ||
-      typeof parsed.route.mode !== "string"
+      typeof parsed.route.mode !== "string" ||
+      // Zeitfelder werden beim Rendern (PackView) und Tourstart mathematisch
+      // benutzt – ohne sie würde ein alter/defekter Entwurf die Seite crashen.
+      typeof parsed.route.start_time !== "string" ||
+      typeof parsed.route.departure_time !== "string" ||
+      typeof parsed.route.warehouse_arrival !== "string"
     ) {
       return null;
     }
@@ -227,6 +234,7 @@ export function PlanningPage() {
   // Warnung „noch nicht eingestempelt“ vor der Routenberechnung
   const [clockWarningOpen, setClockWarningOpen] = useState(false);
   const [checkingClock, setCheckingClock] = useState(false);
+  const [clockingIn, setClockingIn] = useState(false);
 
   const todayLabel = useMemo(() => dateFormatter.format(new Date()), []);
 
@@ -361,7 +369,9 @@ export function PlanningPage() {
 
   function addUnknownTarget() {
     const target: UnknownTarget = {
-      id: crypto.randomUUID(),
+      // newUuid statt crypto.randomUUID: Letzteres existiert nur in sicheren
+      // Kontexten (HTTPS/localhost) – sonst würde „Unbekanntes Ziel“ crashen.
+      id: newUuid(),
       name: `Unbekanntes Ziel ${unknownTargets.length + 1}`,
       address: "",
       latitude: null,
@@ -484,8 +494,8 @@ export function PlanningPage() {
       checkingClock
     ) return;
     // Vor der Routenberechnung prüfen, ob bereits eingestempelt ist. Ist das
-    // nicht der Fall, muss der Nutzer erst bestätigen (weiter ohne Einstempeln
-    // oder erst zur Hauptseite zum Einstempeln).
+    // nicht der Fall, muss der Nutzer erst bestätigen (direkt einstempeln oder
+    // ohne Einstempeln fortfahren).
     setCheckingClock(true);
     try {
       const res = await offlineFetch("/api/time-tracking/clock", {
@@ -509,6 +519,42 @@ export function PlanningPage() {
   function handleContinueWithoutClockIn() {
     setClockWarningOpen(false);
     void runOptimize();
+  }
+
+  // „Erst einstempeln“: direkt aus dem Dialog heraus einstempeln (ohne
+  // Seitenwechsel – die Planungsseite würde sonst neu geladen, die Auswahl
+  // verloren gehen und die Routenberechnung abbrechen). Danach die
+  // Berechnung normal fortsetzen.
+  async function handleClockInAndContinue() {
+    if (clockingIn) return;
+    setClockingIn(true);
+    try {
+      const eventAt = nowServerAligned();
+      const res = await offlineFetch("/api/time-tracking/clock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "clock_in",
+          event_at: eventAt,
+          client_updated_at: eventAt,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(body.error ?? "Einstempeln fehlgeschlagen.");
+        // Dialog bleibt offen: erneut versuchen oder ohne Einstempeln fortfahren.
+        return;
+      }
+      toast.success("Arbeitszeit gestartet.");
+      // Stempeluhr-Widget (Header/Mobile-Leiste) sofort aktualisieren.
+      window.dispatchEvent(new Event("thiel-clock-refresh"));
+      setClockWarningOpen(false);
+      await runOptimize();
+    } catch {
+      toast.error("Einstempeln fehlgeschlagen.");
+    } finally {
+      setClockingIn(false);
+    }
   }
 
   function handleApplyPhoto(matches: PhotoMatch[]) {
@@ -1082,11 +1128,18 @@ export function PlanningPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => router.push("/")}>
+            <Button
+              onClick={() => void handleClockInAndContinue()}
+              disabled={clockingIn}
+            >
               <Play className="h-4 w-4" />
-              Erst einstempeln
+              {clockingIn ? "Wird eingestempelt…" : "Erst einstempeln"}
             </Button>
-            <Button variant="outline" onClick={handleContinueWithoutClockIn}>
+            <Button
+              variant="outline"
+              onClick={handleContinueWithoutClockIn}
+              disabled={clockingIn}
+            >
               Ohne Einstempeln fortfahren
             </Button>
           </DialogFooter>
