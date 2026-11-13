@@ -97,7 +97,7 @@ export function TimeReviewDialog({ userId }: { userId: string | null }) {
     setNote("");
   }, [current]);
 
-  // Gesetzliche Mindestpause (§ 4 ArbZG) für die gewählte Endzeit.
+     // Statutory minimum break (UK WTR) for the selected end time.
   const requiredBreak =
     current && endTime && !Number.isNaN(new Date(endTime).getTime())
       ? requiredBreakMinutes(current.clock_in, new Date(endTime).toISOString())
@@ -211,8 +211,8 @@ export function TimeReviewDialog({ userId }: { userId: string | null }) {
             />
             {requiredBreak > 0 && enteredBreak < requiredBreak && (
               <p className="text-xs text-amber-700">
-                In accordance with § 4 ArbZG, {requiredBreak} minutes
-                minutes of minimum break were applied automatically.
+                Under the UK Working Time Regulations, {requiredBreak} minutes
+                of minimum break were applied automatically.
               </p>
             )}
           </div>

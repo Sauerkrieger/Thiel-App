@@ -37,19 +37,20 @@ export const CONTRACT_DEFAULTS: Record<
   ContractType,
   { weekly_target_hours: number; working_days_per_week: number; vacation_days_per_year: number }
 > = {
-  full_time: { weekly_target_hours: 40, working_days_per_week: 5, vacation_days_per_year: 30 },
-  part_time: { weekly_target_hours: 20, working_days_per_week: 5, vacation_days_per_year: 30 },
+  full_time: { weekly_target_hours: 40, working_days_per_week: 5, vacation_days_per_year: 28 },
+  part_time: { weekly_target_hours: 20, working_days_per_week: 5, vacation_days_per_year: 28 },
   mini_job: { weekly_target_hours: 10, working_days_per_week: 2, vacation_days_per_year: 12 },
-  custom: { weekly_target_hours: 40, working_days_per_week: 5, vacation_days_per_year: 30 },
+  custom: { weekly_target_hours: 40, working_days_per_week: 5, vacation_days_per_year: 28 },
 };
 
 /**
- * Vorschlagswert für den Jahresurlaub bei geänderten Arbeitstagen:
- * 30 Tage bei 5 Arbeitstagen/week, proportional (aufgerundet).
+ * Suggested annual vacation when the working days change: 28 days at five
+ * working days per week (UK statutory 5.6 weeks), proportional and rounded UP
+ * because the statutory entitlement is a minimum. Two days → 12, three → 17.
  */
 export function vacationSuggestionFor(workingDaysPerWeek: number): number {
   if (!Number.isFinite(workingDaysPerWeek) || workingDaysPerWeek <= 0) return 0;
-  return Math.round(30 * (workingDaysPerWeek / 5));
+  return Math.ceil(28 * (workingDaysPerWeek / 5));
 }
 
 export function isContractType(value: unknown): value is ContractType {

@@ -262,7 +262,7 @@ export function InventoryPage() {
                 <Input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Neues Item (e.g. Micromops)"
+                  placeholder="New item (e.g. Micromops)"
                   aria-label="New item name"
                 />
                 <Input

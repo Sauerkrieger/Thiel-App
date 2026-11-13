@@ -13,12 +13,12 @@ const ROLE_LABELS: Record<string, string> = {
   cleaner: "Cleaner",
   substitute: "Substitute",
 };
-const DAY_LABELS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
-// Alle Stempel-/Abwesenheitszeiten sind in lokaler Zeit (Europa/Berlin)
-// erfasst. Der Server läuft in UTC, daher muss das Export hier explizit
-// berücksichtigt werden – sonst verschieben sich alle Zeiten um +1/+2 h
-// und Datum/weekntag an Monatsgrenzen.
-const TZ = "Europe/Berlin";
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Clock-ins and absences are recorded in local time. Payroll for this template
+// is UK-based, so every time in the export is rendered in Europe/London.
+// The server runs in UTC, so without this all times would shift by +1/+2 h
+// and dates/weekdays would break at month boundaries.
+const TZ = "Europe/London";
 const TYPE_LABELS: Record<string, string> = {
   vacation: "Vacation",
   sick_leave: "Sick leave",
@@ -32,7 +32,7 @@ function cell(value: unknown): string {
 }
 function dateLabel(value: string): string {
   const date = new Date(`${value.slice(0, 10)}T00:00:00`);
-  return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
 function dateTimeLabel(value: string): string {
   return new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: TZ });
@@ -72,14 +72,14 @@ function approvalNameFor(entryId: string, logs: Array<{ time_entry_id: string | 
 function timeLabel(value: string): string {
   return new Date(value).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
 }
-/** Echte Wochentags-IDx (0=So … 6=Sa) eines ISO-Zeitstempels in Europa/Berlin. */
-function berlinWeekdayIndex(value: string | Date): number {
+/** Real weekday index (0=Sun … 6=Sat) of an ISO timestamp in Europe/London. */
+function londonWeekdayIndex(value: string | Date): number {
   const weekday = new Date(value).toLocaleDateString("en-US", { weekday: "short", timeZone: TZ });
   const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return map[weekday] ?? new Date(value).getDay();
 }
 function numberLabel(value: number | null, digits = 2): string {
-  return value == null ? "" : value.toFixed(digits).replace(".", ",");
+  return value == null ? "" : value.toFixed(digits);
 }
 function profileName(profile: Record<string, unknown> | undefined, fallback: string): { first: string; last: string } {
   const first = [profile?.first_name, profile?.vorname].find((value) => typeof value === "string" && value.trim());
@@ -157,7 +157,7 @@ export async function GET(request: Request) {
     }
 
     if (mode === "summary") {
-      const summaryRows = [["Personnel number", "Last name", "First name", "Role", "Target_hours", "Actual_hours", "Sick_hours", "Vacation_hours", "Overtime_hours", "Minijob_Limit_Stunden", "Minijob_Auslastung_Prozent", "Status"]];
+      const summaryRows = [["Personnel number", "Last name", "First name", "Role", "Target_hours", "Actual_hours", "Sick_hours", "Vacation_hours", "Overtime_hours", "Minijob_limit_hours", "Minijob_utilisation_percent", "Status"]];
       for (const profile of profiles ?? []) {
         const name = profileName(profile as Record<string, unknown>, profile.id);
         const employeeEntries = (entries ?? []).filter((entry) => entry.user_id === profile.id);
@@ -179,8 +179,8 @@ export async function GET(request: Request) {
         const miniJobPercent = isMiniJob && miniJobLimit > 0 ? Math.round((regular / miniJobLimit) * 100) : null;
         summaryRows.push([personnelNumber(profile as Record<string, unknown>, profile.id), name.last, name.first, roleLabel(profile.role), numberLabel(targetHours), numberLabel(regular), numberLabel(absenceHours("sick_leave")), numberLabel(absenceHours("vacation")), numberLabel(regular - targetHours), isMiniJob ? numberLabel(miniJobLimit) : "", miniJobPercent == null ? "" : String(miniJobPercent), hasOpen ? "Open entries" : "Fully approved"]);
       }
-      const csv = "\uFEFF" + summaryRows.map((row) => row.map(cell).join(";")).join("\r\n") + "\r\n";
-      return new NextResponse(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="Lohnexport_${COMPANY_SLUG}_Monatsuebersicht_${bounds.label}.csv"`, "Cache-Control": "no-store" } });
+      const csv = "\uFEFF" + summaryRows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n";
+      return new NextResponse(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="payroll_export_${COMPANY_SLUG}_monthly_summary_${bounds.label}.csv"`, "Cache-Control": "no-store" } });
     }
 
     const detailRows = [["Date", "Weekday", "Personnel number", "Last name", "First name", "Role", "Work location object", "Shift type", "From", "To", "Break minutes", "Work hours", "Status", "Approved by", "Note"]];
@@ -194,7 +194,7 @@ export async function GET(request: Request) {
       // Einsatzort und würden als anderes als das gearbeitete Objekt
       // in die Lohnbuchhaltung wandern.
       const locationNames = tourObjectsByDriverDate.get(`${entry.user_id}:${entry.clock_in.slice(0, 10)}`) ?? [];
-      detailRows.push([dateTimeLabel(entry.clock_in), DAY_LABELS[berlinWeekdayIndex(entry.clock_in)], personnelNumber(profile, entry.user_id), name.last, name.first, profile ? roleLabel(profile.role) : "", locationNames.join(", "), absence ? TYPE_LABELS[String(absence.type)] : "Work", timeLabel(entry.clock_in), entry.clock_out ? timeLabel(entry.clock_out) : "", String(entry.break_duration_minutes ?? 0), hours == null ? "" : numberLabel(hours), statusLabel(Boolean(entry.is_approved), Boolean(entry.clock_out)), approvalNameFor(entry.id, exportAuditLogs, profileById), entry.note ?? ""]);
+      detailRows.push([dateTimeLabel(entry.clock_in), DAY_LABELS[londonWeekdayIndex(entry.clock_in)], personnelNumber(profile, entry.user_id), name.last, name.first, profile ? roleLabel(profile.role) : "", locationNames.join(", "), absence ? TYPE_LABELS[String(absence.type)] : "Work", timeLabel(entry.clock_in), entry.clock_out ? timeLabel(entry.clock_out) : "", String(entry.break_duration_minutes ?? 0), hours == null ? "" : numberLabel(hours), statusLabel(Boolean(entry.is_approved), Boolean(entry.clock_out)), approvalNameFor(entry.id, exportAuditLogs, profileById), entry.note ?? ""]);
     }
     for (const requestRow of requests ?? []) {
       // Auch abgelehnte Abwesenheiten werden exportiert, damit der Status
@@ -209,7 +209,7 @@ export async function GET(request: Request) {
         detailRows.push([dateLabel(date), DAY_LABELS[day.getDay()], personnelNumber(profile, requestRow.user_id), name.last, name.first, profile ? (roleLabel(profile.role)) : "", "", TYPE_LABELS[String(requestRow.type)] ?? String(requestRow.type), "", "", "0", "", requestRow.status === "approved" ? "Approved" : requestRow.status === "rejected" ? "Rejected" : "Pending", "", String(requestRow.employee_note ?? requestRow.reviewer_note ?? "")]);
       }
     }
-    const csv = "\uFEFF" + detailRows.map((row) => row.map(cell).join(";")).join("\r\n") + "\r\n";
+    const csv = "\uFEFF" + detailRows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n";
     return new NextResponse(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="payroll_export_${COMPANY_SLUG}_shift_details_${bounds.label}.csv"`, "Cache-Control": "no-store" } });
   } catch (error) {
     return apiErrorResponse(error);

@@ -31,9 +31,9 @@ function defaultChangeReason(
     return "Clock out & approve";
   }
   if (payload.clock_out) return "Clock-out (correction)";
-  if (payload.is_approved === true) return "Freigabe";
-  if (payload.is_approved === false) return "Ablehnung";
-  return "Korrektur";
+  if (payload.is_approved === true) return "Approval";
+  if (payload.is_approved === false) return "Rejection";
+  return "Correction";
 }
 
 /**

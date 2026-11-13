@@ -144,14 +144,14 @@ export function ObjectInfoDialog({ open, object, isAdmin, onOpenChange, onEdit, 
             {isAdmin && (object.customer || object.customer_number || object.cleaning_interval) && (
               <div className="space-y-3 rounded-lg border p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Admin-Info
+                  Admin info
                 </p>
-                {object.customer && <InfoRow icon={<Store className="h-4 w-4" />} label="Kunde" value={object.customer} />}
+                {object.customer && <InfoRow icon={<Store className="h-4 w-4" />} label="Customer" value={object.customer} />}
                 {object.customer_number && (
-                  <InfoRow icon={<KeyRound className="h-4 w-4" />} label="Kundennummer" value={object.customer_number} />
+                  <InfoRow icon={<KeyRound className="h-4 w-4" />} label="Customer number" value={object.customer_number} />
                 )}
                 {object.cleaning_interval && (
-                  <InfoRow icon={<Calendar className="h-4 w-4" />} label="Reinigungsturnus" value={object.cleaning_interval} />
+                  <InfoRow icon={<Calendar className="h-4 w-4" />} label="Cleaning interval" value={object.cleaning_interval} />
                 )}
               </div>
             )}

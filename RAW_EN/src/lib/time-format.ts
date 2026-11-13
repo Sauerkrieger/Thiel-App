@@ -24,10 +24,12 @@ export function workedMinutesOf(entry: ClockedEntryLike): number {
 }
 
 /**
- * Gesetzliche Mindestpause nach § 4 ArbZG in Minuten, abhängig von der
- * Anwesenheitszeit (clock_out − clock_in):
- * - mehr als 6 bis 9 Stunden → 30 Minuten
- * - mehr als 9 Stunden → 45 Minuten
+ * Statutory minimum break in minutes under the UK Working Time Regulations
+ * 1998 (reg. 12), depending on the presence time (clock_out − clock_in):
+ * - more than 6 hours → 20 minutes
+ *
+ * There is no second tier: the former 30 min (> 6 h) / 45 min (> 9 h) steps
+ * were the German ArbZG rule and do not apply in the UK.
  */
 export function requiredBreakMinutes(clockIn: string, clockOut: string): number {
   const start = Date.parse(clockIn);
@@ -35,13 +37,12 @@ export function requiredBreakMinutes(clockIn: string, clockOut: string): number 
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return 0;
   // Math.floor, damit die Grenzen exakt zum SQL-Trigger (floor(epoch/60)) passen.
   const presence = Math.floor((end - start) / 60000);
-  if (presence > 9 * 60) return 45;
-  if (presence > 6 * 60) return 30;
+  if (presence > 6 * 60) return 20;
   return 0;
 }
 
 /**
- * Ergänzt die erfasste Pause auf die gesetzliche Mindestpause (§ 4 ArbZG).
+ * Raises the recorded break to the statutory minimum break (UK WTR).
  * Die Netto-Arbeitszeit bleibt (clock_out − clock_in) − Pause (workedMinutesOf).
  */
 export function enforcedBreakMinutes(

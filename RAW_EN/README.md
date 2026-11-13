@@ -63,5 +63,9 @@ This folder is prepared for the Sites adapter (Next.js + OpenNext,
 - `src/lib` – domain logic (routing, geocoding, offline sync, auth, time tracking)
 - `supabase/migrations` – database schema including RLS
 
-The frontend language is English. The legal defaults (working time, breaks,
-vacation) follow German law (ArbZG / BUrlG) and are documented in the code.
+The frontend language is English. This template targets the **UK market**: the
+statutory break follows the Working Time Regulations 1998 (20 minutes once the
+working day exceeds 6 hours), all timestamps and the payroll export use
+`Europe/London`, and the export uses English weekday codes. Vacation entitlement
+still uses the German default. SPEC.md § 12.1 lists every deliberate deviation
+from the German original and the reason for it.

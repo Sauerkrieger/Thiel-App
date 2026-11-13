@@ -475,7 +475,7 @@ export function PlanningPage() {
       if (routeBody.warnings.length > 0) {
         toast.info("Route calculated – please note the hints.");
       } else {
-        toast.success("Route optimiert & sortiert.");
+        toast.success("Route optimised & sorted.");
       }
       // Pack-Modus lokal zwischenspeichern: „Ausfahren beginnen“ legt die
       // echte Tour erst beim Start an (status „in_transit“).

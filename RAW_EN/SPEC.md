@@ -97,7 +97,7 @@ can hold local polygons used when Overpass is unreachable (empty by default).
 - `contract_type` – controls the target hours in the overtime account
 - `weekly_target_hours` (default 40) – weekly target hours (auto-filled: full time 40 / part time 20 / mini job 10)
 - `working_days_per_week` (default 5) – planned working days (5/5/2; basis for vacation entitlement)
-- `vacation_days_per_year` (default 30) – individual annual vacation days; remaining = `per_year − used`
+- `vacation_days_per_year` (default 28 – UK statutory 5.6 weeks; mini job 12) – individual annual vacation days; remaining = `per_year − used`
 - `vacation_days_total`, `vacation_days_used`, `overtime_hours` (manual correction)
 - `chat_preferred_language` – personal translation language
 - LWW fields `client_updated_at`, `synced_at`
@@ -110,9 +110,9 @@ can hold local polygons used when Overpass is unreachable (empty by default).
 - `source` (`clock` = time clock, `submitted` = submitted work time)
 - **At most ONE open entry per user** (partial unique index `WHERE clock_out IS NULL`)
 - LWW fields + `updated_at` trigger
-- **Auto-timeout trigger `set_time_entry_review_flag`:** open entries exceeding **12 h** OR reaching **midnight (00:00, Europe/Berlin)** become `requires_review = true` + `is_approved = false`; a normal clock-out or admin approval resets the flag
+- **Auto-timeout trigger `set_time_entry_review_flag`:** open entries exceeding **12 h** OR reaching **midnight (00:00, Europe/London)** become `requires_review = true` + `is_approved = false`; a normal clock-out or admin approval resets the flag
 - Housekeeping function `flag_overdue_time_entries()` flags overdue entries "silently" (called on every read/write of time data)
-- **Minimum-break trigger `enforce_min_break` (§ 4 ArbZG):** on every write with `clock_out` the presence time is checked and the recorded break is raised to the legal minimum – **> 6 up to 9 h → 30 min, > 9 h → 45 min** (never reduced). Backfill raises existing data. Net working time = `(clock_out − clock_in) − break_duration_minutes`
+- **Minimum-break trigger `enforce_min_break` (UK Working Time Regulations 1998, reg. 12):** on every write with `clock_out` the presence time is checked and the recorded break is raised to the legal minimum – **> 6 h → 20 min** (never reduced; there is no second tier in the UK). No backfill is needed because breaks are only ever raised. Net working time = `(clock_out − clock_in) − break_duration_minutes`. Migration `20261113000000_uk_wtr_breaks_and_london_time` replaces the original German ArbZG rule (30 min > 6 h, 45 min > 9 h) – see § 12.1
 
 ### `time_entry_audit_logs` – revision-safe change log
 - `id`, `time_entry_id` (FK, `on delete set null` – the log survives deletion), `changed_by_user_id` (FK, `on delete set null`)
@@ -315,11 +315,11 @@ Result (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | 
 - **Absence requests** (vacation, sick leave, unpaid, time off in lieu) with status display and optional substitute selection
 
 **Auto-timeout & review queue (forgotten clock-out):**
-- An open clock-in exceeding **12 h** or reaching **midnight (Europe/Berlin)** becomes `requires_review = true` + `is_approved = false` (DB trigger on writes, housekeeping `flag_overdue_time_entries` on every access)
+- An open clock-in exceeding **12 h** or reaching **midnight (Europe/London)** becomes `requires_review = true` + `is_approved = false` (DB trigger on writes, housekeeping `flag_overdue_time_entries` on every access)
 - Such entries do **not** count towards week/month totals or the overtime account until approved
 - **Forced popup on app start:** unresolved, still open review entries trigger a **non-dismissible** dialog with actual end time, break and note (`PATCH /api/time-tracking/entries/[id]`). Submitting closes the entry (`source = submitted`) → "submitted / waiting for approval"; the popup disappears once the entry is closed or approved; re-check on tab focus
 
-**Break automation (§ 4 ArbZG):** presence time **> 6 up to 9 h → at least 30 min break, > 9 h → at least 45 min**. The recorded break is automatically raised to the minimum (never reduced) – the DB trigger covers all write paths (time clock, offline sync, submission, admin correction). Net working time = `(clock_out − clock_in) − break`.
+**Break automation (UK Working Time Regulations 1998, reg. 12):** presence time **> 6 h → at least 20 min break** (no second tier). The recorded break is automatically raised to the minimum (never reduced) – the DB trigger covers all write paths (time clock, offline sync, submission, admin correction). Net working time = `(clock_out − clock_in) − break`.
 
 **Time admin (`/admin/time-tracking`):**
 - **Employee status:** list or calendar view; who is clocked in right now, current tour/next object, overtime, contract; search filter; absence calendar with employee search filter and "add absence"
@@ -327,7 +327,7 @@ Result (`RouteOptimizationResult`): `mode` (`ors-optimization` | `ors-matrix` | 
 - **Needs review:** all flagged open clock-ins with live duration; "clock out & approve" (end time, break, note, optional change reason – closes, enforces the minimum break, sets `is_approved = true`) and "delete"
 - **Approval feed:** closed but unapproved entries ("submitted work time" / "forgotten clock-out") and open requests, with icon + status badge
 - **Change log (audit log):** every admin edit/approval/deletion is logged revision-safe (old→new snapshot, editor, timestamp, reason – "offline change (sync)" for offline changes); employees' submissions are logged too. Edited entries show a history icon with tooltip ("{reason} by X on DD.MM.YYYY at HH:MM"); clicking opens a dialog with all changes incl. field diff
-- Add/edit entries (with mandatory reason for the audit log), delete, vacation/overtime corrections; **payroll CSV export** (`/api/admin/time-tracking/export`, UTC times rendered in `Europe/Berlin`, weekday-aware)
+- Add/edit entries (with mandatory reason for the audit log), delete, vacation/overtime corrections; **payroll CSV export** (`/api/admin/time-tracking/export`, UTC times rendered in `Europe/London`, English weekday labels `Sun…Sat`, `dd/mm/yyyy` dates, comma-separated, `.` decimal point)
 
 ### 6.13 Performance instrumentation
 `src/lib/perf.ts` instruments all item lists (tour, delivery dialog, pack dialog, items dialog, inventory, history, planning) with stale-while-revalidate marker (cache state vs. network), row count and network type. Logging only in the dev console for values > 1 s; no UI, no behavioural impact.
@@ -405,19 +405,47 @@ RAW_EN/
     ocr.ts · gemini-chat.ts                  # photo import, transcription, translation
     traffic-matrix.ts · stadia-matrix.ts     # live-traffic matrices
     routing/optimizer.ts · routing/tsp.ts · routing/time.ts   # VROOM + matrix + TSP + time windows
-    contract.ts · time-format.ts · time-tracking.ts           # target/actual, overtime, ArRZG breaks, audit
+    contract.ts · time-format.ts · time-tracking.ts           # target/actual, overtime, WTR breaks, audit
     offline/                        # db, fetch, sync, clock, chat
     lww.ts · sync-tables.ts         # last-write-wins registry and syncable tables
     perf.ts · realtime.ts · storage.ts · image-upload.ts
-  supabase/migrations/              # 42 versioned schema/performance migrations
+  supabase/migrations/              # 44 versioned schema/performance migrations
   supabase/setup.sql                # all migrations in one file for the SQL editor
 ```
 
 ## 12. Known state & limitations
 
-- **UI language:** English, but a number of legacy German strings remain (e.g. "Anzeigename", "Kategorie", "Admin-Info", "Belieferte Objekte", "Nicht lieferbar", "Keys taken", "Neue Item", "Firmenkontakt", "Synchronisiert…"). They are cosmetic and do not affect behaviour.
-- **Legal defaults are German:** break automation and vacation accounting follow ArbZG/BUrlG (30/45 min breaks, 30 days at 5 days/week). Other jurisdictions need different rules in the DB triggers.
-- **Hard-coded time zone:** time evaluation and the payroll export use `Europe/Berlin` (including the CSV export).
+- **UI language:** English throughout. The legacy German UI strings of the German original ("Anzeigename", "Kategorie", "Admin-Info", "Belieferte Objekte", "Nicht lieferbar", "Keys taken", "Neue Item", "Firmenkontakt", "Synchronisiert…") have been translated. Code comments in older files are still partly German; they have no user impact.
+- **Legal defaults follow UK law:** break automation follows the Working Time Regulations 1998 (20 min above 6 h presence). See § 12.1 for every deliberate deviation from the German original and why.
+- **Vacation entitlement follows UK law:** 28 days at 5 days/week including bank holidays (5.6 weeks), mini job pro rata 12 days (`vacation_days_per_year`). Anything beyond that can be granted per employee.
+- **Time zone:** time evaluation and the payroll export use `Europe/London` (including the CSV export).
 - **Template scope:** single company per deployment – there is no multi-tenant separation; branding, warehouse and service area come from environment variables.
 - **Demo mode:** without `ORS_API_KEY` the optimisation falls back to Haversine with `null` coordinates (no invented positions on the map).
 - **Chat** requires `VAPID_*` for push and `GEMINI_API_KEY` for transcription/translation; without keys these features degrade gracefully.
+
+### 12.1 Deliberate deviations for the UK (England)
+
+This template is sold to companies operating in **England**, so the following
+defaults differ from the German original (`THIEL`, `RAW_DE`). Each item is
+implemented, not just documented.
+
+| Area | German original | This template (UK) | Why |
+| :--- | :--- | :--- | :--- |
+| Minimum break | ArbZG § 4: 30 min above 6 h, 45 min above 9 h presence | WTR 1998 reg. 12: **20 min above 6 h**, no second tier | Different statute – the Working Time Regulations grant a single 20-minute rest break once the working day exceeds six hours |
+| "Midnight" for forgotten clock-outs | `Europe/Berlin` | `Europe/London` | Drivers and office staff work in England; a German midnight flags entries up to an hour early or late and shifts dates at month boundaries |
+| Payroll export | `Europe/Berlin`, weekday codes `Mo…So`, `dd.mm.yyyy`, `,` decimal, `;` delimiter | `Europe/London`, `Sun…Sat`, `dd/mm/yyyy`, `.` decimal, `,` delimiter | A UK payroll or accountant cannot read German weekday codes or decimal commas |
+| UI strings | partly German | English | Leftovers such as "Anzeigename", "Kategorie", "Belieferte Objekte", "Nicht lieferbar", "Firmenkontakt", "Synchronisiert…" were translated |
+| Vacation entitlement | BUrlG: 30 days at 5 days/week | **28 days** at 5 days/week (5.6 weeks incl. bank holidays), mini job 12 days pro rata | The UK statutory holiday entitlement is 5.6 weeks, not 30 days; the previous value would have promised four days more than the law requires and than UK competitors quote |
+
+**Where the UK rules live:** migrations
+`20261113000000_uk_wtr_breaks_and_london_time.sql` (replaces
+`enforce_min_break`, `set_time_entry_review_flag` and
+`flag_overdue_time_entries`) and `20261113000001_uk_vacation_entitlement.sql`
+(column default, `handle_new_user`, backfill 30 → 28) – both also appended to
+`supabase/setup.sql`; plus `src/lib/time-format.ts` (`requiredBreakMinutes`),
+`src/lib/contract.ts` (`CONTRACT_DEFAULTS`, `vacationSuggestionFor`), the
+payroll export route and the affected UI components.
+
+**Deliberately not changed:** the `mini_job` contract type (a German concept –
+it is kept because the columns and contracts behind it are still usable) and
+German-language code comments in older files.

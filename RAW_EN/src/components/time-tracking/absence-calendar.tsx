@@ -247,7 +247,7 @@ export function AbsenceCalendar({ employees, requests, onEditRequest }: Calendar
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">{selectedCount} Ereignisse · {filteredEmployees.length} Mitarbeiter</p>
+      <p className="text-xs text-muted-foreground">{selectedCount} events · {filteredEmployees.length} employees</p>
     </div>
   );
 }

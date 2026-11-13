@@ -327,7 +327,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
 
                 <div className="mt-3">
                   <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Belieferte Objekte ({tour.delivered_count}/{tour.total_stops})
+                    Delivered objects ({tour.delivered_count}/{tour.total_stops})
                   </p>
                   {tour.delivered_objects.length > 0 ? (
                     <div className="flex flex-wrap gap-1.5">
@@ -346,7 +346,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                   {(tour.undeliverable ?? []).length > 0 && (
                     <div className="mt-2">
                       <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                        Nicht lieferbar ({tour.undeliverable.length})
+                        Not deliverable ({tour.undeliverable.length})
                       </p>
                       <div className="flex flex-wrap gap-1.5">
                         {(tour.undeliverable ?? []).map((u, i) => (
@@ -362,7 +362,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                   {(tour.unknown_targets ?? []).length > 0 && (
                     <div className="mt-2">
                       <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Unbekannte Ziele ({tour.unknown_targets.length})
+                        Unknown destinations ({tour.unknown_targets.length})
                       </p>
                       <div className="space-y-1">
                         {tour.unknown_targets.map((target, index) => (
@@ -380,7 +380,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
                   {(tour.key_numbers ?? []).length > 0 && (
                     <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
                       <KeyRound className="h-3.5 w-3.5 text-primary" />
-                      Keys taken: {(tour.key_numbers ?? []).map((key) => `No. ${key}`).join(", ")}
+                      Keys collected: {(tour.key_numbers ?? []).map((key) => `No. ${key}`).join(", ")}
                     </p>
                   )}
                 </div>

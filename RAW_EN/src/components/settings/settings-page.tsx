@@ -231,10 +231,10 @@ function CompanySettingsSection({ supportPhone }: { supportPhone: string | null 
       const response = await fetch("/api/chat/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ support_phone_number: phone.trim() }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) { toast.error(data.error ?? "Could not save the support number."); return; }
-      setPhone(data.supportPhoneNumber ?? ""); toast.success("Supportnummer gespeichert.");
+      setPhone(data.supportPhoneNumber ?? ""); toast.success("Support number saved.");
     } finally { setSaving(false); }
   }
-  return <Card><CardHeader><CardTitle>Firmenkontakt</CardTitle><CardDescription>Central support number for direct calls from the employee chat.</CardDescription></CardHeader><CardContent className="space-y-3"><Label htmlFor="support-phone">Supportnummer</Label><Input id="support-phone" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="e.g. +49 931 123456" disabled={saving} /><Button onClick={() => void save()} disabled={saving}>Save</Button></CardContent></Card>;
+  return <Card><CardHeader><CardTitle>Company contact</CardTitle><CardDescription>Central support number for direct calls from the employee chat.</CardDescription></CardHeader><CardContent className="space-y-3"><Label htmlFor="support-phone">Support number</Label><Input id="support-phone" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="e.g. +44 20 7946 0958" disabled={saving} /><Button onClick={() => void save()} disabled={saving}>Save</Button></CardContent></Card>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -298,11 +298,11 @@ function ProfileSection({ user }: { user: CurrentUser }) {
             disabled={loading}
           />
           <p className="text-xs text-muted-foreground">
-            Wird in „{username || "…"}@{USER_EMAIL_DOMAIN}“ umgewandelt.
+            Converted to "{username || "…"}@{USER_EMAIL_DOMAIN}".
           </p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="name">Anzeigename</Label>
+          <Label htmlFor="name">Display name</Label>
           <Input
             id="name"
             value={name}
@@ -525,7 +525,7 @@ function UsersSection({
   // Soll-Werte des neuen Benutzers (Auto-Fill je Vertragsart, custom manuell).
   const [weeklyTargetHours, setWeeklyTargetHours] = useState("40");
   const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState("5");
-  const [vacationDaysPerYear, setVacationDaysPerYear] = useState("30");
+  const [vacationDaysPerYear, setVacationDaysPerYear] = useState("28");
 
   // Objektzuweisung beim Bearbeiten eines Objektbetreuers.
   const [editTarget, setEditTarget] = useState<UserListItem | null>(null);
@@ -738,7 +738,7 @@ function UsersSection({
       setEditContract(user);
       setEditWeekly(String(user.weekly_target_hours ?? 40));
       setEditDays(String(user.working_days_per_week ?? 5));
-      setEditVacation(String(user.vacation_days_per_year ?? 30));
+      setEditVacation(String(user.vacation_days_per_year ?? 28));
       return;
     }
     void handleContractChange(user.id, value as ContractType);
@@ -847,7 +847,7 @@ function UsersSection({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="nu-name">Anzeigename</Label>
+              <Label htmlFor="nu-name">Display name</Label>
               <Input
                 id="nu-name"
                 placeholder="e.g. Max Mustermann"

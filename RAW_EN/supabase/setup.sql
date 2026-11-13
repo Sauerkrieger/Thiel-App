@@ -2519,3 +2519,176 @@ comment on column public.tour_stops.is_unknown is
 comment on column public.tour_stops.unknown_target_id is
   'Client-ID des temporären Ziels, nur innerhalb der Tour relevant.';
 
+
+-- =============================================================
+-- 20261113000000_uk_wtr_breaks_and_london_time.sql
+-- =============================================================
+-- =============================================================
+-- UK rules: Working Time Regulations breaks & Europe/London time
+-- Migration 20261113000000
+-- =============================================================
+-- This template targets the United Kingdom market, so its legal and time
+-- defaults deliberately differ from the German original:
+--
+-- 1) Minimum break (public.enforce_min_break)
+--    UK Working Time Regulations 1998, reg. 12: 20 minutes of rest once the
+--    working day exceeds 6 hours. There is no second tier – the German ArbZG
+--    steps (30 min above 6 h, 45 min above 9 h) do not apply in the UK.
+-- 2) Forgotten clock-outs (public.set_time_entry_review_flag,
+--    public.flag_overdue_time_entries)
+--    "Midnight" is local midnight in Europe/London, not Europe/Berlin.
+--
+-- Both rules are replaced in place, so an existing deployment only needs to
+-- run this migration. Recorded breaks are never reduced, so there is no
+-- backfill: entries that already carry a longer German-style break keep it.
+
+-- ------------------------------------------------------------------
+-- 1) Minimum break: UK WTR, 20 minutes above 6 hours of presence
+-- ------------------------------------------------------------------
+create or replace function public.enforce_min_break()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  presence_minutes integer;
+  min_break integer;
+begin
+  if new.clock_out is not null then
+    presence_minutes := floor(extract(epoch from (new.clock_out - new.clock_in)) / 60)::int;
+    -- UK WTR: 20 minutes once the working day exceeds 6 hours.
+    if presence_minutes > 6 * 60 then
+      min_break := 20;
+    else
+      min_break := 0;
+    end if;
+    if min_break > 0 then
+      new.break_duration_minutes := greatest(coalesce(new.break_duration_minutes, 0), min_break);
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function public.enforce_min_break() is
+  'Raises the recorded break to the UK statutory minimum (WTR 1998: 20 min above 6 h presence).';
+
+-- ------------------------------------------------------------------
+-- 2) Review flag: overdue at 12 h or at local midnight (Europe/London)
+-- ------------------------------------------------------------------
+create or replace function public.set_time_entry_review_flag()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  overdue boolean;
+begin
+  overdue := new.clock_out is null
+    and (
+      now() - new.clock_in >= interval '12 hours'
+      or new.clock_in < (date_trunc('day', now() at time zone 'Europe/London') at time zone 'Europe/London')
+    );
+
+  if overdue then
+    new.is_approved := false;
+    new.requires_review := true;
+  elsif new.clock_out is not null and new.is_approved then
+    new.requires_review := false;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.flag_overdue_time_entries()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  flagged integer;
+begin
+  update public.time_entries
+    set requires_review = true,
+        is_approved = false
+  where clock_out is null
+    and not requires_review
+    and (
+      now() - clock_in >= interval '12 hours'
+      or clock_in < (date_trunc('day', now() at time zone 'Europe/London') at time zone 'Europe/London')
+    );
+  get diagnostics flagged = row_count;
+  return flagged;
+end;
+$$;
+
+-- =============================================================
+-- 20261113000001_uk_vacation_entitlement.sql
+-- =============================================================
+-- =============================================================
+-- UK vacation entitlement: 28 days (5.6 weeks) instead of 30
+-- Migration 20261113000001
+-- =============================================================
+-- The German original grants 30 days at five working days per week (BUrlG).
+-- In England the statutory entitlement is 5.6 weeks, i.e. 28 days including
+-- bank holidays for a five-day week. This template therefore defaults to 28.
+--
+-- Changed:
+--   1) column default of profiles.vacation_days_per_year: 30 -> 28
+--   2) handle_new_user(): new accounts get 28 (mini job keeps 12 = 5.6 x 2)
+--   3) backfill: profiles that still carry the old German default (exactly 30)
+--      are moved to 28. Manually agreed values other than 30 stay untouched.
+--      Mini-job profiles keep their pro-rata value.
+--
+-- Everyone remains free to grant more: the field is editable per employee.
+
+alter table public.profiles
+  alter column vacation_days_per_year set default 28;
+
+comment on column public.profiles.vacation_days_per_year is
+  'Individual annual vacation days. Default 28 (UK statutory 5.6 weeks); mini job 12. Remaining = vacation_days_per_year - vacation_days_used.';
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_contract public.contract_type;
+begin
+  v_contract := case
+    when new.raw_user_meta_data ->> 'contract_type' in
+      ('full_time', 'part_time', 'mini_job', 'custom')
+      then (new.raw_user_meta_data ->> 'contract_type')::public.contract_type
+    else 'full_time'::public.contract_type
+  end;
+
+  insert into public.profiles (id, name, role, contract_type,
+    weekly_target_hours, working_days_per_week, vacation_days_per_year)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'name', ''),
+    case
+      when new.raw_user_meta_data ->> 'role' in
+        ('driver', 'admin', 'facility_manager', 'substitute')
+        then (new.raw_user_meta_data ->> 'role')::public.user_role
+      else 'driver'::public.user_role
+    end,
+    v_contract,
+    case v_contract when 'part_time' then 20 when 'mini_job' then 10 else 40 end,
+    case v_contract when 'mini_job' then 2 else 5 end,
+    -- UK: 28 days at 5 days/week, mini job pro rata (5.6 weeks x 2 days).
+    case v_contract when 'mini_job' then 12 else 28 end
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+-- Backfill: the old German default (30) becomes the UK default (28).
+update public.profiles
+   set vacation_days_per_year = 28
+ where contract_type <> 'mini_job'
+   and vacation_days_per_year = 30;

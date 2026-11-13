@@ -970,7 +970,7 @@ function ItemPreviewBody({
 
                 {g.similar_object && (
                   <div className="mt-2 rounded-md border border-amber-400/50 bg-amber-50/70 px-2.5 py-2 text-xs text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
-                    <strong>Warnung: </strong>
+                    <strong>Warning: </strong>
                     A similar object already exists: {g.similar_object.name}
                     {g.similar_object.address ? ` · ${g.similar_object.address}` : ""}.
                     A new object will be created anyway; existing data stays unchanged.
@@ -989,7 +989,7 @@ function ItemPreviewBody({
                       onChange={(e) =>
                         updateGroup(gi, { customer: e.target.value })
                       }
-                      placeholder="e.g. Firma Meyer GmbH"
+                      placeholder="e.g. Acme Facilities Ltd"
                       aria-label={`Customer for ${g.object_name}`}
                     />
                   </div>
@@ -1043,7 +1043,7 @@ function ItemPreviewBody({
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">
-                        Kategorie
+                        Category
                       </Label>
                       <Select
                         value={g.category ?? "objekt"}

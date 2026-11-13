@@ -365,7 +365,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
           </div>
 
           <div className="space-y-2">
-            <Label>Kategorie</Label>
+            <Label>Category</Label>
             <Select
               value={category}
               onValueChange={(v) => setCategory(v as ObjectCategory)}
@@ -425,7 +425,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
 
           {/* Admin info (visible to admins only) */}
           <div className="space-y-2">
-            <Label>Admin-Info</Label>
+            <Label>Admin info</Label>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="obj-customer">Customer</Label>
@@ -433,7 +433,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                   id="obj-customer"
                   value={customer}
                   onChange={(e) => setCustomer(e.target.value)}
-                  placeholder="e.g. Firma Meyer GmbH"
+                  placeholder="e.g. Acme Facilities Ltd"
                 />
               </div>
               <div className="space-y-2">

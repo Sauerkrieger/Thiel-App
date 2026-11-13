@@ -95,7 +95,7 @@ export async function generateRegistrationOptionsForUser(params: {
     rpName: params.rp.rpName,
     rpID: params.rp.rpID,
     userName: params.user.email ?? params.user.name ?? params.user.id,
-    userDisplayName: params.user.name || params.user.email || "Benutzer",
+    userDisplayName: params.user.name || params.user.email || "User",
     userID: Buffer.from(params.user.id, "utf-8"),
     attestationType: "none",
     excludeCredentials: params.existingCredentials.map((id) => ({ id })),

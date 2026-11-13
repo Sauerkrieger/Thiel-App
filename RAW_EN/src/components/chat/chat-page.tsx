@@ -648,7 +648,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
             {showScrollToBottom && <Button type="button" size="icon" variant="secondary" className="fixed left-1/2 z-30 h-9 w-9 -translate-x-1/2 rounded-full shadow-md sm:hidden" style={{ bottom: `calc(${keyboardOpen ? `${keyboardHeight}px` : "3.5rem"} + ${composerHeight}px + 0.75rem)` }} onClick={() => scrollMessagesToBottom()} aria-label="Scroll to the newest message" title="Scroll to the newest message"><ArrowDown className="h-4 w-4" /></Button>}
             <div ref={composerRef} className="shrink-0 space-y-2 border-t pt-4 max-md:fixed max-md:inset-x-0 max-md:z-30 max-md:bg-background/95 max-md:px-4 max-md:pb-2 max-md:pt-2 max-md:backdrop-blur" style={{ bottom: keyboardOpen ? `${keyboardHeight}px` : "3.5rem", transition: "none" }}>
               <div className="flex gap-2">
-                <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Nachricht schreiben…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
+                <Input ref={inputRef} value={body} enterKeyHint="send" onChange={(event) => setBody(event.target.value)} placeholder="Write a message…" disabled={!selectedThread && !broadcast} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} />
                 <Button onPointerDown={(event) => event.preventDefault()} onClick={send} disabled={!selectedThread && !broadcast}><Send /></Button>
               </div>
               <div className="flex flex-wrap items-center gap-2">

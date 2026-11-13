@@ -161,9 +161,9 @@ export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: 
             <Flag className="h-3 w-3" />
           </span>
           <div className="flex-1">
-            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Lager)</p>
+            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Warehouse)</p>
             <p className="text-xs text-muted-foreground">
-              Abfahrt um {route.start_time}
+              Departure at {route.start_time}
             </p>
           </div>
         </li>
@@ -231,7 +231,7 @@ export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: 
             <Flag className="h-3 w-3" />
           </span>
           <div className="flex-1">
-            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Lager)</p>
+            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Warehouse)</p>
             <p className="text-xs text-muted-foreground">
               Return at ~{route.warehouse_arrival}
             </p>

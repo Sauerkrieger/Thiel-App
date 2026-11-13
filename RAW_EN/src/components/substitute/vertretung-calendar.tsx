@@ -144,7 +144,7 @@ export function VertretungCalendar({ assignments }: Props) {
             <ChevronLeft />
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={resetToToday}>
-            Heute
+            Today
           </Button>
           <Button
             type="button"
@@ -375,7 +375,7 @@ export function VertretungCalendar({ assignments }: Props) {
                 <div className="space-y-1.5">
                   <p className="flex items-center gap-1.5 text-sm font-semibold">
                     <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-                    Hinweis
+                    Note
                   </p>
                   {selected.reviewer_note ? (
                     <p className="whitespace-pre-wrap rounded-md border bg-muted/20 px-3 py-2 text-sm">
