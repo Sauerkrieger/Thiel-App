@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Example Company — Delivery &amp; Tour Planning</title>
+    <link rel="stylesheet" href="assets/fonts/fonts.css" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      :root {
+        --bg: #f6f8fc;
+        --ink: #0b1220;
+        --muted: #475569;
+        --line: #e3e9f2;
+        --blue: #1d4ed8;
+        --blue-soft: #eef2ff;
+        --green: #0f766e;
+        --green-soft: #e7f6f1;
+        --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden;
+        background: var(--bg); color: var(--ink); font-family: var(--font);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        position: relative; width: 100%; height: 100%;
+        background:
+          radial-gradient(1000px 560px at 82% -6%, #e6edfb 0%, rgba(246,248,252,0) 60%),
+          radial-gradient(900px 520px at 4% 104%, #e8f5f0 0%, rgba(246,248,252,0) 62%),
+          var(--bg);
+      }
+      .grid {
+        position: absolute; inset: 0;
+        background-image: linear-gradient(to right, #e6ecf6 1px, transparent 1px),
+          linear-gradient(to bottom, #e6ecf6 1px, transparent 1px);
+        background-size: 120px 120px; opacity: 0.5;
+        mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 76%);
+        -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 76%);
+      }
+      .scene { position: absolute; inset: 0; }
+      .copy { position: absolute; left: 132px; top: 352px; width: 560px; }
+      .eyebrow {
+        display: inline-flex; align-items: center; gap: 10px;
+        font-size: 18px; font-weight: 700; letter-spacing: 0.12em;
+        text-transform: uppercase; color: var(--blue);
+        background: #fff; border: 1px solid #dbe4f5; border-radius: 999px;
+        padding: 9px 16px;
+      }
+      .eyebrow .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--blue); }
+      h1 { font-size: 68px; line-height: 1.05; letter-spacing: -0.028em; margin-top: 26px; font-weight: 800; }
+      h1 .accent { color: var(--blue); }
+      .lede { margin-top: 22px; font-size: 25px; line-height: 1.42; color: var(--muted); max-width: 500px; }
+      .chips { display: flex; gap: 10px; margin-top: 30px; flex-wrap: wrap; }
+      .chip {
+        display: inline-flex; align-items: center; gap: 9px;
+        background: #fff; border: 1px solid var(--line); border-radius: 999px;
+        padding: 13px 20px; font-size: 21px; font-weight: 600; color: #1f2937;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+      }
+      .chip.mint { background: var(--green-soft); border-color: #cdeae1; color: #0b5f57; }
+      .chip svg { width: 18px; height: 18px; }
+
+      /* ---------- Desktop window ---------- */
+      .window {
+        position: absolute; left: 762px; top: 200px; width: 1120px;
+        border-radius: 18px; background: #fff; border: 1px solid #e2e8f2;
+        box-shadow: 0 48px 100px rgba(15, 23, 42, 0.16), 0 6px 18px rgba(15, 23, 42, 0.06);
+        overflow: hidden;
+      }
+      .window .bar {
+        height: 46px; display: flex; align-items: center; gap: 8px;
+        padding: 0 18px; background: #f4f7fc; border-bottom: 1px solid #e6ecf6;
+      }
+      .window .bar i { width: 11px; height: 11px; border-radius: 999px; display: block; }
+      .window .bar i:nth-child(1) { background: #ff5f57; }
+      .window .bar i:nth-child(2) { background: #febc2e; }
+      .window .bar i:nth-child(3) { background: #28c840; }
+      .urlpill {
+        margin-left: 16px; height: 26px; display: inline-flex; align-items: center;
+        padding: 0 16px; border-radius: 999px; background: #fff; border: 1px solid #e2e8f2;
+        font-size: 14px; color: #64748b; letter-spacing: 0.01em;
+      }
+      .shot { display: block; width: 100%; }
+
+      /* ---------- Phone ---------- */
+      .phone {
+        position: absolute; width: 366px; padding: 13px; border-radius: 52px;
+        background: #0b1220; box-shadow: 0 44px 90px rgba(11, 18, 32, 0.32);
+      }
+      .phone .inner { position: relative; border-radius: 40px; overflow: hidden; background: #fff; }
+      .phone .notch {
+        position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+        width: 104px; height: 22px; border-radius: 999px; background: #0b1220; z-index: 4;
+      }
+      .phone .shot { display: block; width: 100%; }
+
+      .badge {
+        position: absolute; display: inline-flex; align-items: center; gap: 10px;
+        background: #fff; border: 1px solid var(--line); border-radius: 16px;
+        padding: 16px 20px; font-size: 21px; font-weight: 600; color: #1f2937;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+      }
+      .badge .pill { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #0b5f57; background: var(--green-soft); border-radius: 999px; padding: 5px 10px; }
+      .badge .blue-pill { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #1e3a8a; background: var(--blue-soft); border-radius: 999px; padding: 5px 10px; }
+
+      /* ---------- Hook ---------- */
+      .hook { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding-left: 132px; }
+      .hook .brand { display: flex; align-items: center; gap: 16px; }
+      .hook .mark {
+        width: 62px; height: 62px; border-radius: 18px; background: var(--blue);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 16px 34px rgba(29, 78, 216, 0.35);
+      }
+      .hook .mark svg { width: 32px; height: 32px; }
+      .hook .brand span { font-size: 21px; font-weight: 700; letter-spacing: 0.02em; color: #334155; }
+      .hook h1 { font-size: 92px; margin-top: 34px; max-width: 900px; }
+      .hook .lede { font-size: 30px; max-width: 640px; }
+      .devices { position: absolute; right: 120px; top: 250px; }
+      .devices .mini-window {
+        width: 620px; border-radius: 14px; overflow: hidden; background: #fff;
+        border: 1px solid #e2e8f2; box-shadow: 0 40px 80px rgba(15, 23, 42, 0.18);
+      }
+      .devices .mini-window .bar { height: 34px; background: #f4f7fc; border-bottom: 1px solid #e6ecf6; display: flex; align-items: center; gap: 7px; padding: 0 14px; }
+      .devices .mini-window .bar i { width: 9px; height: 9px; border-radius: 999px; }
+      .devices .mini-window .bar i:nth-child(1) { background: #ff5f57; }
+      .devices .mini-window .bar i:nth-child(2) { background: #febc2e; }
+      .devices .mini-window .bar i:nth-child(3) { background: #28c840; }
+      .devices .mini-phone {
+        position: absolute; right: -66px; bottom: -108px; width: 236px; padding: 9px;
+        border-radius: 34px; background: #0b1220; box-shadow: 0 34px 70px rgba(11, 18, 32, 0.3);
+      }
+      .devices .mini-phone .inner { border-radius: 26px; overflow: hidden; }
+      .devices img { width: 100%; display: block; }
+
+      /* ---------- Outro ---------- */
+      .outro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+      .outro .mark { width: 84px; height: 84px; border-radius: 24px; background: var(--blue); display: flex; align-items: center; justify-content: center; box-shadow: 0 22px 46px rgba(29, 78, 216, 0.34); }
+      .outro .mark svg { width: 44px; height: 44px; }
+      .outro h1 { font-size: 84px; margin-top: 34px; }
+      .outro .lede { font-size: 27px; margin: 20px auto 0; max-width: 760px; }
+      .outro .chips { justify-content: center; margin-top: 40px; }
+      .rule { width: 148px; height: 4px; border-radius: 999px; background: var(--blue); margin-top: 34px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="32.5"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div class="grid"></div>
+
+      <!-- ================= 1. Hook ================= -->
+      <section class="scene clip" id="s1" data-start="0" data-duration="4" data-track-index="0">
+        <div class="hook">
+          <div class="brand" id="hookBrand">
+            <div class="mark">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 10.5 12 4l9 6.5" /><path d="M5 9.8V19h14V9.8" /><path d="M9 19v-5h6v5" />
+              </svg>
+            </div>
+            <span>Example Company</span>
+          </div>
+          <h1 id="hookTitle">Office on desktop.<br /><span class="accent">Drivers on mobile.</span></h1>
+          <p class="lede" id="hookLede">Delivery objects, tours and time tracking — one app.</p>
+          <div class="chips" data-layout-ignore id="hookChips">
+            <span class="chip">9 objects</span>
+            <span class="chip mint">6 stops today</span>
+            <span class="chip">Chat built in</span>
+          </div>
+        </div>
+        <div class="devices" id="hookDevices">
+          <div class="mini-window">
+            <div class="bar"><i></i><i></i><i></i></div>
+            <img src="assets/shots/desktop-objects.png" alt="" />
+          </div>
+          <div class="mini-phone">
+            <div class="inner"><img src="assets/shots/mobile-tour.png" alt="" /></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 2. Objects (desktop) ================= -->
+      <section class="scene clip" id="s2" data-start="4" data-duration="5" data-track-index="0">
+        <div class="copy">
+          <span class="eyebrow" data-layout-ignore id="s2Eye"><span class="dot"></span>Desktop · Office</span>
+          <h1 id="s2Title">Every object,<br />with its details.</h1>
+          <p class="lede" id="s2Lede">Keys, opening times, addresses and the standard items each stop always needs.</p>
+          <div class="chips" data-layout-ignore id="s2Chips">
+            <span class="chip">9 objects</span>
+            <span class="chip">40 items</span>
+            <span class="chip mint">Keys 1201–1209</span>
+          </div>
+        </div>
+        <div class="window" id="s2Window">
+          <div class="bar"><i></i><i></i><i></i><span class="urlpill" data-layout-ignore>example-company.app/objects</span></div>
+          <img class="shot" id="s2Shot" src="assets/shots/desktop-objects.png" alt="" />
+        </div>
+      </section>
+
+      <!-- ================= 3. Photo import (desktop) ================= -->
+      <section class="scene clip" id="s3" data-start="9" data-duration="5" data-track-index="0">
+        <div class="copy">
+          <span class="eyebrow" data-layout-ignore id="s3Eye"><span class="dot"></span>Desktop · Photo import</span>
+          <h1 id="s3Title">A photo of the list<br />becomes the tour.</h1>
+          <p class="lede" id="s3Lede">Photograph the printed tour list — the app reads the entries, you confirm before saving.</p>
+          <div class="chips" data-layout-ignore id="s3Chips">
+            <span class="chip">AI detection</span>
+            <span class="chip">You confirm</span>
+            <span class="chip mint">No typing</span>
+          </div>
+        </div>
+        <div class="window" id="s3Window">
+          <div class="bar"><i></i><i></i><i></i><span class="urlpill" data-layout-ignore>example-company.app/objects · photo import</span></div>
+          <img class="shot" id="s3Shot" src="assets/shots/desktop-import.png" alt="" />
+        </div>
+        <div class="badge" id="s3Badge" style="right: 132px; bottom: 118px;">
+          <span class="blue-pill" data-layout-ignore>AI</span> list detected · 6 objects
+        </div>
+      </section>
+
+      <!-- ================= 4. Planning (desktop) ================= -->
+      <section class="scene clip" id="s4" data-start="14" data-duration="5" data-track-index="0">
+        <div class="copy">
+          <span class="eyebrow" data-layout-ignore id="s4Eye"><span class="dot"></span>Desktop · Tour planning</span>
+          <h1 id="s4Title">Plan it once.<br />Pack it right.</h1>
+          <p class="lede" id="s4Lede">Pick the objects, calculate the order, pack the standard items and hand the tour to the driver.</p>
+          <div class="chips" data-layout-ignore id="s4Chips">
+            <span class="chip">6 stops</span>
+            <span class="chip">Start 07:12</span>
+            <span class="chip mint">One active tour</span>
+          </div>
+        </div>
+        <div class="window" id="s4Window">
+          <div class="bar"><i></i><i></i><i></i><span class="urlpill" data-layout-ignore>example-company.app/planning</span></div>
+          <img class="shot" id="s4Shot" src="assets/shots/desktop-planning.png" alt="" />
+        </div>
+      </section>
+
+      <!-- ================= 5. Mobile tour ================= -->
+      <section class="scene clip" id="s5" data-start="19" data-duration="4.5" data-track-index="0">
+        <div class="copy">
+          <span class="eyebrow" data-layout-ignore id="s5Eye"><span class="dot"></span>Mobile · Driver</span>
+          <h1 id="s5Title">The stop list,<br />live in the hand.</h1>
+          <p class="lede" id="s5Lede">Progress, arrival times and the time clock — all on the phone, even in the stairwell.</p>
+          <div class="chips" data-layout-ignore id="s5Chips">
+            <span class="chip">2 of 6 done</span>
+            <span class="chip mint">Clock running</span>
+            <span class="chip">Works offline</span>
+          </div>
+        </div>
+        <div class="phone" id="s5Phone" style="right: 300px; top: 150px;">
+          <div class="inner"><img class="shot" src="assets/shots/mobile-tour.png" alt="" /></div>
+        </div>
+        <div class="badge" id="s5Badge" style="left: 640px; bottom: 128px;">
+          <span class="pill" data-layout-ignore>33 %</span> delivered · 4 stops left
+        </div>
+      </section>
+
+      <!-- ================= 6. Mobile delivery ================= -->
+      <section class="scene clip" id="s6" data-start="23.5" data-duration="4.5" data-track-index="0">
+        <div class="copy">
+          <span class="eyebrow" data-layout-ignore id="s6Eye"><span class="dot"></span>Mobile · Delivery</span>
+          <h1 id="s6Title">Tap a stop.<br />Tick it off.</h1>
+          <p class="lede" id="s6Lede">Items, photo and reservations for the next delivery — one sheet, thumb-sized.</p>
+          <div class="chips" data-layout-ignore id="s6Chips">
+            <span class="chip">Item list</span>
+            <span class="chip">Photo</span>
+            <span class="chip mint">Delivered</span>
+          </div>
+        </div>
+        <div class="phone" id="s6Phone" style="right: 300px; top: 150px;">
+          <div class="inner"><img class="shot" src="assets/shots/mobile-delivery.png" alt="" /></div>
+        </div>
+        <div class="badge" id="s6Badge" style="left: 640px; bottom: 128px;">
+          <span class="pill" data-layout-ignore>Delivery</span> Lakeside Cafe · 3 items
+        </div>
+      </section>
+
+      <!-- ================= 7. Outro ================= -->
+      <section class="scene clip" id="s7" data-start="28" data-duration="4.5" data-track-index="0">
+        <div class="outro">
+          <div class="mark" id="outroMark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 10.5 12 4l9 6.5" /><path d="M5 9.8V19h14V9.8" /><path d="M9 19v-5h6v5" />
+            </svg>
+          </div>
+          <div class="rule" id="outroRule"></div>
+          <h1 id="outroTitle">One app. Two worlds.</h1>
+          <p class="lede" id="outroLede">Office work on the desktop, the tour on the phone — and chat in between.</p>
+          <div class="chips" data-layout-ignore id="outroChips">
+            <span class="chip">Objects</span>
+            <span class="chip">Tours</span>
+            <span class="chip">Time tracking</span>
+            <span class="chip mint">Chat</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= Audio ================= -->
+      <audio
+        id="music"
+        data-start="0"
+        data-duration="32.5"
+        data-track-index="1"
+        data-volume="0.55"
+        src="assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3"
+      ></audio>
+      <audio id="sfx1" data-start="4.0" data-duration="0.6" data-track-index="3" data-volume="0.45" src="assets/sfx/click1.ogg"></audio>
+      <audio id="sfx2" data-start="9.0" data-duration="0.6" data-track-index="3" data-volume="0.45" src="assets/sfx/click_002.ogg"></audio>
+      <audio id="sfx3" data-start="14.0" data-duration="0.7" data-track-index="3" data-volume="0.4" src="assets/sfx/drop_001.ogg"></audio>
+      <audio id="sfx4" data-start="19.0" data-duration="0.6" data-track-index="3" data-volume="0.45" src="assets/sfx/click1.ogg"></audio>
+      <audio id="sfx5" data-start="23.5" data-duration="0.6" data-track-index="3" data-volume="0.45" src="assets/sfx/click_002.ogg"></audio>
+      <audio id="sfx6" data-start="28.0" data-duration="0.7" data-track-index="3" data-volume="0.4" src="assets/sfx/drop_001.ogg"></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const ease = "power3.out";
+
+      /* ---------- 1. Hook (0–4) ---------- */
+      tl.fromTo("#hookBrand", { y: 18 }, { y: 0, duration: 0.5, ease }, 0);
+      tl.fromTo("#hookTitle", { y: 44 }, { y: 0, duration: 0.7, ease }, 0);
+      tl.fromTo("#hookLede", { y: 22 }, { y: 0, duration: 0.6, ease }, 0.05);
+      tl.fromTo("#hookChips .chip", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.09, ease }, 0.62);
+      tl.fromTo("#hookDevices", { y: 48, scale: 0.97 }, { y: 0, scale: 1, duration: 0.9, ease }, 0);
+      tl.to("#hookDevices", { y: -18, duration: 3.2, ease: "none" }, 0.9);
+      tl.to("#s1", { opacity: 0, duration: 0.35, ease: "power2.in" }, 3.7);
+
+      /* ---------- 2. Objects (4–9) ---------- */
+      tl.fromTo("#s2Eye", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease }, 4.05);
+      tl.fromTo("#s2Title", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.6, ease }, 4.16);
+      tl.fromTo("#s2Lede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease }, 4.38);
+      tl.fromTo("#s2Chips .chip", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 4.52);
+      tl.fromTo("#s2Window", { opacity: 0, y: 44, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.75, ease }, 4.02);
+      tl.fromTo("#s2Shot", { y: 0 }, { y: -210, duration: 4.2, ease: "power1.inOut" }, 4.7);
+      tl.to("#s2", { opacity: 0, duration: 0.3, ease: "power2.in" }, 8.72);
+
+      /* ---------- 3. Photo import (9–14) ---------- */
+      tl.fromTo("#s3Eye", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease }, 9.05);
+      tl.fromTo("#s3Title", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.6, ease }, 9.16);
+      tl.fromTo("#s3Lede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease }, 9.38);
+      tl.fromTo("#s3Chips .chip", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 9.52);
+      tl.fromTo("#s3Window", { opacity: 0, x: 60, scale: 0.97 }, { opacity: 1, x: 0, scale: 1, duration: 0.8, ease }, 9.02);
+      tl.fromTo("#s3Badge", { opacity: 0, y: 22, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.6)" }, 10.9);
+      tl.fromTo("#s3Shot", { scale: 1 }, { scale: 1.045, duration: 4.4, ease: "power1.inOut", transformOrigin: "58% 62%" }, 9.6);
+      tl.to("#s3", { opacity: 0, duration: 0.3, ease: "power2.in" }, 13.72);
+
+      /* ---------- 4. Planning (14–19) ---------- */
+      tl.fromTo("#s4Eye", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease }, 14.05);
+      tl.fromTo("#s4Title", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.6, ease }, 14.16);
+      tl.fromTo("#s4Lede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease }, 14.38);
+      tl.fromTo("#s4Chips .chip", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 14.52);
+      tl.fromTo("#s4Window", { opacity: 0, y: 50, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.8, ease }, 14.02);
+      tl.fromTo("#s4Shot", { y: 0 }, { y: -120, duration: 4.2, ease: "power1.inOut" }, 14.6);
+      tl.to("#s4", { opacity: 0, duration: 0.3, ease: "power2.in" }, 18.72);
+
+      /* ---------- 5. Mobile tour (19–23.5) ---------- */
+      tl.fromTo("#s5Eye", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease }, 19.05);
+      tl.fromTo("#s5Title", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.6, ease }, 19.16);
+      tl.fromTo("#s5Lede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease }, 19.38);
+      tl.fromTo("#s5Chips .chip", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 19.52);
+      tl.fromTo("#s5Phone", { opacity: 0, y: 90, rotate: 2.5 }, { opacity: 1, y: 0, rotate: 0, duration: 0.9, ease }, 19.0);
+      tl.fromTo("#s5Badge", { opacity: 0, y: 20, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.6)" }, 20.35);
+      tl.to("#s5Phone", { y: -14, duration: 3.0, ease: "none" }, 20.0);
+      tl.to("#s5", { opacity: 0, duration: 0.3, ease: "power2.in" }, 23.22);
+
+      /* ---------- 6. Mobile delivery (23.5–28) ---------- */
+      tl.fromTo("#s6Eye", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease }, 23.56);
+      tl.fromTo("#s6Title", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.6, ease }, 23.66);
+      tl.fromTo("#s6Lede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease }, 23.88);
+      tl.fromTo("#s6Chips .chip", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 24.02);
+      tl.fromTo("#s6Phone", { opacity: 0, y: 90, rotate: -2.5 }, { opacity: 1, y: 0, rotate: 0, duration: 0.9, ease }, 23.5);
+      tl.fromTo("#s6Badge", { opacity: 0, y: 20, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "back.out(1.6)" }, 24.8);
+      tl.to("#s6Phone", { y: -14, duration: 2.8, ease: "none" }, 24.4);
+      tl.to("#s6", { opacity: 0, duration: 0.3, ease: "power2.in" }, 27.72);
+
+      /* ---------- 7. Outro (28–32.5) ---------- */
+      tl.fromTo("#outroMark", { opacity: 0, y: 26, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: "back.out(1.8)" }, 28.05);
+      tl.fromTo("#outroRule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease }, 28.2);
+      tl.fromTo("#outroTitle", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.6, ease }, 28.28);
+      tl.fromTo("#outroLede", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.55, ease }, 28.52);
+      tl.fromTo("#outroChips .chip", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.08, ease }, 28.72);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

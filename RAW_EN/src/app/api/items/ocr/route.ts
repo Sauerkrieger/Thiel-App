@@ -1,0 +1,71 @@
+import { NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/http";
+import {
+  GeminiApiNotConfiguredError,
+  extractItemsFromImage,
+} from "@/lib/ocr";
+import { requireUser, isAdmin } from "@/lib/auth";
+import { resolveImageMimeType } from "@/lib/image-mime";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+/** POST /api/items/ocr -> Foto einer Packliste in strukturierte Items umwandeln. */
+export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Only admins may scan packing lists." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file");
+
+    if (!(file instanceof File)) {
+      return NextResponse.json(
+        { error: "No image uploaded." },
+        { status: 400 },
+      );
+    }
+    const mimeType = resolveImageMimeType(file.type, file.name);
+    if (!mimeType) {
+      return NextResponse.json(
+        { error: "The file is not a supported image. Please use JPG, PNG, WEBP or HEIC." },
+        { status: 400 },
+      );
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "The image is larger than 10 MB." },
+        { status: 400 },
+      );
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const imageBase64 = buffer.toString("base64");
+
+    const items = await extractItemsFromImage(imageBase64, mimeType);
+
+    return NextResponse.json({ items });
+  } catch (e) {
+    if (e instanceof GeminiApiNotConfiguredError) {
+      return NextResponse.json(
+        { error: e.message, code: "GEMINI_NOT_CONFIGURED" },
+        { status: 503 },
+      );
+    }
+    return apiErrorResponse(e);
+  }
+}

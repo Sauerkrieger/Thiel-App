@@ -1,0 +1,233 @@
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  apiErrorResponse,
+  isObjectCategory,
+  validLatitude,
+  validLongitude,
+} from "@/lib/http";
+import { parseItemInputs } from "@/lib/items";
+import { safeIsInPedestrianZone } from "@/lib/overpass";
+import { cleanAddressLabel } from "@/lib/address";
+import { requireUser, isAdmin, isFacilityManager } from "@/lib/auth";
+import { checkLww } from "@/lib/lww";
+import { lwwConflictResponse } from "@/lib/http";
+import type { Database } from "@/types/database";
+
+type Context = { params: Promise<{ id: string }> };
+
+/** Parst die optionale Schlüssel-Nummer (positive Ganzzahl oder null). */
+function parseKeyNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export async function GET(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+
+  try {
+    const { id } = await params;
+    const supabase = getSupabaseAdmin();
+
+    // Reinigungskraft: Zugriff nur auf zugewiesene Objekte.
+    if (isFacilityManager(auth.user)) {
+      const { data: assignment } = await supabase
+        .from("object_assignments")
+        .select("object_id")
+        .eq("user_id", auth.user.id)
+        .eq("object_id", id)
+        .maybeSingle();
+      if (!assignment) {
+        return NextResponse.json(
+          { error: "Object not found." },
+          { status: 404 },
+        );
+      }
+    }
+
+    // Admin-Info (Kunde, Kundennummer, Reinigungsturnus) nur für Admins;
+    // die Bemerkung (remark) ist für alle sichtbar.
+    const select = isAdmin(auth.user)
+      ? "*, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
+      : isFacilityManager(auth.user)
+        ? "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)"
+        : "id, name, address, latitude, longitude, category, is_pedestrian_zone_until_11, key_number, opens_at, remark, last_delivery_at, last_delivery_driver_name, last_delivery_items, created_at, updated_at, object_items(id, item_name, quantity, note, photo_path, is_always_required, is_reserved, created_at)";
+    const { data, error } = await supabase
+      .from("objects")
+      .select(select)
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      // PGRST116 = keine Zeile gefunden
+      if (error.code === "PGRST116") {
+        return NextResponse.json(
+          { error: "Object not found." },
+          { status: 404 },
+        );
+      }
+      throw error;
+    }
+    return NextResponse.json({ object: data });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}
+
+export async function PUT(request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Only admins may edit objects." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const address = cleanAddressLabel(
+      typeof body.address === "string" ? body.address.trim() : "",
+    );
+    const latitude = validLatitude(body.latitude);
+    const longitude = validLongitude(body.longitude);
+
+    if (!name || !address) {
+      return NextResponse.json(
+        { error: "Name and address are required." },
+        { status: 400 },
+      );
+    }
+
+    // Fehlendes/null items-Feld = keine Items (nicht mit übertragen = leere Liste)
+    const items = body.items == null ? [] : parseItemInputs(body.items);
+    if (items === null) {
+      return NextResponse.json(
+        { error: "Invalid items submitted (check quantity/name/note)." },
+        { status: 400 },
+      );
+    }
+
+    // Fußgängerzone automatisch anhand der Koordinaten erkennen
+    const isPedestrianZone = await safeIsInPedestrianZone(latitude, longitude);
+
+    const text = (value: unknown, max: number) =>
+      typeof value === "string" && value.trim()
+        ? value.trim().slice(0, max)
+        : null;
+
+    const supabase = getSupabaseAdmin();
+    // Last-Write-Wins: älteres client_updated_at → Konflikt (409 + Server-Zustand)
+    const lww = await checkLww(supabase, "objects", id, body.client_updated_at);
+    if (lww.status === "conflict") {
+      return lwwConflictResponse(lww.serverRecord);
+    }
+
+    const updatePayload: Database["public"]["Tables"]["objects"]["Update"] = {
+      name,
+      address,
+      latitude,
+      longitude,
+      category: isObjectCategory(body.category) ? body.category : "objekt",
+      is_pedestrian_zone_until_11: isPedestrianZone,
+      key_number: parseKeyNumber(body.key_number),
+      opens_at:
+        typeof body.opens_at === "string" && body.opens_at
+          ? body.opens_at
+          : null,
+      customer: text(body.customer, 200),
+      customer_number: text(body.customer_number, 100),
+      cleaning_interval: text(body.cleaning_interval, 100),
+      remark: text(body.remark, 500),
+    };
+    if (lww.status === "apply") {
+      updatePayload.client_updated_at = lww.clientUpdatedAt;
+    }
+    updatePayload.synced_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("objects")
+      .update(updatePayload)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      // PGRST116 = keine Zeile gefunden
+      if (error.code === "PGRST116") {
+        return NextResponse.json(
+          { error: "Object not found." },
+          { status: 404 },
+        );
+      }
+      throw error;
+    }
+
+    // Items ersetzen: bestehende löschen, neue anlegen
+    const { error: deleteError } = await supabase
+      .from("object_items")
+      .delete()
+      .eq("object_id", id);
+    if (deleteError) throw deleteError;
+
+    if (items.length > 0) {
+      const { error: insertError } = await supabase.from("object_items").insert(
+        items.map((item) => ({
+          object_id: id,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          note: item.note,
+          photo_path: item.photo_path,
+          is_always_required: item.is_always_required,
+          is_reserved: item.is_reserved,
+        })),
+      );
+      if (insertError) throw insertError;
+    }
+
+    return NextResponse.json({ object: data });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}
+
+export async function DELETE(_request: Request, { params }: Context) {
+  const auth = await requireUser();
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: auth.error, code: auth.code },
+      { status: auth.status },
+    );
+  }
+  if (!isAdmin(auth.user)) {
+    return NextResponse.json(
+      { error: "Only admins may delete objects." },
+      { status: 403 },
+    );
+  }
+
+  try {
+    const { id } = await params;
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase.from("objects").delete().eq("id", id);
+
+    if (error) throw error;
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return apiErrorResponse(e);
+  }
+}

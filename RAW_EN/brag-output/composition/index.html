@@ -1,0 +1,988 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Example Company — brag</title>
+    <link rel="stylesheet" href="assets/fonts/fonts.css" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --ink: #0f172a;
+        --muted: #475569;
+        --soft: #64748b;
+        --line: #e2e8f0;
+        --blue: #1d4ed8;
+        --blue-soft: #eef2ff;
+        --success: #0f766e;
+        --success-soft: #ecfdf5;
+        --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: var(--font);
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        background:
+          radial-gradient(1200px 620px at 78% -10%, #e8eefc 0%, rgba(248, 250, 252, 0) 62%),
+          var(--bg);
+      }
+      .grid {
+        position: absolute;
+        inset: 0;
+        background-image: linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+          linear-gradient(to bottom, #e2e8f0 1px, transparent 1px);
+        background-size: 120px 120px;
+        opacity: 0.35;
+        mask-image: radial-gradient(circle at 50% 42%, #000 0%, transparent 78%);
+        -webkit-mask-image: radial-gradient(circle at 50% 42%, #000 0%, transparent 78%);
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+      }
+      .eyebrow {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--blue);
+      }
+      .h1 {
+        font-size: 96px;
+        line-height: 0.98;
+        letter-spacing: -0.035em;
+        font-weight: 700;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        box-shadow: 0 40px 80px -56px rgba(15, 23, 42, 0.45);
+      }
+      .label {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--soft);
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum";
+      }
+
+      /* ---------- Scene 1: hook ---------- */
+      #s1 .wrap {
+        position: absolute;
+        left: 150px;
+        top: 356px;
+      }
+      #s1 .h1 span {
+        display: block;
+      }
+      #routeHook {
+        position: absolute;
+        left: 700px;
+        top: 470px;
+        width: 1180px;
+        height: 460px;
+        opacity: 0.6;
+      }
+      #s1 .tagline {
+        position: absolute;
+        left: 154px;
+        top: 640px;
+        font-size: 26px;
+        color: var(--muted);
+        font-weight: 400;
+      }
+
+      /* ---------- App frame (scenes 2-4) ---------- */
+      .frame {
+        position: absolute;
+        left: 140px;
+        top: 104px;
+        width: 1640px;
+        height: 872px;
+        padding: 30px 34px;
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      .frame-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: var(--blue);
+        position: relative;
+      }
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        inset: 10px 9px 10px 9px;
+        border: 2px solid #fff;
+        border-radius: 4px;
+        border-right-color: transparent;
+      }
+      .brand-name {
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .nav {
+        display: flex;
+        gap: 8px;
+      }
+      .nav span {
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--soft);
+        padding: 8px 16px;
+        border-radius: 999px;
+      }
+      .nav span.on {
+        color: var(--blue);
+        background: var(--blue-soft);
+        font-weight: 600;
+      }
+
+      /* Scene 2 body */
+      .plan-body {
+        display: grid;
+        grid-template-columns: 1fr 516px;
+        gap: 24px;
+        flex: 1;
+        min-height: 0;
+      }
+      .map {
+        position: relative;
+        border-radius: 20px;
+        background: #f1f5f9;
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+      .map svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .pin {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        background: var(--blue);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 20px -8px rgba(29, 78, 216, 0.7);
+        border: 3px solid #fff;
+      }
+      .pin.home {
+        background: var(--ink);
+      }
+      .map-foot {
+        position: absolute;
+        left: 22px;
+        bottom: 22px;
+        display: flex;
+        gap: 10px;
+      }
+      .chip {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink);
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 15px;
+      }
+      .stops {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px 18px;
+        background: #fff;
+      }
+      .row .time {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--blue);
+        width: 58px;
+      }
+      .row .who {
+        flex: 1;
+      }
+      .row .who b {
+        display: block;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .row .who small {
+        font-size: 13px;
+        color: var(--soft);
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--line);
+      }
+      .dot.done {
+        background: var(--success);
+      }
+      .stats {
+        margin-top: auto;
+        display: flex;
+        gap: 34px;
+        align-items: flex-end;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+      }
+      .stat b {
+        display: block;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .stat small {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--soft);
+      }
+      .screen-title {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+      }
+      .screen-title h2 {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+      }
+      .screen-title p {
+        font-size: 16px;
+        color: var(--soft);
+      }
+
+      /* Scene 3: pack */
+      .pack-body > div {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .pack-body {
+        display: grid;
+        grid-template-columns: 1fr 520px;
+        gap: 24px;
+        flex: 1;
+        min-height: 0;
+      }
+      .check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        margin-top: 8px;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 24px 22px;
+      }
+      .pack-foot {
+        margin-top: 22px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 16px;
+        color: var(--muted);
+      }
+      .box {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        border: 2px solid #cbd5e1;
+        position: relative;
+        flex: none;
+      }
+      .box .tick {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 17px;
+        font-weight: 700;
+        opacity: 0;
+      }
+      .check b {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .check span {
+        color: var(--soft);
+        font-size: 15px;
+      }
+      .qty {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--blue);
+        width: 74px;
+      }
+      .photo-panel {
+        flex: 1;
+        border: 1px dashed #cbd5e1;
+        border-radius: 20px;
+        padding: 22px;
+        background: #fff;
+      }
+      .paper {
+        position: relative;
+        border-radius: 14px;
+        background: #fffdf7;
+        border: 1px solid #eee4cf;
+        padding: 18px 20px;
+        box-shadow: 0 18px 30px -22px rgba(15, 23, 42, 0.5);
+      }
+      .paper .line {
+        height: 10px;
+        border-radius: 3px;
+        background: #d9cfb6;
+        margin-bottom: 10px;
+      }
+      .paper .line.s {
+        width: 58%;
+      }
+      .paper .line.m {
+        width: 78%;
+      }
+      .result {
+        margin-top: 18px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--success-soft);
+        border: 1px solid #c7ecdd;
+        color: var(--success);
+        font-weight: 600;
+        font-size: 16px;
+        border-radius: 999px;
+        padding: 10px 18px;
+      }
+      .result-rows {
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .result-rows div {
+        display: flex;
+        justify-content: space-between;
+        font-size: 16px;
+        color: var(--muted);
+      }
+      .result-rows b {
+        color: var(--ink);
+      }
+
+      /* Scene 4: time */
+      .time-body > div {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .time-body {
+        display: grid;
+        grid-template-columns: 1fr 520px;
+        gap: 24px;
+        flex: 1;
+        min-height: 0;
+      }
+      .timer {
+        font-size: 92px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+      .timer-wrap {
+        position: relative;
+        height: 116px;
+      }
+      .timer-wrap .timer {
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+      .btn {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--blue);
+        color: #fff;
+        font-size: 22px;
+        font-weight: 600;
+        border-radius: 14px;
+        padding: 18px 34px;
+        position: relative;
+        box-shadow: 0 18px 30px -20px rgba(29, 78, 216, 0.9);
+      }
+      .btn .btn-label {
+        position: relative;
+        width: 108px;
+        height: 28px;
+      }
+      .btn .btn-label span {
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+      .btn-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #fff;
+      }
+      .rec {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 15px;
+        color: var(--success);
+        font-weight: 600;
+      }
+      .logs {
+        margin-top: 26px;
+        border-top: 1px solid var(--line);
+        padding-top: 22px;
+      }
+      .log-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 0;
+        font-size: 18px;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .log-row span {
+        color: var(--soft);
+        font-size: 15px;
+      }
+      .bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 18px;
+        height: 300px;
+        margin-top: 12px;
+      }
+      .bar {
+        flex: 1;
+        border-radius: 10px 10px 4px 4px;
+        background: #dbeafe;
+        transform-origin: bottom;
+      }
+      .bar.hi {
+        background: var(--blue);
+      }
+      .bar-foot {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        color: var(--soft);
+        margin-top: 10px;
+      }
+
+      /* Scene 5: outro */
+      #s5 .center {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 372px;
+        text-align: center;
+      }
+      .wordmark {
+        font-size: 112px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      #s5 .line2 {
+        margin-top: 26px;
+        font-size: 34px;
+        color: var(--muted);
+        font-weight: 400;
+      }
+      .outro-chips {
+        margin-top: 44px;
+        display: flex;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro-chips span {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 999px;
+        padding: 12px 22px;
+      }
+      .rule {
+        width: 76px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--blue);
+        margin: 0 auto 34px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="21"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div class="grid"></div>
+
+      <!-- =============== Scene 1: hook =============== -->
+      <section class="scene clip" id="s1" data-start="0" data-duration="3" data-track-index="0">
+        <svg id="routeHook" viewBox="0 0 1680 660" fill="none">
+          <path
+            d="M40 520 C 300 520 380 300 620 300 S 960 470 1170 400 S 1440 170 1620 210"
+            stroke="#1d4ed8"
+            stroke-width="4"
+            stroke-linecap="round"
+            stroke-dasharray="2200"
+            stroke-dashoffset="2200"
+            id="hookPath"
+          />
+          <circle cx="40" cy="520" r="12" fill="#0f172a" opacity="0" id="hookDotA" />
+          <circle cx="1620" cy="210" r="14" fill="#1d4ed8" opacity="0" id="hookDotB" />
+        </svg>
+        <div class="wrap">
+          <div class="eyebrow" id="hookEyebrow">Delivery &amp; tour planning</div>
+          <h1 class="h1" style="margin-top: 26px">
+            <span id="hook1">Every tour</span>
+            <span id="hook2">starts with a plan.</span>
+          </h1>
+          <p class="tagline" id="hookTag">Objects, routes and tours — in one app.</p>
+        </div>
+      </section>
+
+      <!-- =============== Scene 2: tour planning =============== -->
+      <section class="scene clip" id="s2" data-start="3" data-duration="5" data-track-index="0">
+        <div class="card frame" id="planFrame">
+          <div class="frame-top">
+            <div class="brand">
+              <div class="brand-mark"></div>
+              <div class="brand-name">Example Company</div>
+            </div>
+            <nav class="nav">
+              <span>Objects</span>
+              <span class="on">Tour planning</span>
+              <span>Inventory</span>
+              <span>Time tracking</span>
+            </nav>
+          </div>
+          <div class="screen-title">
+            <h2>Tour planning</h2>
+            <p>Tuesday · 12 stops</p>
+          </div>
+          <div class="plan-body">
+            <div class="map">
+              <svg viewBox="0 0 980 560" fill="none" preserveAspectRatio="none">
+                <path
+                  d="M70 470 C 200 470 240 330 340 320 S 520 430 610 360 S 760 210 900 250"
+                  stroke="#1d4ed8"
+                  stroke-width="5"
+                  stroke-linecap="round"
+                  stroke-dasharray="1600"
+                  stroke-dashoffset="1600"
+                  id="mapPath"
+                />
+                <path
+                  d="M70 470 C 200 470 240 330 340 320 S 520 430 610 360 S 760 210 900 250"
+                  stroke="#1d4ed8"
+                  stroke-width="14"
+                  stroke-linecap="round"
+                  opacity="0.14"
+                  id="mapGlow"
+                />
+              </svg>
+              <div class="pin home" id="pin0" style="left: 52px; top: 440px">W</div>
+              <div class="pin" id="pin1" style="left: 322px; top: 292px">1</div>
+              <div class="pin" id="pin2" style="left: 592px; top: 332px">2</div>
+              <div class="pin" id="pin3" style="left: 872px; top: 222px">3</div>
+              <div class="map-foot">
+                <div class="chip">Optimised</div>
+                <div class="chip">Live traffic</div>
+              </div>
+            </div>
+            <div class="stops">
+              <div class="row" id="stop0">
+                <div class="time num">07:40</div>
+                <div class="who"><b>Meyer Office</b><small>Object · 3 items</small></div>
+                <div class="dot"></div>
+              </div>
+              <div class="row" id="stop1">
+                <div class="time num">08:05</div>
+                <div class="who"><b>North Clinic</b><small>Object · 5 items</small></div>
+                <div class="dot"></div>
+              </div>
+              <div class="row" id="stop2">
+                <div class="time num">08:32</div>
+                <div class="who"><b>Stairwell 12</b><small>Stairwell · key 5</small></div>
+                <div class="dot"></div>
+              </div>
+              <div class="row" id="stop3">
+                <div class="time num">09:10</div>
+                <div class="who"><b>Riverside Shop</b><small>Object · 2 items</small></div>
+                <div class="dot"></div>
+              </div>
+              <div class="stats" id="planStats">
+                <div class="stat"><b class="num">38 km</b><small>Distance</small></div>
+                <div class="stat"><b class="num">4 h 12 min</b><small>Driving</small></div>
+                <div class="stat"><b class="num">12</b><small>Stops</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============== Scene 3: pack it =============== -->
+      <section class="scene clip" id="s3" data-start="8" data-duration="5" data-track-index="0">
+        <div class="card frame" id="packFrame">
+          <div class="frame-top">
+            <div class="brand">
+              <div class="brand-mark"></div>
+              <div class="brand-name">Example Company</div>
+            </div>
+            <nav class="nav">
+              <span class="on">Pack mode</span>
+              <span>Objects</span>
+              <span>Inventory</span>
+            </nav>
+          </div>
+          <div class="screen-title">
+            <h2>Pack mode</h2>
+            <p>Meyer Office · 07:40</p>
+          </div>
+          <div class="pack-body">
+            <div>
+              <div class="check-list">
+                <div class="check" id="chk0">
+                  <div class="qty num">60 ×</div>
+                  <div class="box"><div class="tick">✓</div></div>
+                  <b>Micromops</b>
+                  <span style="margin-left: auto">Blue, red — no yellow</span>
+                </div>
+                <div class="check" id="chk1">
+                  <div class="qty num">24 ×</div>
+                  <div class="box"><div class="tick">✓</div></div>
+                  <b>Mops</b>
+                  <span style="margin-left: auto">Standard</span>
+                </div>
+                <div class="check" id="chk2">
+                  <div class="qty num">12 ×</div>
+                  <div class="box"><div class="tick">✓</div></div>
+                  <b>Buckets</b>
+                  <span style="margin-left: auto">Green</span>
+                </div>
+              </div>
+              <div class="pack-foot" id="packFoot">
+                <span class="dot done"></span> 3 of 3 packed · ready to leave
+              </div>
+            </div>
+            <div class="photo-panel" id="photoPanel">
+              <div class="label" style="margin-bottom: 6px">Photo import</div>
+              <div style="font-size: 14px; color: var(--soft); margin-bottom: 16px">
+                Packing list · 1 photo
+              </div>
+              <div class="paper">
+                <div class="line m"></div>
+                <div class="line"></div>
+                <div class="line s"></div>
+                <div class="line"></div>
+                <div class="line m"></div>
+              </div>
+              <div class="result" id="packResult">
+                <div class="pill">✓ 3 items added</div>
+                <div class="result-rows">
+                  <div id="res0"><span>Micromops</span><b class="num">60</b></div>
+                  <div id="res1"><span>Mops</span><b class="num">24</b></div>
+                  <div id="res2"><span>Buckets</span><b class="num">12</b></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============== Scene 4: time tracking =============== -->
+      <section class="scene clip" id="s4" data-start="13" data-duration="4.5" data-track-index="0">
+        <div class="card frame" id="timeFrame">
+          <div class="frame-top">
+            <div class="brand">
+              <div class="brand-mark"></div>
+              <div class="brand-name">Example Company</div>
+            </div>
+            <nav class="nav">
+              <span class="on">Time tracking</span>
+              <span>History</span>
+              <span>Objects</span>
+            </nav>
+          </div>
+          <div class="screen-title">
+            <h2>Time tracking</h2>
+            <p>Working hours, vacation and absences at a glance.</p>
+          </div>
+          <div class="time-body">
+            <div>
+              <div class="rec" id="rec">
+                <span class="btn-dot" style="background: #14a37f"></span> Running
+              </div>
+              <div class="timer-wrap" style="margin-top: 18px">
+                <div class="timer num" id="t0">00:00:00</div>
+                <div class="timer num" id="t1" style="opacity: 0">00:00:04</div>
+                <div class="timer num" id="t2" style="opacity: 0">00:00:09</div>
+                <div class="timer num" id="t3" style="opacity: 0">00:00:12</div>
+              </div>
+              <div class="btn" id="clockBtn" style="margin-top: 26px">
+                <span class="btn-dot"></span>
+                <span class="btn-label">
+                  <span id="lblIn">Clock in</span>
+                  <span id="lblOut" style="opacity: 0">Clock out</span>
+                </span>
+              </div>
+              <div class="logs">
+                <div class="label">My clock-ins</div>
+                <div class="log-row" id="logRow">
+                  <b>Today</b><span class="num">07:58 → running</span>
+                </div>
+                <div class="log-row">
+                  <b>Monday</b><span class="num">07:55 → 16:20 · 8 h 05</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="label">This week</div>
+              <div class="bars">
+                <div class="bar" id="b0" style="height: 190px"></div>
+                <div class="bar" id="b1" style="height: 232px"></div>
+                <div class="bar" id="b2" style="height: 176px"></div>
+                <div class="bar hi" id="b3" style="height: 268px"></div>
+                <div class="bar" id="b4" style="height: 120px"></div>
+              </div>
+              <div class="bar-foot">
+                <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span>
+              </div>
+              <div style="margin-top: 26px; font-size: 15px; color: var(--soft)">
+                <b class="num" style="font-size: 30px; color: var(--ink)">38 h 12 min</b>
+                <div>logged this week</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============== Scene 5: outro =============== -->
+      <section class="scene clip" id="s5" data-start="17.5" data-duration="3.5" data-track-index="0">
+        <div class="grid" style="opacity: 0.5"></div>
+        <div class="center">
+          <div class="rule" id="outroRule"></div>
+          <div class="wordmark" id="wordmark">Example Company</div>
+          <div class="line2" id="outroLine">Objects, routes and tours.</div>
+          <div class="outro-chips">
+            <span id="oc0">Offline-ready</span>
+            <span id="oc1">Photo import</span>
+            <span id="oc2">Time tracking</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- =============== Audio =============== -->
+      <audio
+        id="music"
+        data-start="0"
+        data-duration="21"
+        data-track-index="2"
+        data-volume="0.45"
+        data-fade-in="0.4"
+        data-fade-out="1.2"
+        src="assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3"
+      ></audio>
+
+      <audio
+        id="sfxTick1"
+        data-start="8.6"
+        data-duration="0.4"
+        data-track-index="3"
+        data-volume="0.5"
+        src="assets/sfx/click_002.ogg"
+      ></audio>
+      <audio
+        id="sfxTick2"
+        data-start="9.2"
+        data-duration="0.4"
+        data-track-index="3"
+        data-volume="0.5"
+        src="assets/sfx/click_002.ogg"
+      ></audio>
+      <audio
+        id="sfxTick3"
+        data-start="9.8"
+        data-duration="0.4"
+        data-track-index="3"
+        data-volume="0.5"
+        src="assets/sfx/click_002.ogg"
+      ></audio>
+      <audio
+        id="sfxPhoto"
+        data-start="10.85"
+        data-duration="0.8"
+        data-track-index="3"
+        data-volume="0.45"
+        src="assets/sfx/drop_001.ogg"
+      ></audio>
+      <audio
+        id="sfxPress"
+        data-start="13.6"
+        data-duration="0.5"
+        data-track-index="3"
+        data-volume="0.4"
+        src="assets/sfx/click1.ogg"
+      ></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const ease = "power3.out";
+
+      /* ---------- Scene 1 ---------- */
+      tl.fromTo("#hookEyebrow", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease }, -0.4);
+      tl.fromTo("#hook1", { opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: 0.6, ease }, -0.34);
+      tl.fromTo("#hook2", { opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: 0.6, ease }, -0.22);
+      tl.fromTo("#hookTag", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.55, ease }, -0.05);
+      tl.to("#hookPath", { strokeDashoffset: 0, duration: 2.0, ease: "power2.inOut" }, 0.0);
+      tl.to("#hookDotA", { opacity: 1, duration: 0.3 }, 0.0);
+      tl.to("#hookDotB", { opacity: 1, duration: 0.3 }, 2.0);
+      tl.to("#s1", { opacity: 0, duration: 0.3, ease: "power2.in" }, 2.75);
+
+      /* ---------- Scene 2 ---------- */
+      tl.fromTo("#planFrame", { opacity: 0, y: 26, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease }, 3.0);
+      tl.to("#mapPath", { strokeDashoffset: 0, duration: 1.5, ease: "power2.inOut" }, 3.25);
+      tl.fromTo("#mapGlow", { opacity: 0 }, { opacity: 0.14, duration: 0.9 }, 3.3);
+      // beat-grid: pins + rows on the 0.5s grid (120 BPM)
+      [3.6, 4.0, 4.4, 4.8].forEach((t, i) => {
+        if (i < 3) {
+          tl.fromTo("#pin" + (i + 1), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2)" }, t);
+        }
+        tl.fromTo("#stop" + i, { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.42, ease }, t + 0.04);
+      });
+      tl.fromTo("#pin0", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.35, ease }, 3.5);
+      tl.fromTo("#planStats", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease }, 5.2);
+      tl.fromTo(".map-foot .chip", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease }, 4.9);
+      tl.to("#s2", { opacity: 0, duration: 0.25, ease: "power2.in" }, 7.75);
+
+      /* ---------- Scene 3 ---------- */
+      tl.fromTo("#packFrame", { opacity: 0, y: 26, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease }, 8.0);
+      [8.6, 9.2, 9.8].forEach((t, i) => {
+        tl.to("#chk" + i + " .box", { background: "#1d4ed8", borderColor: "#1d4ed8", duration: 0.2 }, t);
+        tl.to("#chk" + i + " .tick", { opacity: 1, duration: 0.2 }, t + 0.05);
+        tl.fromTo("#chk" + i, { borderColor: "#e2e8f0" }, { borderColor: "#bfdbfe", duration: 0.25 }, t);
+      });
+      tl.fromTo("#photoPanel", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.55, ease }, 10.2);
+      tl.fromTo("#packResult", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease }, 10.85);
+      [11.15, 11.4, 11.65].forEach((t, i) => {
+        tl.fromTo("#res" + i, { opacity: 0, x: 14 }, { opacity: 1, x: 0, duration: 0.3, ease }, t);
+      });
+      tl.fromTo("#packFoot", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease }, 11.9);
+      tl.to("#s3", { opacity: 0, duration: 0.25, ease: "power2.in" }, 12.75);
+
+      /* ---------- Scene 4 ---------- */
+      tl.fromTo("#timeFrame", { opacity: 0, y: 26, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease }, 13.0);
+      tl.fromTo("#rec", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 13.3);
+      // button press
+      tl.to("#clockBtn", { scale: 0.96, duration: 0.12, ease: "power2.in" }, 13.6);
+      tl.to("#clockBtn", { scale: 1, duration: 0.22, ease: "back.out(3)" }, 13.74);
+      tl.to("#lblIn", { opacity: 0, duration: 0.2 }, 13.7);
+      tl.to("#lblOut", { opacity: 1, duration: 0.2 }, 13.78);
+      // timer counting (discrete frames, seek-safe)
+      tl.fromTo("#t0", { opacity: 1 }, { opacity: 0, duration: 0.08 }, 14.4);
+      tl.fromTo("#t1", { opacity: 0 }, { opacity: 1, duration: 0.08 }, 14.4);
+      tl.to("#t1", { opacity: 0, duration: 0.08 }, 15.6);
+      tl.fromTo("#t2", { opacity: 0 }, { opacity: 1, duration: 0.08 }, 15.6);
+      tl.to("#t2", { opacity: 0, duration: 0.08 }, 16.6);
+      tl.fromTo("#t3", { opacity: 0 }, { opacity: 1, duration: 0.08 }, 16.6);
+      // week bars grow
+      ["#b0", "#b1", "#b2", "#b3", "#b4"].forEach((sel, i) => {
+        tl.fromTo(sel, { scaleY: 0.08 }, { scaleY: 1, duration: 0.55, ease: "power2.out" }, 13.6 + i * 0.12);
+      });
+      tl.fromTo("#logRow", { opacity: 0, x: -18 }, { opacity: 1, x: 0, duration: 0.45, ease }, 15.9);
+      tl.to("#s4", { opacity: 0, duration: 0.25, ease: "power2.in" }, 17.3);
+
+      /* ---------- Scene 5 ---------- */
+      // beat-locked: 18.00s (120 BPM grid)
+      tl.fromTo("#outroRule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease }, 17.6);
+      tl.fromTo("#wordmark", { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.6, ease }, 17.75);
+      tl.fromTo("#outroLine", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.55, ease }, 18.3);
+      [18.6, 18.85, 19.1].forEach((t, i) => {
+        tl.fromTo("#oc" + i, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease }, t);
+      });
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,255 @@
+"use client";
+
+import { useMemo } from "react";
+import dynamic from "next/dynamic";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Flag,
+  Footprints,
+  KeyRound,
+  MapPin,
+  MessageSquareText,
+  Truck,
+  XCircle,
+} from "lucide-react";
+import { cleanAddressLabel } from "@/lib/address";
+import { Badge } from "@/components/ui/badge";
+import {
+  formatDuration,
+  formatMinutes,
+  prepMinutesForCount,
+  toMinutes,
+} from "@/lib/routing/time";
+import type { OptimizedStop, RouteOptimizationResult } from "@/types/api";
+import { WAREHOUSE_NAME } from "@/lib/warehouse";
+
+// Leaflet (Karte) lädt nur im Browser – sonst crasht das Server-Rendering
+// mit „window is not defined“ (Leaflet greift beim Modul-Laden auf window zu).
+const RouteMap = dynamic(
+  () => import("@/components/map/route-map").then((m) => m.RouteMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-72 animate-pulse rounded-xl border bg-muted/20 sm:h-80" />
+    ),
+  },
+);
+
+type Props = {
+  route: RouteOptimizationResult;
+  selectedKeyStopIds: Set<string>;
+  onOpenStop: (stop: OptimizedStop) => void;
+  onOpenKeys: () => void;
+};
+
+export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: Props) {
+  // Einfacher Status: grün, wenn die ORS-Optimierung (VROOM) direkt gelöst
+  // hat; rot, wenn ein Fallback oder der Demo-Modus verwendet wurde.
+  const optimized = route.mode === "ors-optimization";
+
+  // Karten-Stopps (stabile Referenz, damit die Karte nicht neu lädt)
+  const mapStops = useMemo(
+    () =>
+      route.stops.map((stop) => ({
+        id: stop.object_id,
+        name: stop.name,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        note: stop.approach_by_foot
+          ? stop.walking_distance_m != null
+            ? `${Math.round(stop.walking_distance_m)} m on foot`
+            : "on foot"
+          : undefined,
+      })),
+    [route],
+  );
+  // Hinweis: Vollständigkeit der Karten-Koordinaten ist sichergestellt durch
+  // den Koordinaten-Fallback in runOptimize (Planungs-Auswahl) und den
+  // Backfill im Optimierer; RouteMap zeigt ein Overlay, wenn gar keine
+  // Koordinaten vorliegen.
+
+  // Nur die im Pack-Modus bestätigten Schlüssel werden angezeigt.
+  const sortedKeys = [...new Set(
+    route.stops
+      .filter((stop) => selectedKeyStopIds.has(stop.object_id))
+      .map((stop) => stop.key_number)
+      .filter((key): key is number => typeof key === "number"),
+  )].sort((a, b) => a - b);
+
+  // Geschätztes Arbeitsende = Lager-Rückkehr + Aufräumzeit (4 Min pro Stopp
+  // + 5 Min) – bewusst nur als Ergebnis dargestellt, ohne Rechnungsweg.
+  const workEnd = useMemo(
+    () =>
+      formatMinutes(
+        toMinutes(route.warehouse_arrival) +
+          prepMinutesForCount(route.stops.length),
+      ),
+    [route],
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* Zusammenfassung */}
+      <div className="rounded-lg border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant={optimized ? "success" : "destructive"}
+            className="gap-1"
+          >
+            {optimized ? (
+              <CheckCircle2 className="h-3 w-3" />
+            ) : (
+              <XCircle className="h-3 w-3" />
+            )}
+            {optimized ? "Optimisation successful" : "Optimisation failed"}
+          </Badge>
+          <Badge variant="secondary">{route.stops.length} stops</Badge>
+          <span className="ml-auto flex items-center gap-1 text-sm text-muted-foreground">
+            <Truck className="h-4 w-4 text-primary" />
+            Vorbereitung {route.prep_duration_minutes} Min · Abfahrt{" "}
+            {route.departure_time} · Warehouse return ~{route.warehouse_arrival}{" "}
+            ·            ca. {formatDuration(route.total_duration_minutes)}
+          </span>
+        </div>
+
+        {/* Geschätztes Arbeitsende (ohne Rechnungsweg) */}
+        <p className="mt-2 flex items-center gap-1.5 text-sm font-medium">
+          <Flag className="h-4 w-4 text-primary" />
+          Estimated end of work:{" "}
+          <span className="font-semibold tabular-nums">{workEnd}</span>
+        </p>
+
+        {/* Schlüssel-Packliste */}
+        <button
+          type="button"
+          onClick={onOpenKeys}
+          className="mt-3 flex w-full items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-left text-sm transition-colors hover:bg-primary/10"
+        >
+          <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <span>
+            <span className="font-medium">
+              {route.key_selection_confirmed && sortedKeys.length > 0
+                ? `Keys: ${sortedKeys.map((key) => `no. ${key}`).join(", ")}`
+                : "Select key"}
+            </span>
+          </span>
+        </button>
+
+        {route.warnings.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            {route.warnings.map((warning) => (
+              <p
+                key={warning}
+                className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {warning}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Stopp-Timeline */}
+      <ol className="relative space-y-2 pl-6">
+        <li className="absolute bottom-0 left-[11px] top-2 w-px bg-border" />
+        {/* Startpunkt */}
+        <li className="relative flex items-center gap-3 rounded-lg border bg-primary/5 px-3 py-2.5">
+          <span className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Flag className="h-3 w-3" />
+          </span>
+          <div className="flex-1">
+            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Lager)</p>
+            <p className="text-xs text-muted-foreground">
+              Abfahrt um {route.start_time}
+            </p>
+          </div>
+        </li>
+
+        {route.stops.map((stop, index) => (
+          <li key={stop.object_id} className="relative">
+            <button
+              type="button"
+              onClick={() => !stop.is_unknown && onOpenStop(stop)}
+              className={[
+                "flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/40",
+                stop.is_unknown ? "cursor-default" : "cursor-pointer",
+              ].join(" ")}
+            >
+              <span className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background">
+                {index + 1}
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-sm font-medium">{stop.is_unknown ? stop.unknown_name ?? stop.name : stop.name}</span>
+                  {!stop.is_unknown && selectedKeyStopIds.has(stop.object_id) && stop.key_number != null && (
+                    <Badge variant="secondary">No. {stop.key_number}</Badge>
+                  )}
+                  {stop.approach_by_foot ? (
+                    <Badge variant="warning" className="gap-1">
+                      <Footprints className="h-3 w-3" />
+                      {stop.walking_distance_m != null
+                        ? `${Math.round(stop.walking_distance_m)} m on foot`
+                        : "on foot"}
+                    </Badge>
+                  ) : stop.is_pedestrian_zone_until_11 ? (
+                    <Badge variant="warning">Pedestrian zone</Badge>
+                  ) : null}
+                  {stop.opens_at && (
+                    <Badge variant="outline">from {stop.opens_at.slice(0, 5)}</Badge>
+                  )}
+                </span>
+                <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                  <MapPin className="h-3 w-3 shrink-0" />
+                  {cleanAddressLabel(stop.address)}
+                </span>
+                {stop.remark && (
+                  <span
+                    className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground/80"
+                    title={stop.remark}
+                  >
+                    <MessageSquareText className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{stop.remark}</span>
+                  </span>
+                )}
+              </div>
+              <span className="flex shrink-0 flex-col items-end gap-1">
+                <span className="flex items-center gap-1 text-sm font-semibold tabular-nums">
+                  <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                  {stop.arrival}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+
+        {/* Endpunkt */}
+        <li className="relative flex items-center gap-3 rounded-lg border bg-primary/5 px-3 py-2.5">
+          <span className="absolute -left-6 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <Flag className="h-3 w-3" />
+          </span>
+          <div className="flex-1">
+            <p className="text-sm font-medium">{WAREHOUSE_NAME} (Lager)</p>
+            <p className="text-xs text-muted-foreground">
+              Return at ~{route.warehouse_arrival}
+            </p>
+          </div>
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
+            <Truck className="h-4 w-4" />
+            Gesamt ca. {formatDuration(route.total_duration_minutes)}
+          </span>
+        </li>
+      </ol>
+
+      {/* Karte mit eingezeichneter Route (unten) */}
+      <RouteMap warehouse={route.warehouse} stops={mapStops} />
+
+      <p className="text-center text-xs text-muted-foreground">
+        Tap a stop to check the packing list. Extra items for the
+        next tour are reserved during delivery.
+      </p>
+    </div>
+  );
+}

@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "brag": {
+      "source": "latent-spaces/brag",
+      "sourceType": "github",
+      "skillPath": "skills/brag/SKILL.md",
+      "computedHash": "6eefb4ac1485fd9834ea42c70a789bcc532cb6cf17f9f82925be8cdc681b0d75"
+    }
+  }
+}

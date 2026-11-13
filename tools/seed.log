@@ -1,0 +1,25 @@
+  vorhanden: Meyer & Sons Office
+  vorhanden: Northgate Dental Clinic
+  vorhanden: Lakeside Cafe
+  angelegt: Bright & Co Accountants -> 201 99a0e0dc-dee8-4370-8123-8a1eda42a4cf
+  angelegt: Riverside Pharmacy -> 201 61e7178c-3661-44bd-8790-c8992908372e
+  angelegt: The Old Mill Bakery -> 201 e28e2361-7ba1-4aa2-965e-2009e67238b2
+  angelegt: City Library -> 201 9e89d09b-501d-4278-922f-b0168506709e
+  angelegt: Harbour View Hotel -> 201 7a378250-4595-4235-a4d3-df5218f0e95e
+  angelegt: Green Park Kindergarten -> 201 c3e9f20b-9c51-4671-85a3-962bd6e6f857
+  Fahrer angelegt: 500 {"error":"Could not create the user."}
+  Fahrer-ID: None
+  Tour angelegt: 201 {'tour': {'id': '8b280426-b3ca-42d8-ad1d-ad5804e0bbf4', 'driver_id': '00000000-0000-0000-0000-000000000001', 'date': '2026-11-13', 'status': 'packing'
+  Tour-ID: 8b280426-b3ca-42d8-ad1d-ad5804e0bbf4
+  Einstempeln: 400 {"error":"Invalid times. An ISO timestamp is expected."}
+  Tour gestartet: 404 {"error":"Tour not found."}
+Traceback (most recent call last):
+  File "/workspace/chats/8b09d321ace4ee453a4b3b0f/RAW_EN/../tools/seed_demo.py", line 117, in <module>
+    IDS.write_text(json.dumps({"objects": obj_ids, "driver_id": driver_id, "tour_id": tour_id}, indent=2), encoding="utf-8")
+  File "/usr/lib/python3.12/pathlib.py", line 1049, in write_text
+    with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tools/demo-ids.json'
