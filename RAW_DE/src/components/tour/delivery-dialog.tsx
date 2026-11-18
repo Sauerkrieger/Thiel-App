@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Check,
   Image,
@@ -40,8 +34,9 @@ import {
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
 import { NavigateButton } from "./navigate-button";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { useItemList } from "@/lib/use-item-list";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo, TourStopWithObject } from "@/types/api";
 
@@ -52,6 +47,11 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   /** Wird nach erfolgreichem „Beliefern fertig“ aufgerufen. */
   onDelivered: () => void;
+  /**
+   * Optimistische Änderung: Die Tour-Liste zeigt den neuen Stand sofort,
+   * während die Änderung im Hintergrund gespeichert wird.
+   */
+  onStopChanged?: (stopId: string, patch: Partial<TourStopWithObject>) => void;
 };
 
 /**
@@ -112,81 +112,52 @@ export function DeliveryDialog({
   stop,
   onOpenChange,
   onDelivered,
+  onStopChanged,
 }: Props) {
-  const [items, setItems] = useState<ObjectItem[]>([]);
-  const [previousExtras, setPreviousExtras] = useState<DeliveryItem[]>([]);
+  const objectId = stop?.object?.id ?? null;
+  // Nur aktuelle Daten: Items + letzte Vormerkung kommen vom Server, der
+  // Offline-Cache ist reiner Fallback (mit Zeitstempel).
+  const list = useItemList<PackInfo>(
+    open && objectId
+      ? `/api/objects/${objectId}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`
+      : null,
+    (body) => body as unknown as PackInfo,
+    "delivery-dialog",
+  );
+  const items = list.data?.items ?? [];
+  const previousExtras = list.data?.previous_extras ?? [];
+  const loading = list.loading;
   /** Items, die für die NÄCHSTE Belieferung vorgemerkt sind. */
   const [extras, setExtras] = useState<DeliveryItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   /** „Nicht lieferbar“-Eingabe: Formular sichtbar + eingegebener Grund. */
   const [undeliverableMode, setUndeliverableMode] = useState(false);
   const [undeliverableReason, setUndeliverableReason] = useState("");
 
-  const load = useCallback(async () => {
-    if (!stop?.object?.id) return;
-    startListPerf("delivery-dialog");
-    // Stale-while-revalidate: Cache-Stand sofort zeigen (offline/schwaches
-    // Netz), frische Daten parallel nachladen.
-    const cached = await offlineReadCached(
-      `/api/objects/${stop.object.id}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`,
-    );
-    if (cached) {
-      const cachedInfo = cached as unknown as PackInfo;
-      const cachedCount = (cachedInfo.items ?? []).length;
-      markFirstData("delivery-dialog", "cache", cachedCount);
-      setItems(cachedInfo.items ?? []);
-      setPreviousExtras(cachedInfo.previous_extras ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(
-        `/api/objects/${stop.object.id}/pack-info?exclude_tour=${encodeURIComponent(tourId)}`,
-        { cache: "no-store" },
-      );
-      const body = await res.json();
-      if (!res.ok) {
-        if (!cached) {
-          toast.error(body.error ?? "Items konnten nicht geladen werden.");
-        }
-        return;
-      }
-      const info = body as PackInfo;
-      setItems(info.items ?? []);
-      setPreviousExtras(info.previous_extras ?? []);
-
-      // Bereits vorgemerkte Items für die nächste Belieferung übernehmen
-      // (next_delivery_items + reservierte Items aus dem Katalog).
-      const reservedNames = new Set(
-        (info.items ?? [])
-          .filter((item) => item.is_reserved && !item.is_always_required)
-          .map((item) => item.item_name),
-      );
-      const base = stop.next_delivery_items ?? [];
-      const merged = [...base];
-      for (const name of reservedNames) {
-        if (!merged.some((e) => e.item_name === name)) {
-          merged.push({ item_name: name, note: null });
-        }
-      }
-      setExtras(merged);
-      endListPerf("delivery-dialog", { source: "network", count: (info.items ?? []).length });
-    } catch {
-      if (!cached) {
-        toast.error("Items konnten nicht geladen werden.");
-      }
-      endListPerf("delivery-dialog", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, [stop, tourId]);
-
+  // Vormerkungen aus dem letzten Stopp + reservierte Katalog-Items übernehmen,
+  // sobald der Server-Stand da ist (nur einmal pro Öffnen/Stopp).
+  const extrasSourceRef = useRef<string | null>(null);
   useEffect(() => {
-    if (open && stop) void load();
-  }, [open, stop, load]);
+    if (!open || !stop) {
+      extrasSourceRef.current = null;
+      return;
+    }
+    const source = `${stop.id}:${list.data ? "data" : "stop"}`;
+    if (extrasSourceRef.current === source) return;
+    extrasSourceRef.current = source;
+    const reservedNames = new Set(
+      (list.data?.items ?? [])
+        .filter((item) => item.is_reserved && !item.is_always_required)
+        .map((item) => item.item_name),
+    );
+    const merged = [...(stop.next_delivery_items ?? [])];
+    for (const name of reservedNames) {
+      if (!merged.some((entry) => entry.item_name === name)) {
+        merged.push({ item_name: name, note: null });
+      }
+    }
+    setExtras(merged);
+  }, [open, stop, list.data]);
 
   // Bei Stopp-Wechsel die „Nicht lieferbar“-Eingabe zurücksetzen.
   useEffect(() => {
@@ -210,117 +181,124 @@ export function DeliveryDialog({
     );
   }
 
-  async function handleDeliver() {
+  /** Zeigt eine Stopp-Änderung sofort an (optimistisch). */
+  function applyLocal(patch: Partial<TourStopWithObject>) {
     if (!stop) return;
-    setSaving(true);
+    onStopChanged?.(stop.id, patch);
+  }
+
+  /**
+   * Optimistisches Speichern: Der neue Stand ist sofort sichtbar, der Dialog
+   * schließt sofort, die Anfrage läuft im Hintergrund. Schlägt sie fehl, wird
+   * der vorherige Stand wiederhergestellt (offline landet sie in der Queue
+   * und wird beim nächsten Sync nachgereicht).
+   */
+  async function saveStopChange(options: {
+    patch: Record<string, unknown>;
+    optimistic: Partial<TourStopWithObject>;
+    success: string;
+    rollback: Partial<TourStopWithObject>;
+  }) {
+    if (!stop) return;
+    applyLocal(options.optimistic);
+    onOpenChange(false);
+    toast.success(options.success);
     try {
       const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          is_delivered: true,
-          next_delivery_items: extras,
-          ...(stop.is_delivered
-            ? {}
-            : { delivered_items: buildDeliveredSnapshot(items, previousExtras) }),
-        }),
+        body: JSON.stringify(options.patch),
       });
-      const body = await res.json();
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        applyLocal(options.rollback);
         toast.error(body.error ?? "Speichern fehlgeschlagen.");
         return;
       }
-      toast.success(`„${stop.object?.name ?? "Unbekanntes Objekt"}" als beliefert markiert.`);
+      // Server-Stand leise nachziehen (kein Skeleton, kein Sprung).
       onDelivered();
-      onOpenChange(false);
     } catch {
+      applyLocal(options.rollback);
       toast.error("Speichern fehlgeschlagen.");
-    } finally {
-      setSaving(false);
     }
   }
 
-  async function handleUndoDeliver() {
+  function handleDeliver() {
     if (!stop) return;
-    setSaving(true);
-    try {
-      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_delivered: false }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        toast.error(body.error ?? "Speichern fehlgeschlagen.");
-        return;
-      }
-      toast.success(`„${stop.object?.name ?? "Unbekanntes Objekt"}" wieder als offen markiert.`);
-      onDelivered();
-      onOpenChange(false);
-    } catch {
-      toast.error("Speichern fehlgeschlagen.");
-    } finally {
-      setSaving(false);
-    }
+    const name = stop.object?.name ?? "Unbekanntes Objekt";
+    const deliveredItems = stop.is_delivered
+      ? null
+      : buildDeliveredSnapshot(items, previousExtras);
+    const payload = {
+      is_delivered: true,
+      next_delivery_items: extras,
+      ...(deliveredItems ? { delivered_items: deliveredItems } : {}),
+    };
+    void saveStopChange({
+      patch: payload,
+      optimistic: payload,
+      success: `„${name}“ als beliefert markiert.`,
+      rollback: {
+        is_delivered: stop.is_delivered,
+        is_undeliverable: stop.is_undeliverable,
+        undeliverable_reason: stop.undeliverable_reason ?? null,
+        next_delivery_items: stop.next_delivery_items ?? [],
+        delivered_items: stop.delivered_items ?? [],
+      },
+    });
+  }
+
+  function handleUndoDeliver() {
+    if (!stop) return;
+    const name = stop.object?.name ?? "Unbekanntes Objekt";
+    void saveStopChange({
+      patch: { is_delivered: false },
+      optimistic: { is_delivered: false },
+      success: `„${name}“ wieder als offen markiert.`,
+      rollback: { is_delivered: true },
+    });
   }
 
   /** Stopp als „nicht lieferbar“ markieren (optional mit Grund). */
-  async function handleUndeliverable() {
+  function handleUndeliverable() {
     if (!stop) return;
-    setSaving(true);
-    try {
-      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          is_delivered: false,
-          is_undeliverable: true,
-          undeliverable_reason: undeliverableReason.trim() || null,
-          next_delivery_items: extras,
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        toast.error(body.error ?? "Speichern fehlgeschlagen.");
-        return;
-      }
-      toast.success(
-        `„${stop.object?.name ?? "Unbekanntes Objekt"}" als nicht lieferbar markiert.`,
-      );
-      onDelivered();
-      onOpenChange(false);
-    } catch {
-      toast.error("Speichern fehlgeschlagen.");
-    } finally {
-      setSaving(false);
-    }
+    const name = stop.object?.name ?? "Unbekanntes Objekt";
+    const reason = undeliverableReason.trim() || null;
+    void saveStopChange({
+      patch: {
+        is_delivered: false,
+        is_undeliverable: true,
+        undeliverable_reason: reason,
+        next_delivery_items: extras,
+      },
+      optimistic: {
+        is_delivered: false,
+        is_undeliverable: true,
+        undeliverable_reason: reason,
+        next_delivery_items: extras,
+      },
+      success: `„${name}“ als nicht lieferbar markiert.`,
+      rollback: {
+        is_delivered: stop.is_delivered,
+        is_undeliverable: false,
+        undeliverable_reason: null,
+      },
+    });
   }
 
   /** „Nicht lieferbar“-Markierung aufheben (Stopp wieder offen). */
-  async function handleUndoUndeliverable() {
+  function handleUndoUndeliverable() {
     if (!stop) return;
-    setSaving(true);
-    try {
-      const res = await offlineFetch(`/api/tours/${tourId}/stops/${stop.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_undeliverable: false, undeliverable_reason: null }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        toast.error(body.error ?? "Speichern fehlgeschlagen.");
-        return;
-      }
-      toast.success(
-        `„${stop.object?.name ?? "Unbekanntes Objekt"}" wieder als offen markiert.`,
-      );
-      onDelivered();
-      onOpenChange(false);
-    } catch {
-      toast.error("Speichern fehlgeschlagen.");
-    } finally {
-      setSaving(false);
-    }
+    const name = stop.object?.name ?? "Unbekanntes Objekt";
+    void saveStopChange({
+      patch: { is_undeliverable: false, undeliverable_reason: null },
+      optimistic: { is_undeliverable: false, undeliverable_reason: null },
+      success: `„${name}“ wieder als offen markiert.`,
+      rollback: {
+        is_undeliverable: true,
+        undeliverable_reason: stop.undeliverable_reason ?? null,
+      },
+    });
   }
 
   const standardItems = items.filter((item) => item.is_always_required);
@@ -366,6 +344,10 @@ export function DeliveryDialog({
           )}
         </DialogHeader>
 
+        <ListStatus
+          refreshing={list.refreshing}
+          offlineSince={list.offlineSince}
+        />
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -560,7 +542,7 @@ export function DeliveryDialog({
               <Button
                 size="sm"
                 onClick={() => void handleUndeliverable()}
-                disabled={saving || loading}
+                disabled={loading}
                 className="gap-1"
               >
                 <XCircle className="h-4 w-4" />
@@ -570,8 +552,7 @@ export function DeliveryDialog({
                 size="sm"
                 variant="ghost"
                 onClick={() => setUndeliverableMode(false)}
-                disabled={saving}
-              >
+                >
                 Abbrechen
               </Button>
             </div>
@@ -583,7 +564,7 @@ export function DeliveryDialog({
             <Button
               variant="ghost"
               onClick={() => void handleUndoDeliver()}
-              disabled={saving || loading}
+              disabled={loading}
               className="text-muted-foreground"
             >
               Als offen markieren
@@ -592,7 +573,7 @@ export function DeliveryDialog({
             <Button
               variant="ghost"
               onClick={() => void handleUndoUndeliverable()}
-              disabled={saving || loading}
+              disabled={loading}
               className="text-muted-foreground"
             >
               Als offen markieren
@@ -601,7 +582,7 @@ export function DeliveryDialog({
             <Button
               variant="ghost"
               onClick={() => setUndeliverableMode((v) => !v)}
-              disabled={saving || loading}
+              disabled={loading}
               className="text-muted-foreground"
             >
               <XCircle className="h-4 w-4" />
@@ -612,21 +593,12 @@ export function DeliveryDialog({
             <Button
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={saving}
             >
               Abbrechen
             </Button>
-            <Button
-              onClick={() => void handleDeliver()}
-              disabled={saving || loading}
-              className="gap-2"
-            >
+            <Button onClick={() => handleDeliver()} className="gap-2">
               <Truck />
-              {saving
-                ? "Wird gespeichert…"
-                : stop?.is_delivered
-                  ? "Änderungen speichern"
-                  : "Beliefern fertig"}
+              {stop?.is_delivered ? "Änderungen speichern" : "Beliefern fertig"}
             </Button>
           </div>
         </DialogFooter>

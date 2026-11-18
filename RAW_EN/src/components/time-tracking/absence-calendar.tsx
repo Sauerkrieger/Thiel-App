@@ -210,15 +210,15 @@ export function AbsenceCalendar({ employees, requests, onEditRequest }: Calendar
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <MultiFilter label="Abwesenheitstypen" options={typeOptions} selected={types} onToggle={(value) => setTypes((current) => toggleValue(current, value))} onSelectAll={() => setTypes((current) => current.size === typeOptions.length ? new Set() : new Set(typeOptions.map((option) => option.value)))} />
+        <MultiFilter label="Absence types" options={typeOptions} selected={types} onToggle={(value) => setTypes((current) => toggleValue(current, value))} onSelectAll={() => setTypes((current) => current.size === typeOptions.length ? new Set() : new Set(typeOptions.map((option) => option.value)))} />
         <MultiFilter label="Roles" options={roleOptions} selected={roles} onToggle={(value) => setRoles((current) => toggleValue(current, value))} onSelectAll={() => setRoles((current) => current.size === roleOptions.length ? new Set() : new Set(roleOptions.map((option) => option.value)))} />
         <MultiFilter label="Employees" options={employeeOptions} selected={employeeIds} onToggle={(value) => setEmployeeIds((current) => toggleValue(current, value))} onSelectAll={() => setEmployeeIds((current) => current.size === employeeOptions.length ? new Set() : new Set(employeeOptions.map((option) => option.value)))} searchPlaceholder="Search employees" />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         {Object.entries(TYPE_LABELS).map(([type, label]) => <span key={type} className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 rounded-sm ${EVENT_STYLES[type as EventType].dot}`} />{label}</span>)}
-        <span className="border-l pl-4">Gestrichelt = beantragt</span>
-        <span>Vollfarbig = genehmigt</span>
+        <span className="border-l pl-4">Dashed = requested</span>
+        <span>Solid colour = approved</span>
       </div>
 
       {filteredEmployees.length === 0 ? <p className="rounded-md border p-6 text-sm text-muted-foreground">No employees for the selected filters.</p> : view === "month" ? (

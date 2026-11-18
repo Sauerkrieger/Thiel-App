@@ -379,7 +379,7 @@ function SyncBadge({ sync }: { sync: ReturnType<typeof useSyncState> }) {
       className="ml-1 flex shrink-0 items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
     >
       <CloudOff className="h-3.5 w-3.5" />
-      Sync-Fehler
+      Sync error
     </span>
   );
 }

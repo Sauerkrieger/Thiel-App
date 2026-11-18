@@ -17,7 +17,14 @@
 
 import type { SyncTable } from "@/lib/sync-tables";
 import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
-import { deleteRecord, getAllRecords, getRecord, putRecord, putRecords } from "./db";
+import {
+  deleteRecord,
+  getAllRecords,
+  getRecord,
+  getRecordsByIndex,
+  putRecord,
+  putRecords,
+} from "./db";
 import {
   getCurrentUserId,
   getCurrentUserRole,
@@ -32,12 +39,50 @@ import { nowServerAligned } from "./clock";
 /* Kleines fetch-kompatibles Response-Objekt                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Markiert eine Antwort als „aus dem Offline-Cache geliefert“. Die Listen-Helfer
+ * zeigen dann den Zeitstempel des Cache-Stands an, statt die Daten als aktuell
+ * auszugeben (offline ist die Antwort technisch ein 200 wie jede andere).
+ */
+function markFromCache(res: Response): Response {
+  (res as unknown as { fromCache?: boolean }).fromCache = true;
+  return res;
+}
+
 function jsonResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
   } as unknown as Response;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cache-Zeitstempel ("Offline-Stand von HH:MM")                      */
+/* ------------------------------------------------------------------ */
+
+const CACHE_STAMP_PREFIX = "thiel.cache-at:";
+
+/** Merkt sich, wann ein Endpunkt zuletzt erfolgreich vom Server geladen wurde. */
+function markCacheStamp(path: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      `${CACHE_STAMP_PREFIX}${path}`,
+      new Date().toISOString(),
+    );
+  } catch {
+    /* localStorage voll/blockiert – dann bleibt nur der Zeitstempel weg */
+  }
+}
+
+function readCacheStamp(path: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(`${CACHE_STAMP_PREFIX}${path}`);
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,10 +273,60 @@ async function cacheRows(
   await putRecords(table, merged);
 }
 
+/**
+ * Ersetzt einen (ggf. eingegrenzten) Bestand im Cache: erst Upsert wie
+ * `cacheRows`, danach werden Zeilen entfernt, die der Server nicht mehr
+ * liefert. Nur `synced`-Zeilen werden gelöscht – lokale, noch nicht
+ * hochgeladene Bearbeitungen (`pending_upload`) bleiben erhalten.
+ *
+ * Ohne diesen Schritt überleben gelöschte Items/Objekte/Stopps/Touren im
+ * IndexedDB-Cache und erscheinen beim nächsten Öffnen wieder – genau der
+ * Effekt „erst kommen alte oder falsche Daten“. `where` grenzt den Aufräum-
+ * Bereich ein (z. B. nur Items eines Objekts oder Stopps einer Tour).
+ */
+async function replaceRows(
+  table: SyncTable,
+  rows: Array<Record<string, unknown>>,
+  where?: (row: Record<string, unknown>) => boolean,
+): Promise<void> {
+  await cacheRows(table, rows);
+  const incoming = new Set(
+    rows
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
+  const existing = await getAllRecords(table);
+  for (const record of existing) {
+    if (record.sync_status !== "synced") continue;
+    if (incoming.has(record.id)) continue;
+    if (where && !where({ ...record.data, id: record.id })) continue;
+    await deleteRecord(table, record.id);
+  }
+}
+
 /** Alle Zeilen einer Tabelle aus dem Cache (Daten, `id` garantiert enthalten). */
 async function cacheRowsOf(table: SyncTable): Promise<Record<string, unknown>[]> {
   const records = await getAllRecords(table);
   return records.map((record) => ({ ...record.data, id: record.id }));
+}
+
+/**
+ * Zeilen einer Tabelle über einen Index (z. B. Items eines Objekts). Fällt auf
+ * einen Voll-Scan zurück, wenn der Index in einer älteren Installation fehlt –
+ * das Ergebnis bleibt gleich, nur der Weg dorthin ist langsamer.
+ */
+async function cacheRowsByIndex(
+  table: SyncTable,
+  indexName: string,
+  key: string,
+  fallback: (row: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>[]> {
+  try {
+    const records = await getRecordsByIndex(table, indexName, key);
+    return records.map((record) => ({ ...record.data, id: record.id }));
+  } catch {
+    return (await cacheRowsOf(table)).filter(fallback);
+  }
 }
 
 /**
@@ -312,6 +407,7 @@ async function cacheResponse(
   path: string,
   body: Record<string, unknown>,
 ): Promise<void> {
+  markCacheStamp(path);
   const userId = getCurrentUserId();
   if (path === "/api/objects") {
     const objects = Array.isArray(body.objects) ? body.objects : [];
@@ -339,8 +435,14 @@ async function cacheResponse(
       items.push(...embedded);
       delete obj.object_items;
     }
-    await cacheRows("objects", objects as Array<Record<string, unknown>>);
-    await cacheRows("object_items", items);
+    // Voll-Liste: Zeilen, die der Server nicht mehr liefert, werden entfernt,
+    // damit gelöschte Objekte/Items nicht als Geister im Cache überleben.
+    // Reinigungskräfte ohne Zuweisung bekommen bewusst eine leere Liste – dann
+    // darf der (ggf. von anderen Konten stammende) Cache nicht geleert werden.
+    if (!(getCurrentUserRole() === "facility_manager" && objects.length === 0)) {
+      await replaceRows("objects", objects as Array<Record<string, unknown>>);
+      await replaceRows("object_items", items);
+    }
     return;
   }
   if (/^\/api\/objects\/[^/]+$/.test(path)) {
@@ -350,26 +452,35 @@ async function cacheResponse(
       : [];
     const clean = { ...obj };
     delete clean.object_items;
+    const objectId = path.split("/")[3] ?? "";
     await cacheRows("objects", [clean]);
-    await cacheRows("object_items", embedded);
+    // Items dieses Objekts vollständig ersetzen (entfernte Items verschwinden).
+    await replaceRows("object_items", embedded, (row) => row.object_id === objectId);
     return;
   }
   if (/^\/api\/objects\/[^/]+\/items$/.test(path)) {
-    await cacheRows(
+    // Items genau dieses Objekts ersetzen – gilt für /items und /pack-info.
+    const objectId = path.split("/")[3] ?? "";
+    await replaceRows(
       "object_items",
       (Array.isArray(body.items) ? body.items : []) as Array<Record<string, unknown>>,
+      (row) => row.object_id === objectId,
     );
     return;
   }
   if (/^\/api\/objects\/[^/]+\/pack-info$/.test(path)) {
-    await cacheRows(
+    // Items genau dieses Objekts ersetzen – gilt für /items und /pack-info.
+    const objectId = path.split("/")[3] ?? "";
+    await replaceRows(
       "object_items",
       (Array.isArray(body.items) ? body.items : []) as Array<Record<string, unknown>>,
+      (row) => row.object_id === objectId,
     );
     return;
   }
   if (path === "/api/inventory") {
-    await cacheRows(
+    // Voll-Liste (Admin): gelöschte Items dürfen nicht im Cache überleben.
+    await replaceRows(
       "inventory_items",
       (Array.isArray(body.items) ? body.items : []) as Array<Record<string, unknown>>,
     );
@@ -397,7 +508,14 @@ async function cacheResponse(
         key_numbers: tour.key_numbers,
       };
     });
-    await cacheRows("active_tours", rows);
+    // Admins filtern die Historie nach Person – dort wäre ein Aufräumen
+    // gefährlich (fremde Touren würden gelöscht). Nicht-Admins sehen immer
+    // ihre vollständige Historie, dort wird aufgeräumt.
+    if (getCurrentUserRole() === "admin") {
+      await cacheRows("active_tours", rows);
+    } else {
+      await replaceRows("active_tours", rows);
+    }
     return;
   }
   if (/^\/api\/tours\/[^/]+$/.test(path)) {
@@ -419,7 +537,9 @@ async function cacheResponse(
       delete cleanStop.object;
       stopRows.push(cleanStop);
     }
-    await cacheRows("tour_stops", stopRows);
+    const tourId = path.split("/")[3] ?? "";
+    // Stopps dieser Tour vollständig ersetzen – entfernte Stopps verschwinden.
+    await replaceRows("tour_stops", stopRows, (row) => row.tour_id === tourId);
     await cacheRows("objects", objectRows);
     return;
   }
@@ -582,7 +702,10 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     if (!obj) {
       return jsonResponse(404, { error: "Objekt nicht gefunden." });
     }
-    const items = (await cacheRowsOf("object_items")).filter(
+    const items = await cacheRowsByIndex(
+      "object_items",
+      "object_id",
+      id,
       (row) => row.object_id === id,
     );
     return jsonResponse(200, {
@@ -595,7 +718,10 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     if (!mayReadObjectOffline(id)) {
       return jsonResponse(404, { error: "Objekt nicht gefunden." });
     }
-    const items = (await cacheRowsOf("object_items")).filter(
+    const items = await cacheRowsByIndex(
+      "object_items",
+      "object_id",
+      id,
       (row) => row.object_id === id,
     );
     return jsonResponse(200, { items });
@@ -606,16 +732,24 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     if (!mayReadObjectOffline(id)) {
       return jsonResponse(404, { error: "Objekt nicht gefunden." });
     }
-    const items = (await cacheRowsOf("object_items")).filter(
+    const items = await cacheRowsByIndex(
+      "object_items",
+      "object_id",
+      id,
       (row) => row.object_id === id,
     );
     // Letzte Vormerkung für dieses Objekt aus den gecachten Tour-Stopps
     const excludedTour = req.query.get("exclude_tour");
-    const stops = (await cacheRowsOf("tour_stops"))
+    const stops = (
+      await cacheRowsByIndex(
+        "tour_stops",
+        "object_id",
+        id,
+        (row) => row.object_id === id,
+      )
+    )
       .filter(
-        (row) =>
-          row.object_id === id &&
-          (!excludedTour || row.tour_id !== excludedTour),
+        (row) => !excludedTour || row.tour_id !== excludedTour,
       )
       .sort((a, b) =>
         String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
@@ -780,9 +914,14 @@ async function readOffline(req: OfflineRead): Promise<Response> {
     ) {
       return jsonResponse(404, { error: "Tour nicht gefunden." });
     }
-    const stops = (await cacheRowsOf("tour_stops"))
-      .filter((row) => row.tour_id === id)
-      .sort((a, b) => Number(a.stop_order) - Number(b.stop_order));
+    const stops = (
+      await cacheRowsByIndex(
+        "tour_stops",
+        "tour_id",
+        id,
+        (row) => row.tour_id === id,
+      )
+    ).sort((a, b) => Number(a.stop_order) - Number(b.stop_order));
     const objects = await cacheRowsOf("objects");
     const objectById = new Map(objects.map((o) => [o.id, o]));
     const tourStops = stops.map((stop) => {
@@ -1037,6 +1176,32 @@ export async function offlineReadCached(
   } catch {
     return null;
   }
+}
+
+export type OfflineCachedRead = {
+  data: Record<string, unknown>;
+  /** Zeitpunkt des letzten erfolgreichen Server-Ladens (ISO) – null, wenn unbekannt. */
+  cachedAt: string | null;
+};
+
+/**
+ * Wie `offlineReadCached`, liefert aber zusätzlich den Zeitpunkt des letzten
+ * erfolgreichen Server-Ladens. Wird für den Hinweis „Offline-Stand von HH:MM“
+ * benötigt, damit ein alter Cache nie als aktueller Stand erscheint.
+ */
+export async function offlineReadCachedWithMeta(
+  input: string | URL | Request,
+): Promise<OfflineCachedRead | null> {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+  const { path } = stripQuery(url);
+  const data = await offlineReadCached(input);
+  if (!data) return null;
+  return { data, cachedAt: readCacheStamp(path) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1416,6 +1581,16 @@ function tableFor(path: string, method: string): SyncTable | null {
   return null;
 }
 
+/** Id des Datensatzes, der bei einem DELETE aus dem Cache fliegt. */
+function deletedRecordId(path: string): string | null {
+  const segments = path.split("/").filter(Boolean);
+  // /api/objects/<objectId>/items/<itemId> bzw. .../stops/<stopId>
+  if (segments[1] === "objects" && segments[3] === "items") {
+    return segments[4] ?? null;
+  }
+  return segments[2] ?? null;
+}
+
 async function forwardOnline(
   url: string,
   init: RequestInit | undefined,
@@ -1440,7 +1615,9 @@ async function forwardOnline(
     const { query } = stripQuery(url);
     const params = extractParams(path);
     if (isReadableGet(path, method)) {
-      return readOffline({ kind: "read", path, method, params, query });
+      return markFromCache(
+        await readOffline({ kind: "read", path, method, params, query }),
+      );
     }
     if (
       isQueueableMutation(path, method) &&
@@ -1463,13 +1640,26 @@ async function forwardOnline(
       // Clone, damit der Original-Response-Body für den Aufrufer erhalten bleibt
       const clone = res.clone();
       const json = (await clone.json().catch(() => ({}))) as Record<string, unknown>;
+      // Gelöschte Datensätze sofort aus dem Cache entfernen – sonst tauchen
+      // sie beim nächsten Öffnen als Geister-Einträge wieder auf.
+      if (method === "DELETE" && res.ok) {
+        const deletedId = deletedRecordId(path);
+        if (deletedId) void deleteRecord(table, deletedId).catch(() => {});
+      }
+      // Die Cache-Übernahme darf die Antwort nicht verzögern (die UI wartet
+      // auf genau diesen Response, z. B. bei „Beliefern fertig“).
       if (res.status === 409 && json.serverRecord) {
-        await ingestServerRecord(table, json.serverRecord as Record<string, unknown>);
+        void ingestServerRecord(
+          table,
+          json.serverRecord as Record<string, unknown>,
+        ).catch(() => {});
       } else if (res.ok) {
         const key = serverKeyFor(path, method);
         const record = key ? json[key] : null;
         if (record && typeof record === "object") {
-          await ingestServerRecord(table, record as Record<string, unknown>);
+          void ingestServerRecord(table, record as Record<string, unknown>).catch(
+            () => {},
+          );
         }
       }
     }
@@ -1509,7 +1699,15 @@ export async function offlineFetch(
   // Offline?
   if (!getSyncState().online || typeof navigator !== "undefined" && !navigator.onLine) {
     if (isReadableGet(path, method)) {
-      return readOffline({ kind: "read", path, method, params: extractParams(path), query });
+      return markFromCache(
+        await readOffline({
+          kind: "read",
+          path,
+          method,
+          params: extractParams(path),
+          query,
+        }),
+      );
     }
     if (isQueueableMutation(path, method)) {
       const body = parseBody(init);

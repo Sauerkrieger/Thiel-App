@@ -7,12 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
 import { SetupHint } from "@/components/setup-hint";
+import { ListStatus } from "@/components/list-status";
+import { useItemList } from "@/lib/use-item-list";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VertretungCalendar } from "./vertretung-calendar";
 import type { SubstituteAssignment } from "@/types/time-tracking";
-import type { ApiError } from "@/types/api";
 
 /**
  * Vertretungskalender des Springers: alle genehmigten Vertretungen mit
@@ -21,53 +22,32 @@ import type { ApiError } from "@/types/api";
  * parallel vom Server nachladen.
  */
 export function VertretungPage() {
-  const [assignments, setAssignments] = useState<SubstituteAssignment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
-  const [absences, setAbsences] = useState<Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>>([]);
+  // Nur aktuelle Daten: Vertretungen kommen vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<{
+    substitutes: SubstituteAssignment[];
+    absences: Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>;
+    objects: Array<{ id: string; name: string }>;
+  }>(
+    "/api/time-tracking/substitutes",
+    (body) => ({
+      substitutes: (body.substitutes ?? []) as SubstituteAssignment[],
+      absences: (body.absences ?? []) as Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>,
+      objects: (body.objects ?? []) as Array<{ id: string; name: string }>,
+    }),
+    "vertretung",
+  );
+  const assignments = list.data?.substitutes ?? [];
+  const loading = list.loading;
+  const error = list.error;
+  const absences = list.data?.absences ?? [];
   const [kind, setKind] = useState<"driver" | "facility_manager">("driver");
   const [absenceId, setAbsenceId] = useState("none");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [objectId, setObjectId] = useState("");
-  const [objects, setObjects] = useState<Array<{ id: string; name: string }>>([]);
+  const objects = list.data?.objects ?? [];
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    const url = "/api/time-tracking/substitutes";
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached) {
-      setAssignments((cached.substitutes as SubstituteAssignment[]) ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
-        }
-        return;
-      }
-      setAssignments(body.substitutes ?? []);
-      setAbsences(body.absences ?? []);
-      setObjects(body.objects ?? []);
-    } catch {
-      if (!cached) {
-        setError({ message: "Netzwerkfehler beim Laden der Vertretungen." });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   function chooseAbsence(value: string) {
     setAbsenceId(value);
@@ -91,7 +71,7 @@ export function VertretungPage() {
       if (!res.ok) throw new Error(body.error ?? "Vertretung konnte nicht eingereicht werden.");
       toast.success("Vertretung eingereicht – wartet auf Freigabe.");
       setStart(""); setEnd(""); setAbsenceId("none"); setObjectId("");
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch (e) { toast.error(e instanceof Error ? e.message : "Vertretung konnte nicht eingereicht werden."); }
     finally { setSaving(false); }
   }
@@ -106,6 +86,12 @@ export function VertretungPage() {
           reinigenden Objekte, bei Fahrer-Vertretungen deine Hinweise.
         </p>
       </div>
+
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mb-3"
+      />
 
       {error?.code === "SUPABASE_NOT_CONFIGURED" ? (
         <SetupHint message={error.message} />

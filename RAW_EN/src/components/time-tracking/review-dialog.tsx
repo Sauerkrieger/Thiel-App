@@ -27,6 +27,26 @@ function toLocalInputValue(date: Date): string {
   )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/**
+ * Vorbelegte Endzeit einer vergessenen Ausstempelung: **gleicher Kalendertag
+ * wie das Einstempeln** (Uhrzeit: jetzt). Vorher war es „heute“ – wer im
+ * Popup nur die Uhrzeit änderte und das Datum übersah, speicherte das Ende
+ * Tage später und erzeugte Dauern wie „74:37 h“.
+ */
+function defaultEndForEntry(clockIn: string): Date {
+  const start = new Date(clockIn);
+  const now = new Date();
+  if (Number.isNaN(start.getTime())) return now;
+  const candidate = new Date(start);
+  candidate.setHours(now.getHours(), now.getMinutes(), 0, 0);
+  // Uhrzeit liegt vor dem Einstempeln → Folgetag (Übernacht-Stempelung).
+  if (candidate.getTime() <= start.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  // Nie in der Zukunft: dann lieber der aktuelle Zeitpunkt.
+  return candidate.getTime() > now.getTime() ? now : candidate;
+}
+
 function formatEntryTime(value: string): string {
   const date = new Date(value);
   return `${date.toLocaleDateString("en-GB", {
@@ -92,7 +112,7 @@ export function TimeReviewDialog({ userId }: { userId: string | null }) {
   // Formular je Eintrag zurücksetzen.
   useEffect(() => {
     if (!current) return;
-    setEndTime(toLocalInputValue(new Date()));
+    setEndTime(toLocalInputValue(defaultEndForEntry(current.clock_in)));
     setBreakMinutes("0");
     setNote("");
   }, [current]);

@@ -7,12 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
 import { SetupHint } from "@/components/setup-hint";
+import { ListStatus } from "@/components/list-status";
+import { useItemList } from "@/lib/use-item-list";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VertretungCalendar } from "./vertretung-calendar";
 import type { SubstituteAssignment } from "@/types/time-tracking";
-import type { ApiError } from "@/types/api";
 
 /**
  * Vertretungskalender des Springers: alle genehmigten Vertretungen mit
@@ -21,53 +22,32 @@ import type { ApiError } from "@/types/api";
  * parallel vom Server nachladen.
  */
 export function VertretungPage() {
-  const [assignments, setAssignments] = useState<SubstituteAssignment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
-  const [absences, setAbsences] = useState<Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>>([]);
+  // Nur aktuelle Daten: Vertretungen kommen vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<{
+    substitutes: SubstituteAssignment[];
+    absences: Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>;
+    objects: Array<{ id: string; name: string }>;
+  }>(
+    "/api/time-tracking/substitutes",
+    (body) => ({
+      substitutes: (body.substitutes ?? []) as SubstituteAssignment[],
+      absences: (body.absences ?? []) as Array<{ id: string; name: string; start_date: string; end_date: string; role: string }>,
+      objects: (body.objects ?? []) as Array<{ id: string; name: string }>,
+    }),
+    "vertretung",
+  );
+  const assignments = list.data?.substitutes ?? [];
+  const loading = list.loading;
+  const error = list.error;
+  const absences = list.data?.absences ?? [];
   const [kind, setKind] = useState<"driver" | "facility_manager">("driver");
   const [absenceId, setAbsenceId] = useState("none");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [objectId, setObjectId] = useState("");
-  const [objects, setObjects] = useState<Array<{ id: string; name: string }>>([]);
+  const objects = list.data?.objects ?? [];
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    const url = "/api/time-tracking/substitutes";
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached) {
-      setAssignments((cached.substitutes as SubstituteAssignment[]) ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({ code: body.code, message: body.error ?? "Unknown error" });
-        }
-        return;
-      }
-      setAssignments(body.substitutes ?? []);
-      setAbsences(body.absences ?? []);
-      setObjects(body.objects ?? []);
-    } catch {
-      if (!cached) {
-        setError({ message: "Network error while loading substitutions." });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   function chooseAbsence(value: string) {
     setAbsenceId(value);
@@ -91,7 +71,7 @@ export function VertretungPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not submit the substitution.");
       toast.success("Substitution submitted – waiting for approval.");
       setStart(""); setEnd(""); setAbsenceId("none"); setObjectId("");
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch (e) { toast.error(e instanceof Error ? e.message : "Could not submit the substitution."); }
     finally { setSaving(false); }
   }
@@ -104,6 +84,12 @@ export function VertretungPage() {
           Your assignments at a glance: whom you cover and when. For cleaning substitutions, tap a field to see the objects to clean; for driver substitutions, you see your notes.
         </p>
       </div>
+
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mb-3"
+      />
 
       {error?.code === "SUPABASE_NOT_CONFIGURED" ? (
         <SetupHint message={error.message} />
@@ -124,8 +110,8 @@ export function VertretungPage() {
             <CardHeader><CardTitle>Add substitution</CardTitle><CardDescription>The entry only becomes active after admin approval.</CardDescription></CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2"><Label>Affected employee (optional)</Label><Select value={absenceId} onValueChange={chooseAbsence}><SelectTrigger><SelectValue placeholder="No employee – choose the period yourself" /></SelectTrigger><SelectContent><SelectItem value="none">No employee – enter it myself</SelectItem>{absences.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.start_date} – {item.end_date}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-2"><Label>Von</Label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div className="space-y-2"><Label>Bis</Label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-              <div className="space-y-2"><Label>Type of substitution</Label><Select value={kind} onValueChange={(v) => setKind(v as "driver" | "facility_manager")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="driver">Driver</SelectItem><SelectItem value="facility_manager">Reinigung</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2"><Label>From</Label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div className="space-y-2"><Label>To</Label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+              <div className="space-y-2"><Label>Type of substitution</Label><Select value={kind} onValueChange={(v) => setKind(v as "driver" | "facility_manager")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="driver">Driver</SelectItem><SelectItem value="facility_manager">Cleaning</SelectItem></SelectContent></Select></div>
               {kind === "facility_manager" && <div className="space-y-2"><Label>Object</Label><Select value={objectId} onValueChange={setObjectId}><SelectTrigger><SelectValue placeholder="Select object" /></SelectTrigger><SelectContent>{objects.map((object) => <SelectItem key={object.id} value={object.id}>{object.name}</SelectItem>)}</SelectContent></Select></div>}
               <div className="sm:col-span-2"><Button onClick={() => void submit()} disabled={saving}>{saving ? "Submitting…" : "Submit substitution for approval"}</Button></div>
             </CardContent>

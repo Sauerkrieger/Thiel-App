@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -41,10 +41,11 @@ import { WAREHOUSE_ADDRESS, WAREHOUSE_NAME } from "@/lib/warehouse";
 import { formatMinutes } from "@/lib/routing/time";
 import { DeliveryDialog } from "./delivery-dialog";
 import { NavigateButton } from "./navigate-button";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
 import { startTour } from "@/lib/offline/start-tour";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
-import type { ApiError, TourStopWithObject, TourWithStops } from "@/types/api";
+import { useItemList } from "@/lib/use-item-list";
+import type { TourStopWithObject, TourWithStops } from "@/types/api";
 
 const STATUS_LABELS: Record<TourWithStops["status"], string> = {
   packing: "Packing",
@@ -56,9 +57,16 @@ type Props = { tourId: string };
 
 export function TourPage({ tourId }: Props) {
   const router = useRouter();
-  const [tour, setTour] = useState<TourWithStops | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
+  // Nur aktuelle Daten: die Tour kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<TourWithStops>(
+    `/api/tours/${tourId}`,
+    (body) => body.tour as TourWithStops,
+    "tour-page",
+  );
+  const tour = list.data;
+  const loading = list.loading;
+  const error = list.error;
   const [dialog, setDialog] = useState<{
     open: boolean;
     stop: TourStopWithObject | null;
@@ -66,54 +74,19 @@ export function TourPage({ tourId }: Props) {
   const [finishing, setFinishing] = useState(false);
   const [starting, setStarting] = useState(false);
 
-  // Stale-while-revalidate: gecachte Tour sofort anzeigen, frische Daten
-  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    const url = `/api/tours/${tourId}`;
-    startListPerf("tour-page");
-    const cached = fresh
-      ? null
-      : await Promise.race([
-          offlineReadCached(url),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200)),
-        ]);
-    if (cached?.tour) {
-      const cachedStops = (cached.tour as TourWithStops).tour_stops ?? [];
-      markFirstData("tour-page", "cache", cachedStops.length);
-      setTour(cached.tour as TourWithStops);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({ code: body.code, message: body.error ?? "Unknown error" });
-        }
-        return;
-      }
-      setTour(body.tour);
-      endListPerf("tour-page", {
-        source: typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "network",
-        count: (body.tour?.tour_stops ?? []).length,
-      });
-    } catch {
-      if (!cached) {
-        setError({ message: "Network error while loading the tour." });
-      }
-      endListPerf("tour-page", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, [tourId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  /** Optimistische Stopp-Änderung: sofort in der Liste sichtbar. */
+  function patchStop(stopId: string, patch: Partial<TourStopWithObject>) {
+    list.update((current) =>
+      current
+        ? {
+            ...current,
+            tour_stops: current.tour_stops.map((entry) =>
+              entry.id === stopId ? { ...entry, ...patch } : entry,
+            ),
+          }
+        : current,
+    );
+  }
 
   const stops = tour?.tour_stops ?? [];
   // Karten-Stopps (stabile Referenz, damit die Karte nicht neu lädt)
@@ -174,7 +147,7 @@ export function TourPage({ tourId }: Props) {
         return;
       }
       toast.success("Tour started – off we go!");
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch {
       toast.error("Could not start the tour.");
     } finally {
@@ -224,7 +197,7 @@ export function TourPage({ tourId }: Props) {
         return;
       }
       toast.success(`„${stop.unknown_name ?? "Unknown destination"}" marked as delivered.`);
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch {
       toast.error("Save failed.");
     }
@@ -281,6 +254,12 @@ export function TourPage({ tourId }: Props) {
         </div>
       </div>
 
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mt-3"
+      />
+
       {/* Inhalt */}
       <div className="mt-6">
         {error?.code === "SUPABASE_NOT_CONFIGURED" ? (
@@ -289,7 +268,7 @@ export function TourPage({ tourId }: Props) {
           <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
             {error.message}
           </div>
-        ) : loading ? (
+        ) : loading && !tour ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-14 w-full" />
@@ -422,7 +401,7 @@ export function TourPage({ tourId }: Props) {
                         </span>
                         {undeliverable && stop.undeliverable_reason && (
                           <span className="mt-0.5 block text-xs font-medium text-amber-700 dark:text-amber-400">
-                            Grund: {stop.undeliverable_reason}
+                            Reason: {stop.undeliverable_reason}
                           </span>
                         )}
                         {stop.object?.remark && (
@@ -485,7 +464,7 @@ export function TourPage({ tourId }: Props) {
                   </span>
                   <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                     <MapPin className="h-3 w-3 shrink-0" />
-                    Ankunft im Warehouse
+                    Arrival at the warehouse
                     {tour.warehouse?.address
                       ? ` · ${cleanAddressLabel(tour.warehouse.address)}`
                       : ""}
@@ -519,7 +498,8 @@ export function TourPage({ tourId }: Props) {
         tourId={tourId}
         stop={dialog.stop}
         onOpenChange={(open) => setDialog((prev) => ({ ...prev, open }))}
-        onDelivered={() => void load(true)}
+        onDelivered={() => void list.refresh({ quiet: true })}
+        onStopChanged={patchStop}
       />
 
       {/* Sticky-Leiste: auf dem Handy über der festen Stempeluhr-Leiste

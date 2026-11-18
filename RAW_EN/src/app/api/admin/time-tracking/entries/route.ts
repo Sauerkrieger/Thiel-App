@@ -126,7 +126,7 @@ export async function POST(request: Request) {
     const changeReason =
       typeof rawReason === "string" && rawReason.trim()
         ? rawReason.trim().slice(0, MAX_NOTE_LENGTH)
-        : "Manuell nacherfasst";
+        : "Added manually";
     // Audit-Log ist Pflicht für manuell erfasste Einträge.
     await logTimeEntryChange(supabase, {
       timeEntryId: data.id,

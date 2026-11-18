@@ -108,9 +108,9 @@ export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: 
           <Badge variant="secondary">{route.stops.length} stops</Badge>
           <span className="ml-auto flex items-center gap-1 text-sm text-muted-foreground">
             <Truck className="h-4 w-4 text-primary" />
-            Vorbereitung {route.prep_duration_minutes} Min · Abfahrt{" "}
+            Prep {route.prep_duration_minutes} min · Departure{" "}
             {route.departure_time} · Warehouse return ~{route.warehouse_arrival}{" "}
-            ·            ca. {formatDuration(route.total_duration_minutes)}
+            · approx. {formatDuration(route.total_duration_minutes)}
           </span>
         </div>
 
@@ -238,7 +238,7 @@ export function PackView({ route, selectedKeyStopIds, onOpenStop, onOpenKeys }: 
           </div>
           <span className="flex items-center gap-1 text-sm text-muted-foreground">
             <Truck className="h-4 w-4" />
-            Gesamt ca. {formatDuration(route.total_duration_minutes)}
+            Total approx. {formatDuration(route.total_duration_minutes)}
           </span>
         </li>
       </ol>

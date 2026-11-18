@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -43,8 +43,10 @@ import { ItemsDialog } from "./items-dialog";
 import { ObjectInfoDialog } from "./object-info-dialog";
 import { PhotoImportDialog } from "./photo-import-dialog";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import type { ApiError, ObjectWithItems } from "@/types/api";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { useItemList } from "@/lib/use-item-list";
+import type { ObjectWithItems } from "@/types/api";
 import type { UserRole } from "@/types/database";
 
 /** Sortierbare Spalten der Objektliste (Klick auf Spaltenkopf). */
@@ -62,9 +64,16 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
   // Items nur lesbar – Springer & Co. sehen weiterhin alles.
   const isFacilityManager = userRole === "facility_manager";
 
-  const [objects, setObjects] = useState<ObjectWithItems[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
+  // Nur aktuelle Daten: der Server liefert die Liste, der Offline-Cache dient
+  // ausschließlich als Fallback (mit Zeitstempel) – nie als erster Eindruck.
+  const list = useItemList<ObjectWithItems[]>(
+    "/api/objects",
+    (body) => (body.objects ?? []) as ObjectWithItems[],
+    "objects",
+  );
+  const objects = useMemo(() => list.data ?? [], [list.data]);
+  const loading = list.loading;
+  const error = list.error;
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortState>({ key: "name", dir: 1 });
 
@@ -80,47 +89,6 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
   const [deleteTarget, setDeleteTarget] = useState<ObjectWithItems | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [infoTarget, setInfoTarget] = useState<ObjectWithItems | null>(null);
-
-  // Stale-while-revalidate: gecachte Objekte sofort anzeigen, frische Daten
-  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    // Leere Cache-Listen nicht als Daten werten (sonst blinkt z. B. bei
-    // Reinigungskräften kurz „keine Objekte zugewiesen“, bis die frischen
-    // Daten eintreffen).
-    const cached = fresh ? null : await offlineReadCached("/api/objects");
-    if (cached && Array.isArray(cached.objects) && cached.objects.length > 0) {
-      setObjects(cached.objects as ObjectWithItems[]);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch("/api/objects", { cache: "no-store" });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({
-            code: body.code,
-            message: body.error ?? "Unknown error",
-          });
-        }
-        return;
-      }
-      setObjects(body.objects ?? []);
-    } catch {
-      if (!cached) {
-        setError({ message: "Network error while loading objects." });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const itemCount = (o: ObjectWithItems) => o.object_items?.length ?? 0;
 
@@ -183,7 +151,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
       }
       toast.success(`„${deleteTarget.name}" was deleted.`);
       setDeleteTarget(null);
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch {
       toast.error("Delete failed.");
     } finally {
@@ -233,6 +201,12 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
           />
         </div>
       </div>
+
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mt-3"
+      />
 
       {/* Inhalt */}
       <div className="mt-4">
@@ -332,7 +306,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
                     <TableCell>
                       <Badge variant={obj.category === "objekt" ? "secondary" : "outline"}>
                         <Store className="mr-1 h-3 w-3" />
-                        {obj.category === "objekt" ? "Object" : "Treppenhaus"}
+                        {obj.category === "objekt" ? "Object" : "Stairwell"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -405,12 +379,12 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
             onOpenChange={(open) =>
               setFormDialog((prev) => ({ ...prev, open }))
             }
-            onSaved={() => void load(true)}
+            onSaved={() => void list.refresh({ quiet: true })}
           />
           <PhotoImportDialog
             open={photoOpen}
             onOpenChange={setPhotoOpen}
-            onImported={() => void load(true)}
+            onImported={() => void list.refresh({ quiet: true })}
           />
         </>
       )}
@@ -422,7 +396,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
         onOpenChange={(open) =>
           setItemsDialog((prev) => ({ ...prev, open }))
         }
-        onChanged={() => void load(true)}
+        onChanged={() => void list.refresh({ quiet: true })}
       />
       <ObjectInfoDialog
         open={!!infoTarget}
@@ -454,7 +428,7 @@ export function ObjectsPage({ userRole }: { userRole: UserRole }) {
             <DialogDescription>
               „{deleteTarget?.name}“ and all related items will be
               deleted permanently. Weekday defaults that use this object
-              referenzieren, werden ebenfalls entfernt.
+              are removed as well.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -61,7 +61,7 @@ export function ObjectInfoDialog({ open, object, isAdmin, onOpenChange, onEdit, 
             {object && (
               <Badge variant={object.category === "objekt" ? "secondary" : "outline"}>
                 <Store className="mr-1 h-3 w-3" />
-                {object.category === "objekt" ? "Object" : "Treppenhaus"}
+                {object.category === "objekt" ? "Object" : "Stairwell"}
               </Badge>
             )}
           </DialogTitle>

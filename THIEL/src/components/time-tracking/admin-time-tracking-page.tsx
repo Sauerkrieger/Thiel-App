@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AbsenceCalendar } from "@/components/time-tracking/absence-calendar";
 import { CONTRACT_LABELS, dailyTargetMinutes, overtimeBalanceHours, weeklyMinutesForContract } from "@/lib/contract";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { loadList } from "@/lib/offline/list";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } from "@/lib/time-format";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,39 @@ function currentMonth(): string {
 
 function timeLabel(value: string): string {
   return new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Zeitzeile eines Freigabe-Eintrags. Zeigt zusätzlich das Enddatum, wenn das
+ * Ende an einem anderen Tag liegt, und markiert unplausible Dauern – so fallen
+ * Einträge auf, die versehentlich tageweise gespeichert wurden (früher z. B.
+ * „74:37 h“ bei drei Stunden Arbeit).
+ */
+function EntryTimeLine({ entry }: { entry: OverviewEntry }) {
+  const start = new Date(entry.clock_in);
+  const end = entry.clock_out ? new Date(entry.clock_out) : null;
+  const endOtherDay =
+    end !== null && start.toDateString() !== end.toDateString();
+  const minutes = end ? workedMinutesOf(entry) : null;
+  const implausible = minutes !== null && (minutes > 16 * 60 || endOtherDay);
+
+  return (
+    <p className="text-xs text-muted-foreground">
+      {start.toLocaleDateString("de-DE")} · {timeLabel(entry.clock_in)} –{" "}
+      {end
+        ? `${endOtherDay ? `${end.toLocaleDateString("de-DE")} ` : ""}${timeLabel(end.toISOString())}`
+        : "offen"}
+      {entry.break_duration_minutes > 0
+        ? ` · Pause ${entry.break_duration_minutes} Min.`
+        : ""}
+      {minutes !== null ? ` · ${minutesToLabel(minutes)}` : ""}
+      {implausible && (
+        <span className="font-medium text-amber-700 dark:text-amber-400">
+          {" "}· Ende an einem anderen Tag – bitte prüfen
+        </span>
+      )}
+    </p>
+  );
 }
 
 /** Wert für ein <input type="datetime-local"> (lokale Zeit). */
@@ -178,40 +212,35 @@ export function AdminTimeTrackingPage() {
   // Live-Ticker für die Dauer-Anzeige im Prüfbedarf-Abschnitt
   const [now, setNow] = useState(() => Date.now());
 
-  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
-  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    const url = "/api/admin/time-tracking/overview";
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached) {
-      setOverview(cached as Overview);
-      setLoading(false);
-    } else {
-      setLoading(true);
+  // Nur aktuelle Daten: die Übersicht kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim ersten Laden dreht ein Spinner;
+  // spätere Aktualisierungen lassen die vorhandenen Daten stehen.
+  const load = useCallback(async () => {
+    const result = await loadList(
+      "/api/admin/time-tracking/overview",
+      (body) => body as unknown as Overview,
+    );
+    setLoading(false);
+    if (result.data) {
+      setOverview(result.data);
+      return;
     }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // 401/403 = die Session-Cookies gehören nicht (mehr) einem Admin –
-        // z. B. wenn im selben Browser ein Mitarbeiter-Login (zweiter Tab)
-        // die geteilten Cookies überschrieben hat. Die Seite rendert dann
-        // zwar noch, bekommt aber keine Daten mehr. Das soll laut und klar
-        // sichtbar sein, statt still zu scheitern.
-        if (res.status === 401 || res.status === 403) {
-          console.error(
-            `[Zeitadmin] Keine Admin-Sitzung (HTTP ${res.status}) – Session-Cookie überschrieben?`,
-          );
-          throw new Error(
-            "Keine Admin-Sitzung mehr. Falls du im selben Browser als Mitarbeiter eingeloggt bist: Für den Realtime-Test zwei verschiedene Browser (oder Inkognito) nutzen.",
-          );
-        }
-        throw new Error(body.error ?? "Übersicht konnte nicht geladen werden.");
-      }
-      setOverview(body as Overview);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Übersicht konnte nicht geladen werden.");
-    } finally { setLoading(false); }
+    // 401/403 = die Session-Cookies gehören nicht (mehr) einem Admin – z. B.
+    // wenn im selben Browser ein Mitarbeiter-Login (zweiter Tab) die
+    // geteilten Cookies überschrieben hat. Das soll laut und klar sichtbar
+    // sein, statt still zu scheitern.
+    if (result.status === 401 || result.status === 403) {
+      console.error(
+        `[Zeitadmin] Keine Admin-Sitzung (HTTP ${result.status}) – Session-Cookie überschrieben?`,
+      );
+      toast.error(
+        "Keine Admin-Sitzung mehr. Falls du im selben Browser als Mitarbeiter eingeloggt bist: Für den Realtime-Test zwei verschiedene Browser (oder Inkognito) nutzen.",
+      );
+      return;
+    }
+    toast.error(
+      result.error?.message ?? "Übersicht konnte nicht geladen werden.",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -221,7 +250,7 @@ export function AdminTimeTrackingPage() {
   useRealtimeRefresh(
     true,
     ["time_entries", "time_off_requests", "profiles"],
-    () => { void load(true); },
+    () => { void load(); },
   );
 
   async function approveEntry(entry: TimeEntry, approved: boolean) {
@@ -230,7 +259,7 @@ export function AdminTimeTrackingPage() {
       const res = await offlineFetch(`/api/admin/time-tracking/entries/${entry.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_approved: approved }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Arbeitszeit konnte nicht aktualisiert werden.");
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
@@ -244,7 +273,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Eintrag konnte nicht gelöscht werden.");
       toast.success("Eintrag gelöscht.");
       setDeleteTarget(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht gelöscht werden."); } finally { setDeleting(false); }
   }
 
@@ -338,7 +367,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Eintrag konnte nicht aktualisiert werden.");
       toast.success(approved ? "Eintrag ausgestempelt und freigegeben." : "Eintrag ausgestempelt (wartet auf Freigabe).");
       setClosingEntry(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
@@ -418,7 +447,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Eintrag konnte nicht gespeichert werden.");
       toast.success(formTarget.entry ? "Eintrag aktualisiert." : "Eintrag nacherfasst.");
       setFormTarget(null);
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Eintrag konnte nicht gespeichert werden.");
     } finally {
@@ -439,7 +468,7 @@ export function AdminTimeTrackingPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Antrag konnte nicht aktualisiert werden.");
       setApprovalTarget(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Antrag konnte nicht aktualisiert werden."); } finally { setSaving(null); }
   }
 
@@ -470,7 +499,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Vertretung konnte nicht gespeichert werden.");
       toast.success(editSubstitute ? "Vertretung gespeichert." : "Vertretung entfernt.");
       setEditTarget(null);
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Vertretung konnte nicht gespeichert werden.");
     } finally {
@@ -500,7 +529,7 @@ export function AdminTimeTrackingPage() {
       setCreateAbsenceOpen(false);
       setCreateSubstitute("");
       setCreateNote("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Abwesenheit konnte nicht eingetragen werden.");
     } finally {
@@ -559,7 +588,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Konto konnte nicht aktualisiert werden.");
       toast.success("Konto aktualisiert.");
       setSelectedEmployee(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Konto konnte nicht aktualisiert werden."); } finally { setSavingAccount(false); }
   }
 
@@ -747,7 +776,7 @@ export function AdminTimeTrackingPage() {
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Prüfbedarf</CardTitle><CardDescription>Vergessene Ausstempelungen – offene Stempelungen, die automatisch markiert wurden (12 h überschritten oder Mitternacht erreicht). Die Dauer zählt live mit.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredReviewEntries.length === 0 ? <p className="text-sm text-muted-foreground">{selectedUserId ? `Keine offenen Prüfbedarf-Einträge für ${selectedEmployeeName ?? "die gewählte Person"}.` : "Keine offenen Prüfbedarf-Einträge."}</p> : filteredReviewEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />{entry.profiles?.name ?? entry.user_id}<Badge variant="warning">Prüfbedarf</Badge></div><p className="text-xs text-muted-foreground">Eingestempelt am {new Date(entry.clock_in).toLocaleDateString("de-DE")} um {timeLabel(entry.clock_in)} Uhr · läuft seit {liveDurationLabel(entry, now)}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => openCloseEntry(entry)} disabled={saving === entry.id}><Timer /> Ausstempeln &amp; Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}</CardContent></Card>
 
-        <Card className="mt-6"><CardHeader><CardTitle>Freigabe-Feed</CardTitle><CardDescription>Nachgereichte Arbeitszeiten und Anträge prüfen.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredPendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Nachgereichte Arbeitszeit · ${entry.profiles?.name ?? entry.user_id}` : `Vergessene Ausstempelung · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Ausstehend</Badge></div><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleDateString("de-DE")} · {timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "offen"}{entry.break_duration_minutes > 0 ? ` · Pause ${entry.break_duration_minutes} Min.` : ""}{entry.clock_out ? ` · ${minutesToLabel(workedMinutesOf(entry))}` : ""}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}
+        <Card className="mt-6"><CardHeader><CardTitle>Freigabe-Feed</CardTitle><CardDescription>Nachgereichte Arbeitszeiten und Anträge prüfen.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredPendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Nachgereichte Arbeitszeit · ${entry.profiles?.name ?? entry.user_id}` : `Vergessene Ausstempelung · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Ausstehend</Badge></div><EntryTimeLine entry={entry} />{entry.note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Freigeben</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Löschen</Button></div></div>)}
       {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Ausstehend</Badge></div><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("de-DE")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("de-DE")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Notiz: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => openApproval(request)} disabled={saving === request.id}>Genehmigen</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected", request.substitute_id ?? undefined, request.reviewer_note ?? undefined)} disabled={saving === request.id}>Ablehnen</Button></div></div>)}{filteredPendingEntries.length === 0 && (selectedUserId ? <p className="text-sm text-muted-foreground">Keine offenen Freigaben für {selectedEmployeeName ?? "die gewählte Person"}.</p> : pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">Keine offenen Freigaben.</p>)}</CardContent></Card>
 
         <Dialog open={createAbsenceOpen} onOpenChange={setCreateAbsenceOpen}>

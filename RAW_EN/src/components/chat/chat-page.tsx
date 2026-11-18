@@ -657,7 +657,7 @@ export function ChatPage({ userId, isAdmin }: { userId: string; isAdmin: boolean
                 <Button size="sm" variant={recording ? "destructive" : "outline"} onClick={() => recording ? stopRecording() : void startRecording()}>{recording ? <Square /> : <Mic />} {recording ? "Stop" : "Audio"}</Button>
                 {attachmentPreview && <img src={attachmentPreview} alt="Selected chat attachment" className="h-12 w-12 rounded border object-cover" />}
                 {attachment && !attachmentPreview && <span className="text-xs text-muted-foreground">{attachment.name}</span>}
-                {recordingFile && <span className="text-xs text-muted-foreground">Audio bereit</span>}
+                {recordingFile && <span className="text-xs text-muted-foreground">Audio ready</span>}
                 {isAdmin && <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={urgent} onChange={(event) => setUrgent(event.target.checked)} /> Important / urgent</label>}
               </div>
             </div>

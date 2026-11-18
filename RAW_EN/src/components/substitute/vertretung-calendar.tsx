@@ -345,7 +345,7 @@ export function VertretungCalendar({ assignments }: Props) {
                 {selected.absent.role === "facility_manager" && (
                   <div className="space-y-2">
                     <p className="text-sm font-semibold">
-                      Zu reinigende Objekte ({selected.objects.length})
+                      Objects to clean ({selected.objects.length})
                     </p>
                     {selected.objects.length === 0 ? (
                       <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">

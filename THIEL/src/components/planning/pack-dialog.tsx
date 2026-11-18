@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Image, ListChecks, PackageCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { itemPhotoUrl } from "@/lib/storage";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
+import { ListStatus } from "@/components/list-status";
+import { useItemList } from "@/lib/use-item-list";
 import type { ObjectItem } from "@/types/database";
 import type { DeliveryItem, PackInfo } from "@/types/api";
 
@@ -134,54 +134,17 @@ function PackItemsTable({
 }
 
 export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) {
-  const [items, setItems] = useState<ObjectItem[]>([]);
-  const [previousExtras, setPreviousExtras] = useState<DeliveryItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Nur aktuelle Daten: die Packliste kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<PackInfo>(
+    open && objectId ? `/api/objects/${objectId}/pack-info` : null,
+    (body) => body as unknown as PackInfo,
+    "pack-dialog",
+  );
+  const items = list.data?.items ?? [];
+  const previousExtras = list.data?.previous_extras ?? [];
+  const loading = list.loading;
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!objectId) return;
-    startListPerf("pack-dialog");
-    // Stale-while-revalidate: Cache-Stand sofort zeigen (offline/schwaches
-    // Netz), frische Daten parallel nachladen.
-    const cached = await offlineReadCached(`/api/objects/${objectId}/pack-info`);
-    if (cached) {
-      const cachedInfo = cached as unknown as PackInfo;
-      markFirstData("pack-dialog", "cache", (cachedInfo.items ?? []).length);
-      setItems(cachedInfo.items ?? []);
-      setPreviousExtras(cachedInfo.previous_extras ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(`/api/objects/${objectId}/pack-info`, {
-        cache: "no-store",
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        if (!cached) {
-          toast.error(body.error ?? "Packliste konnte nicht geladen werden.");
-        }
-        return;
-      }
-      const info = body as PackInfo;
-      setItems(info.items ?? []);
-      setPreviousExtras(info.previous_extras ?? []);
-      endListPerf("pack-dialog", { source: "network", count: (info.items ?? []).length });
-    } catch {
-      if (!cached) {
-        toast.error("Packliste konnte nicht geladen werden.");
-      }
-      endListPerf("pack-dialog", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, [objectId]);
-
-  useEffect(() => {
-    if (open && objectId) void load();
-  }, [open, objectId, load]);
 
   const standardItems = items.filter((item) => item.is_always_required);
   const previousNames = new Set(previousExtras.map((e) => e.item_name));
@@ -211,6 +174,10 @@ export function PackDialog({ open, objectName, objectId, onOpenChange }: Props) 
           </DialogDescription>
         </DialogHeader>
 
+        <ListStatus
+          refreshing={list.refreshing}
+          offlineSince={list.offlineSince}
+        />
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (

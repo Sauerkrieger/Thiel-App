@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AbsenceCalendar } from "@/components/time-tracking/absence-calendar";
 import { CONTRACT_LABELS, dailyTargetMinutes, overtimeBalanceHours, weeklyMinutesForContract } from "@/lib/contract";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { loadList } from "@/lib/offline/list";
 import { useRealtimeRefresh } from "@/lib/realtime";
 import { hoursToLabel, minutesToLabel, requiredBreakMinutes, workedMinutesOf } from "@/lib/time-format";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,39 @@ function currentMonth(): string {
 
 function timeLabel(value: string): string {
   return new Date(value).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Zeitzeile eines Freigabe-Eintrags. Zeigt zusätzlich das Enddatum, wenn das
+ * Ende an einem anderen Tag liegt, und markiert unplausible Dauern – so fallen
+ * Einträge auf, die versehentlich tageweise gespeichert wurden (früher z. B.
+ * „74:37 h“ bei drei Stunden Arbeit).
+ */
+function EntryTimeLine({ entry }: { entry: OverviewEntry }) {
+  const start = new Date(entry.clock_in);
+  const end = entry.clock_out ? new Date(entry.clock_out) : null;
+  const endOtherDay =
+    end !== null && start.toDateString() !== end.toDateString();
+  const minutes = end ? workedMinutesOf(entry) : null;
+  const implausible = minutes !== null && (minutes > 16 * 60 || endOtherDay);
+
+  return (
+    <p className="text-xs text-muted-foreground">
+      {start.toLocaleDateString("en-GB")} · {timeLabel(entry.clock_in)} –{" "}
+      {end
+        ? `${endOtherDay ? `${end.toLocaleDateString("en-GB")} ` : ""}${timeLabel(end.toISOString())}`
+        : "open"}
+      {entry.break_duration_minutes > 0
+        ? ` · Break ${entry.break_duration_minutes} min.`
+        : ""}
+      {minutes !== null ? ` · ${minutesToLabel(minutes)}` : ""}
+      {implausible && (
+        <span className="font-medium text-amber-700 dark:text-amber-400">
+          {" "}· End date falls on another day – please check
+        </span>
+      )}
+    </p>
+  );
 }
 
 /** Wert für ein <input type="datetime-local"> (lokale Zeit). */
@@ -179,40 +213,35 @@ export function AdminTimeTrackingPage() {
   // Live-Ticker für die Dauer-Anzeige im Prüfbedarf-Abschnitt
   const [now, setNow] = useState(() => Date.now());
 
-  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
-  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    const url = "/api/admin/time-tracking/overview";
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached) {
-      setOverview(cached as Overview);
-      setLoading(false);
-    } else {
-      setLoading(true);
+  // Nur aktuelle Daten: die Übersicht kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim ersten Laden dreht ein Spinner;
+  // spätere Aktualisierungen lassen die vorhandenen Daten stehen.
+  const load = useCallback(async () => {
+    const result = await loadList(
+      "/api/admin/time-tracking/overview",
+      (body) => body as unknown as Overview,
+    );
+    setLoading(false);
+    if (result.data) {
+      setOverview(result.data);
+      return;
     }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // 401/403 = die Session-Cookies gehören nicht (mehr) einem Admin –
-        // z. B. wenn im selben Browser ein Mitarbeiter-Login (zweiter Tab)
-        // die geteilten Cookies überschrieben hat. Die Seite rendert dann
-        // zwar noch, bekommt aber keine Daten mehr. Das soll laut und klar
-        // sichtbar sein, statt still zu scheitern.
-        if (res.status === 401 || res.status === 403) {
-          console.error(
-            `[Time admin] No admin session (HTTP ${res.status}) – session cookie overwritten?`,
-          );
-          throw new Error(
-            "No admin session any more. If you are signed in as an employee in the same browser: use two different browsers (or incognito) for the realtime test.",
-          );
-        }
-        throw new Error(body.error ?? "Could not load the overview.");
-      }
-      setOverview(body as Overview);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not load the overview.");
-    } finally { setLoading(false); }
+    // 401/403 = die Session-Cookies gehören nicht (mehr) einem Admin – z. B.
+    // wenn im selben Browser ein Mitarbeiter-Login (zweiter Tab) die
+    // geteilten Cookies überschrieben hat. Das soll laut und klar sichtbar
+    // sein, statt still zu scheitern.
+    if (result.status === 401 || result.status === 403) {
+      console.error(
+        `[Time admin] No admin session (HTTP ${result.status}) – session cookie overwritten?`,
+      );
+      toast.error(
+        "No admin session any more. If you are signed in as an employee in the same browser: use two different browsers (or incognito) for the realtime test.",
+      );
+      return;
+    }
+    toast.error(
+      result.error?.message ?? "Could not load the overview.",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -222,7 +251,7 @@ export function AdminTimeTrackingPage() {
   useRealtimeRefresh(
     true,
     ["time_entries", "time_off_requests", "profiles"],
-    () => { void load(true); },
+    () => { void load(); },
   );
 
   async function approveEntry(entry: TimeEntry, approved: boolean) {
@@ -231,7 +260,7 @@ export function AdminTimeTrackingPage() {
       const res = await offlineFetch(`/api/admin/time-tracking/entries/${entry.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_approved: approved }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Could not update work time.");
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update work time."); } finally { setSaving(null); }
   }
 
@@ -245,7 +274,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not delete entry.");
       toast.success("Entry deleted.");
       setDeleteTarget(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete entry."); } finally { setDeleting(false); }
   }
 
@@ -339,7 +368,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not update entry.");
       toast.success(approved ? "Entry clocked out and approved." : "Entry clocked out (waiting for approval).");
       setClosingEntry(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update entry."); } finally { setSaving(null); }
   }
 
@@ -419,7 +448,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not save entry.");
       toast.success(formTarget.entry ? "Entry updated." : "Entry added.");
       setFormTarget(null);
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save entry.");
     } finally {
@@ -440,7 +469,7 @@ export function AdminTimeTrackingPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Request could not be updated.");
       setApprovalTarget(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Request could not be updated."); } finally { setSaving(null); }
   }
 
@@ -471,7 +500,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not save the substitution.");
       toast.success(editSubstitute ? "Substitution saved." : "Substitution removed.");
       setEditTarget(null);
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save the substitution.");
     } finally {
@@ -501,7 +530,7 @@ export function AdminTimeTrackingPage() {
       setCreateAbsenceOpen(false);
       setCreateSubstitute("");
       setCreateNote("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not add the absence.");
     } finally {
@@ -560,7 +589,7 @@ export function AdminTimeTrackingPage() {
       if (!res.ok) throw new Error(body.error ?? "Could not update the account.");
       toast.success("Account updated.");
       setSelectedEmployee(null);
-      await load(true);
+      await load();
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update the account."); } finally { setSavingAccount(false); }
   }
 
@@ -748,13 +777,13 @@ export function AdminTimeTrackingPage() {
 
         <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Needs review</CardTitle><CardDescription>Forgotten clock-outs – open clock-ins that were flagged automatically (12 h exceeded or midnight reached). The duration counts live.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredReviewEntries.length === 0 ? <p className="text-sm text-muted-foreground">{selectedUserId ? `No pending review entries for ${selectedEmployeeName ?? "the selected person"}.` : "No pending review entries."}</p> : filteredReviewEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />{entry.profiles?.name ?? entry.user_id}<Badge variant="warning">Needs review</Badge></div><p className="text-xs text-muted-foreground">Clocked in on {new Date(entry.clock_in).toLocaleDateString("en-GB")} at {timeLabel(entry.clock_in)} · running since {liveDurationLabel(entry, now)}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Note: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => openCloseEntry(entry)} disabled={saving === entry.id}><Timer /> Clock out &amp; approve</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Delete</Button></div></div>)}</CardContent></Card>
 
-        <Card className="mt-6"><CardHeader><CardTitle>Approval feed</CardTitle><CardDescription>Review submitted work times and requests.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredPendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Submitted work time · ${entry.profiles?.name ?? entry.user_id}` : `Forgotten clock-out · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Pending</Badge></div><p className="text-xs text-muted-foreground">{new Date(entry.clock_in).toLocaleDateString("en-GB")} · {timeLabel(entry.clock_in)} – {entry.clock_out ? timeLabel(entry.clock_out) : "open"}{entry.break_duration_minutes > 0 ? ` · Break ${entry.break_duration_minutes} min` : ""}{entry.clock_out ? ` · ${minutesToLabel(workedMinutesOf(entry))}` : ""}</p>{entry.note && <p className="mt-1 text-xs text-muted-foreground">Note: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Approve</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Delete</Button></div></div>)}
-      {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Pending</Badge></div><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("en-GB")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("en-GB")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Note: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => openApproval(request)} disabled={saving === request.id}>Approve</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected", request.substitute_id ?? undefined, request.reviewer_note ?? undefined)} disabled={saving === request.id}>Reject</Button></div></div>)}{filteredPendingEntries.length === 0 && (selectedUserId ? <p className="text-sm text-muted-foreground">No open approvals for {selectedEmployeeName ?? "the selected person"}.</p> : pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">No pending approvals.</p>)}</CardContent></Card>
+        <Card className="mt-6"><CardHeader><CardTitle>Approval feed</CardTitle><CardDescription>Review submitted work times and requests.</CardDescription></CardHeader><CardContent className="space-y-3">{filteredPendingEntries.map((entry) => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><Clock3 className="h-3.5 w-3.5 text-muted-foreground" />{entry.source === "submitted" ? `Submitted work time · ${entry.profiles?.name ?? entry.user_id}` : `Forgotten clock-out · ${entry.profiles?.name ?? entry.user_id}`}<Badge variant="warning">Pending</Badge></div><EntryTimeLine entry={entry} />{entry.note && <p className="mt-1 text-xs text-muted-foreground">Note: {entry.note}</p>}</div><div className="flex gap-2"><AuditHistoryButton entry={entry} onOpen={() => setAuditEntry(entry)} /><Button size="sm" onClick={() => void approveEntry(entry, true)} disabled={saving === entry.id}><Check /> Approve</Button><Button size="sm" variant="outline" onClick={() => setDeleteTarget(entry)} disabled={saving === entry.id}><Trash2 /> Delete</Button></div></div>)}
+      {pendingRequests.map((request) => <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><div className="flex flex-wrap items-center gap-1.5 text-sm font-medium"><CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />{REQUEST_TYPE[request.type] ?? request.type} · {request.profiles?.name ?? request.user_id}<Badge variant="warning">Pending</Badge></div><p className="text-xs text-muted-foreground">{new Date(`${request.start_date}T00:00:00`).toLocaleDateString("en-GB")} – {new Date(`${request.end_date}T00:00:00`).toLocaleDateString("en-GB")}</p>{request.employee_note && <p className="mt-1 text-xs text-muted-foreground">Note: {request.employee_note}</p>}</div><div className="flex gap-2"><Button size="sm" onClick={() => openApproval(request)} disabled={saving === request.id}>Approve</Button><Button size="sm" variant="outline" onClick={() => void reviewRequest(request, "rejected", request.substitute_id ?? undefined, request.reviewer_note ?? undefined)} disabled={saving === request.id}>Reject</Button></div></div>)}{filteredPendingEntries.length === 0 && (selectedUserId ? <p className="text-sm text-muted-foreground">No pending approvals for {selectedEmployeeName ?? "the selected person"}.</p> : pendingEntries.length === 0 && pendingRequests.length === 0 && <p className="text-sm text-muted-foreground">No pending approvals.</p>)}</CardContent></Card>
 
         <Dialog open={createAbsenceOpen} onOpenChange={setCreateAbsenceOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader><DialogTitle>Add absence</DialogTitle><DialogDescription>The entry is saved as approved and appears in the calendar immediately.</DialogDescription></DialogHeader>
-            <div className="space-y-4"><div className="space-y-2"><Label>Employee</Label><Select value={createEmployeeId} onValueChange={setCreateEmployeeId}><SelectTrigger><SelectValue placeholder="Select employees" /></SelectTrigger><SelectContent>{[...overview.employees].sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "en-GB")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Art</Label><Select value={createType} onValueChange={(value) => setCreateType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(REQUEST_TYPE).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="create-absence-start">Von</Label><Input id="create-absence-start" type="date" value={createStart} onChange={(event) => setCreateStart(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="create-absence-end">Bis</Label><Input id="create-absence-end" type="date" value={createEnd} onChange={(event) => setCreateEnd(event.target.value)} /></div></div><div className="space-y-2"><Label>Substitution by (optional)</Label><Select value={createSubstitute || "none"} onValueChange={(value) => setCreateSubstitute(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="No substitute" /></SelectTrigger><SelectContent><SelectItem value="none">No substitute</SelectItem>{[...overview.employees].filter((employee) => employee.id !== createEmployeeId).sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "en-GB")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="create-absence-note">Note for the substitute (optional)</Label><Input id="create-absence-note" value={createNote} onChange={(event) => setCreateNote(event.target.value)} maxLength={1000} placeholder="e.g. special arrangements" /><p className="text-xs text-muted-foreground">Shown to the substitute in their substitution calendar.</p></div><DialogFooter><Button variant="outline" onClick={() => setCreateAbsenceOpen(false)}>Cancel</Button><Button onClick={() => void createAbsence()} disabled={creatingAbsence}>{creatingAbsence ? "Saving…" : "Eintragen"}</Button></DialogFooter></div>
+            <div className="space-y-4"><div className="space-y-2"><Label>Employee</Label><Select value={createEmployeeId} onValueChange={setCreateEmployeeId}><SelectTrigger><SelectValue placeholder="Select employees" /></SelectTrigger><SelectContent>{[...overview.employees].sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "en-GB")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Type</Label><Select value={createType} onValueChange={(value) => setCreateType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(REQUEST_TYPE).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="create-absence-start">From</Label><Input id="create-absence-start" type="date" value={createStart} onChange={(event) => setCreateStart(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="create-absence-end">To</Label><Input id="create-absence-end" type="date" value={createEnd} onChange={(event) => setCreateEnd(event.target.value)} /></div></div><div className="space-y-2"><Label>Substitution by (optional)</Label><Select value={createSubstitute || "none"} onValueChange={(value) => setCreateSubstitute(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="No substitute" /></SelectTrigger><SelectContent><SelectItem value="none">No substitute</SelectItem>{[...overview.employees].filter((employee) => employee.id !== createEmployeeId).sort((a, b) => Number(b.role === "substitute") - Number(a.role === "substitute") || a.name.localeCompare(b.name, "en-GB")).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {ROLE_LABELS[employee.role] ?? employee.role}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label htmlFor="create-absence-note">Note for the substitute (optional)</Label><Input id="create-absence-note" value={createNote} onChange={(event) => setCreateNote(event.target.value)} maxLength={1000} placeholder="e.g. special arrangements" /><p className="text-xs text-muted-foreground">Shown to the substitute in their substitution calendar.</p></div><DialogFooter><Button variant="outline" onClick={() => setCreateAbsenceOpen(false)}>Cancel</Button><Button onClick={() => void createAbsence()} disabled={creatingAbsence}>{creatingAbsence ? "Saving…" : "Add"}</Button></DialogFooter></div>
           </DialogContent>
         </Dialog>
 
@@ -794,7 +823,7 @@ export function AdminTimeTrackingPage() {
                   <div className="space-y-1.5"><Label htmlFor="edit-vacation">Remaining vacation (days)</Label><Input id="edit-vacation" type="number" min={0} max={365} value={editVacation} onChange={(event) => setEditVacation(event.target.value)} /></div>
                   <div className="space-y-1.5"><Label htmlFor="edit-overtime">Overtime correction (h)</Label><Input id="edit-overtime" type="number" step="0.25" value={editOvertime} onChange={(event) => setEditOvertime(event.target.value)} /></div>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">Automatisch berechnet: {hoursToLabel(overtimeOf(selectedEmployee).auto)}</p>
+                <p className="mt-2 text-xs text-muted-foreground">Calculated automatically: {hoursToLabel(overtimeOf(selectedEmployee).auto)}</p>
                 <p className="mt-2 text-xs text-muted-foreground">{contractDetailsLine(selectedEmployee)} · {selectedEmployee.vacation_days_used ?? 0} vacation days used. The new remaining vacation is converted into the annual entitlement.</p>
                 <DialogFooter className="mt-4 sm:justify-end"><Button onClick={() => void saveAccount()} disabled={savingAccount}>{savingAccount ? "Saving…" : "Save"}</Button></DialogFooter>
               </div>

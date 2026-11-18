@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { apiErrorResponse } from "@/lib/http";
 import { parseDeliveredItems, parseDeliveryItems } from "@/lib/items";
@@ -222,20 +222,24 @@ export async function PATCH(request: Request, { params }: Context) {
     // Nach erfolgreicher Belieferung alle Vormerkungen (is_reserved) der
     // Objekt-Items zurücksetzen – sie wurden gepackt und geliefert.
     // Bei "not deliverable" bleiben sie dagegen bestehen.
+    // Läuft NACH der Antwort (`after`): Der Fahrer wartet nicht auf diesen
+    // zusätzlichen Datenbank-Roundtrip, „Beliefern fertig“ ist sofort fertig.
     if (update.is_delivered === true && data) {
       const objectId = (data as Record<string, unknown>).object_id;
       if (typeof objectId === "string") {
-        const { error: resetError } = await supabase
-          .from("object_items")
-          .update({ is_reserved: false })
-          .eq("object_id", objectId)
-          .eq("is_reserved", true);
-        if (resetError) {
-          console.warn(
-            "[Tour stop] Could not reset reservations:",
-            resetError.message,
-          );
-        }
+        after(async () => {
+          const { error: resetError } = await supabase
+            .from("object_items")
+            .update({ is_reserved: false })
+            .eq("object_id", objectId)
+            .eq("is_reserved", true);
+          if (resetError) {
+            console.warn(
+              "[Tour stop] Could not reset reservations:",
+              resetError.message,
+            );
+          }
+        });
       }
     }
 

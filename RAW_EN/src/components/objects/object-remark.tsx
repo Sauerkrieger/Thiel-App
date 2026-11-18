@@ -54,7 +54,7 @@ export function ObjectRemark({ remark, objectName, className }: Props) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Bemerkung{objectName ? ` – ${objectName}` : ""}
+              Note{objectName ? ` – ${objectName}` : ""}
             </DialogTitle>
           </DialogHeader>
           <p className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-sm">

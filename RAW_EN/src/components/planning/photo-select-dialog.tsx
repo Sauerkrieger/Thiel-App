@@ -146,7 +146,7 @@ export function PhotoSelectDialog({ open, onOpenChange, onApply }: Props) {
             <div className="flex items-center gap-2">
               <Badge variant="success" className="gap-1">
                 <CheckCircle2 className="h-3 w-3" />
-                {matched} Objekte erkannt
+                {matched} objects recognised
               </Badge>
               {unmatched > 0 && (
                 <Badge variant="secondary">

@@ -49,9 +49,11 @@ import {
   prepMinutesForCount,
   toMinutes,
 } from "@/lib/routing/time";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { loadList } from "@/lib/offline/list";
 import { nowServerAligned } from "@/lib/offline/clock";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
+import { useItemList } from "@/lib/use-item-list";
 import { getCurrentUserId } from "@/lib/offline/sync";
 import { newUuid } from "@/lib/offline/db";
 import type {
@@ -189,13 +191,20 @@ export function PlanningPage() {
   const router = useRouter();
 
 
-  const [objects, setObjects] = useState<PlanningObject[]>([]);
+  // Nur aktuelle Daten: die Objektliste kommt vom Server, der Offline-Cache
+  // ist reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<PlanningObject[]>(
+    "/api/planning",
+    (body) => (body.objects ?? []) as PlanningObject[],
+    "planning",
+  );
+  const objects = list.data ?? [];
   const [unknownTargets, setUnknownTargets] = useState<UnknownTarget[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedUnknown, setSelectedUnknown] = useState<Set<string>>(new Set());
   const [selectedKeyStopIds, setSelectedKeyStopIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
+  const loading = list.loading;
+  const error = list.error;
   const [search, setSearch] = useState("");
 
   // Routen-Optimierung / Pack-Modus
@@ -238,50 +247,11 @@ export function PlanningPage() {
 
   const todayLabel = useMemo(() => dateFormatter.format(new Date()), []);
 
-  // Stale-while-revalidate: gecachte Planung sofort anzeigen, frische Daten
-  // parallel vom Server nachladen.
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    const url = "/api/planning";
-    startListPerf("planning");
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached) {
-      markFirstData("planning", "cache", ((cached.objects as PlanningObject[]) ?? []).length);
-      setObjects((cached.objects as PlanningObject[]) ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(url, {
-        cache: "no-store",
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({ code: body.code, message: body.error ?? "Unknown error" });
-        }
-        return;
-      }
-      setObjects(body.objects ?? []);
-      endListPerf("planning", { source: "network", count: (body.objects ?? []).length });
-    } catch {
-      if (!cached) {
-        setError({ message: "Network error while loading the tour planning." });
-      }
-      endListPerf("planning", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void load();
     const targets = loadUnknownTargets();
     setUnknownTargets(targets);
     setSelectedUnknown(new Set(targets.map((target) => target.id)));
-  }, [load]);
+  }, []);
 
   useEffect(() => {
     saveUnknownTargets(unknownTargets);
@@ -305,44 +275,29 @@ export function PlanningPage() {
     }
   }, []);
 
-  // Active tour laden (nur eigene Touren, stale-while-revalidate). Nur
-  // Touren von HEUTE mit Status packing/in_transit gelten als „laufend“.
+  // Laufende Tour laden (nur eigene Touren). Nur Touren von HEUTE mit Status
+  // packing/in_transit gelten als „laufend“. Server zuerst, Cache als Fallback.
   const loadActiveTour = useCallback(async () => {
-    const url = "/api/tours";
     const today = new Date().toISOString().slice(0, 10);
     const isActive = (t: TourHistoryItem) =>
       (t.status === "in_transit" || t.status === "packing") &&
       t.date === today;
-    const cached = await offlineReadCached(url);
-    const cachedTours = (cached?.tours ?? []) as TourHistoryItem[];
-    const cachedActive = cachedTours.find(isActive);
-    if (cachedActive) {
-      setActiveTour({
-        id: cachedActive.id,
-        date: cachedActive.date,
-        start_time: cachedActive.start_time,
-        status:
-          cachedActive.status === "in_transit" ? "in_transit" : "packing",
-      });
-    }
-    try {
-      const res = await offlineFetch(url, { cache: "no-store" });
-      if (!res.ok) return;
-      const body = await res.json();
-      const active = (body.tours ?? []).find(isActive);
-      setActiveTour(
-        active
-          ? {
-              id: active.id,
-              date: active.date,
-              start_time: active.start_time,
-              status: active.status === "in_transit" ? "in_transit" : "packing",
-            }
-          : null,
-      );
-    } catch {
-      // Offline ohne Cache: kein Banner – die Planung selbst funktioniert weiter.
-    }
+    const result = await loadList(
+      "/api/tours",
+      (body) => (body.tours ?? []) as TourHistoryItem[],
+    );
+    // Offline ohne Cache: kein Banner – die Planung selbst funktioniert weiter.
+    const active = (result.data ?? []).find(isActive);
+    setActiveTour(
+      active
+        ? {
+            id: active.id,
+            date: active.date,
+            start_time: active.start_time,
+            status: active.status === "in_transit" ? "in_transit" : "packing",
+          }
+        : null,
+    );
   }, []);
 
   useEffect(() => {
@@ -747,6 +702,12 @@ export function PlanningPage() {
 
   return (
     <div className="container pb-44 pt-6 sm:pb-28 sm:pt-10">
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mb-3"
+      />
+
       {/* Kopfbereich */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -921,7 +882,7 @@ export function PlanningPage() {
             {unknownTargets.length > 0 && (
               <section className="space-y-2">
                 <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Unbekannte Ziele ({unknownTargets.length})
+                  Unknown destinations ({unknownTargets.length})
                 </h2>
                 <ul className="space-y-1.5">
                   {unknownTargets.map((target, index) => {
@@ -1086,7 +1047,7 @@ export function PlanningPage() {
                     })}
                   </strong>{" "}
                   is deleted together with its stops. Afterwards you can
-                  neue Route berechnen.
+                  calculate a new route.
                 </>
               )}
             </DialogDescription>

@@ -18,7 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { loadList } from "@/lib/offline/list";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
@@ -93,29 +94,22 @@ export function TimeTrackingPage() {
   const [reNote, setReNote] = useState("");
   const [submittingEntry, setSubmittingEntry] = useState(false);
 
-  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
-  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    const cached = fresh
-      ? null
-      : await offlineReadCached("/api/time-tracking/summary");
-    if (cached?.profile) {
-      setSummary(cached as Summary);
-      setLoading(false);
-    } else {
-      setLoading(true);
+  // Nur aktuelle Daten: die Übersicht kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim ersten Laden dreht ein Spinner;
+  // spätere Aktualisierungen lassen die vorhandenen Daten stehen.
+  const load = useCallback(async () => {
+    const result = await loadList(
+      "/api/time-tracking/summary",
+      (body) => body as unknown as Summary,
+    );
+    setLoading(false);
+    if (result.data?.profile) {
+      setSummary(result.data);
+      return;
     }
-    try {
-      const res = await offlineFetch("/api/time-tracking/summary", { cache: "no-store" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? "Zeiterfassung konnte nicht geladen werden.");
-      if (!body.profile) throw new Error("Mitarbeiterprofil ist noch nicht im Cache verfügbar.");
-      setSummary(body as Summary);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Zeiterfassung konnte nicht geladen werden.");
-    } finally {
-      setLoading(false);
-    }
+    toast.error(
+      result.error?.message ?? "Mitarbeiterprofil ist noch nicht verfügbar.",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -180,7 +174,7 @@ export function TimeTrackingPage() {
       toast.success("Antrag wurde eingereicht.");
       setNote("");
       setSubstituteId("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Antrag konnte nicht gesendet werden.");
     } finally {
@@ -225,7 +219,7 @@ export function TimeTrackingPage() {
       toast.success("Arbeitszeit nachgereicht – wartet auf Freigabe.");
       setReDate(dateValue(new Date()));
       setReNote("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Arbeitszeit konnte nicht nachgereicht werden.");
     } finally {

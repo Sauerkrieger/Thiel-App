@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   CalendarDays,
@@ -36,10 +36,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { useItemList } from "@/lib/use-item-list";
 import { useRealtimeRefresh } from "@/lib/realtime";
-import type { ApiError, TourHistoryItem, UserListItem } from "@/types/api";
+import type { TourHistoryItem, UserListItem } from "@/types/api";
 
 const STATUS_LABELS: Record<TourHistoryItem["status"], string> = {
   packing: "Packen",
@@ -48,60 +49,30 @@ const STATUS_LABELS: Record<TourHistoryItem["status"], string> = {
 };
 
 export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
-  const [tours, setTours] = useState<TourHistoryItem[]>([]);
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [filterUserId, setFilterUserId] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TourHistoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Stale-while-revalidate: gecachte Touren sofort anzeigen, frische Daten
-  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
+  // Nur aktuelle Daten: die Historie kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Filterwechsel lädt neu (Spinner).
+  const listUrl = useMemo(() => {
     const params = new URLSearchParams();
     if (isAdmin && filterUserId && filterUserId !== "all") {
       params.set("user_id", filterUserId);
     }
-    const url = `/api/tours?${params.toString()}`;
-    startListPerf("history");
-    const cached = fresh ? null : await offlineReadCached(url);
-    if (cached && Array.isArray(cached.tours) && cached.tours.length > 0) {
-      markFirstData("history", "cache", (cached.tours as TourHistoryItem[]).length);
-      setTours(cached.tours as TourHistoryItem[]);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(url, {
-        cache: "no-store",
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({ code: body.code, message: body.error ?? "Unbekannter Fehler" });
-        }
-        return;
-      }
-      setTours(body.tours ?? []);
-      endListPerf("history", { source: "network", count: (body.tours ?? []).length });
-    } catch {
-      if (!cached) {
-        setError({ message: "Netzwerkfehler beim Laden der Tourenhistorie." });
-      }
-      endListPerf("history", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
+    const query = params.toString();
+    return query ? `/api/tours?${query}` : "/api/tours";
   }, [isAdmin, filterUserId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const list = useItemList<TourHistoryItem[]>(
+    listUrl,
+    (body) => (body.tours ?? []) as TourHistoryItem[],
+    "history",
+  );
+  const tours = useMemo(() => list.data ?? [], [list.data]);
+  const loading = list.loading;
+  const error = list.error;
 
 
   // Realtime (nur Admins): Bei Touren-Aenderungen (Abschluss, neuer Start,
@@ -109,7 +80,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
   useRealtimeRefresh(
     isAdmin,
     ["active_tours"],
-    () => { void load(true); },
+    () => { void list.refresh({ quiet: true }); },
   );
   // Für Admins: Liste aller Nutzer laden (Filter „pro Person").
   useEffect(() => {
@@ -134,7 +105,7 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       }
       toast.success("Tour gelöscht.");
       setDeleteTarget(null);
-      await load(true);
+      await list.refresh({ quiet: true });
     } catch {
       toast.error("Tour konnte nicht gelöscht werden.");
     } finally {
@@ -235,6 +206,11 @@ export function HistoryPage({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       <div className="mt-6">
+        <ListStatus
+          refreshing={list.refreshing}
+          offlineSince={list.offlineSince}
+          className="mb-3"
+        />
         {error?.code === "SUPABASE_NOT_CONFIGURED" ? (
           <SetupHint message={error.message} />
         ) : error ? (

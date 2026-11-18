@@ -16,8 +16,9 @@ const DB_NAME = "app-offline";
 // Indizes beim nächsten Öffnen anlegen (v6: sync_status-Index für
 // schnelles Auslesen der Offline-Queue; v7: gleicher Index auch für
 // chat_messages, damit getPendingRecords dort nicht per NotFoundError
-// den kompletten Sync abschießt).
-const DB_VERSION = 7;
+// den kompletten Sync abschießt; v8: object_id-/tour_id-Indizes, damit der
+// Offline-Assembler Items/Stopps gezielt liest statt ganze Tabellen scannt).
+const DB_VERSION = 8;
 
 export type OfflineTable = SyncTable | "chat_messages";
 export type SyncStatus = "synced" | "pending_upload";
@@ -58,6 +59,22 @@ function openDb(): Promise<IDBDatabase> {
           }
           if (table === "chat_messages" && store && !store.indexNames.contains("thread_id")) {
             store.createIndex("thread_id", "data.thread_id", { unique: false });
+          }
+          // v8: gezielte Reads pro Objekt/Tour (Packliste, Belieferung, Tour).
+          if (
+            table === "object_items" &&
+            store &&
+            !store.indexNames.contains("object_id")
+          ) {
+            store.createIndex("object_id", "data.object_id", { unique: false });
+          }
+          if (table === "tour_stops" && store) {
+            if (!store.indexNames.contains("tour_id")) {
+              store.createIndex("tour_id", "data.tour_id", { unique: false });
+            }
+            if (!store.indexNames.contains("object_id")) {
+              store.createIndex("object_id", "data.object_id", { unique: false });
+            }
           }
         }
       };

@@ -977,7 +977,7 @@ function ItemPreviewBody({
                   </div>
                 )}
 
-                {/* Admin-Info: Kunde / Kundennummer / Reinigungsturnus */}
+                {/* Admin-Info: Kunde / Customer number / Cleaning interval */}
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <div className="col-span-2">
                     <Label className="text-xs text-muted-foreground">
@@ -995,7 +995,7 @@ function ItemPreviewBody({
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">
-                      Kundennummer
+                      Customer number
                     </Label>
                     <Input
                       className="mt-1 h-8"
@@ -1009,7 +1009,7 @@ function ItemPreviewBody({
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">
-                      Reinigungsturnus
+                      Cleaning interval
                     </Label>
                     <Input
                       className="mt-1 h-8"

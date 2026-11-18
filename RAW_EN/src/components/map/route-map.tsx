@@ -275,8 +275,7 @@ export function RouteMap({ warehouse, stops, className }: Props) {
           <MapPinOff className="h-8 w-8 text-muted-foreground" />
           <p className="text-sm font-medium">No coordinates available</p>
           <p className="max-w-xs text-xs text-muted-foreground">
-            There are no verified address coordinates for the route objects
-            hinterlegt.
+            There are no verified address coordinates for the route objects.
           </p>
         </div>
       ) : (

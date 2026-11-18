@@ -76,12 +76,13 @@ async function assertTourAccess(id: string, userId: string, isAdminUser: boolean
  * beim Speichern des Objekts noch nicht geocodet wurden.
  *
  * Läuft parallel (alle fehlenden Objekte gleichzeitig) und mit Gesamt-Timeout
- * (3 s): Nur Objekte mit echtem Geocoding-Treffer werden in dieser Antwort
+ * (1 s): Nur Objekte mit echtem Geocoding-Treffer werden in dieser Antwort
  * angereichert, alle Treffer werden persistiert. Schläft das Netz/Geocoding,
  * antwortet der Endpunkt trotzdem spätestens nach dem Timeout (dann ohne
  * Anreicherung – der nächste Aufruf hat die persistierten Koordinaten).
+ * Kurz gehalten, weil dieser GET nach jeder Belieferung im Hintergrund läuft.
  */
-const BACKFILL_TIMEOUT_MS = 3_000;
+const BACKFILL_TIMEOUT_MS = 1_000;
 
 async function backfillStopObjectCoordinates(
   stops: unknown[],
@@ -148,13 +149,8 @@ export async function GET(_request: Request, { params }: Context) {
     const { id } = await params;
     const supabase = getSupabaseAdmin();
 
-    const allowed = await assertTourAccess(id, auth.user.id, isAdmin(auth.user));
-    if (!allowed) {
-      return NextResponse.json(
-        { error: "Tour nicht gefunden." },
-        { status: 404 },
-      );
-    }
+    // Zugriff wird direkt an der geladenen Zeile geprüft (spart einen
+    // zusätzlichen Roundtrip – dieser GET läuft nach jeder Belieferung).
     const { data, error } = await supabase
       .from("active_tours")
       .select(
@@ -173,6 +169,15 @@ export async function GET(_request: Request, { params }: Context) {
       }
       throw error;
     }
+    if (
+      !isAdmin(auth.user) &&
+      (data as { driver_id?: string | null }).driver_id !== auth.user.id
+    ) {
+      return NextResponse.json(
+        { error: "Tour nicht gefunden." },
+        { status: 404 },
+      );
+    }
     // next_delivery_items normalisieren (Legacy: Strings, neu: { item_name, note })
     const raw = data as unknown as {
       tour_stops?: Array<{
@@ -189,7 +194,7 @@ export async function GET(_request: Request, { params }: Context) {
       })),
     };
     // Karte im Tour-Modus vollständig halten: Objekte ohne Koordinaten
-    // geocoden (begrenzt auf 3 s, persistiert für künftige Requests).
+    // geocoden (begrenzt auf 1 s, persistiert für künftige Requests).
     await backfillStopObjectCoordinates(tour.tour_stops);
     return NextResponse.json({ tour: { ...tour, warehouse: await resolveWarehouse() } });
   } catch (e) {

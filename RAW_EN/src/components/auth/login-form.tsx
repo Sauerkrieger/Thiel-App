@@ -171,7 +171,7 @@ export function LoginForm({ next }: { next?: string }) {
             ) : (
               <Fingerprint />
             )}
-            Mit Passkey anmelden
+            Sign in with passkey
           </Button>
           {!webauthnSupported ? (
             <p className="mt-2 text-center text-xs text-muted-foreground">

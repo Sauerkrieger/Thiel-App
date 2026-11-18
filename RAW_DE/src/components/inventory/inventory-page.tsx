@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ListChecks, PackageCheck, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -32,9 +32,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SetupHint } from "@/components/setup-hint";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
-import type { ApiError } from "@/types/api";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { useItemList } from "@/lib/use-item-list";
 import type { InventoryItem } from "@/types/database";
 
 type SortOrder = "az" | "za";
@@ -44,9 +44,16 @@ type SortOrder = "az" | "za";
  * Sortierung, Anmerkungen (editierbar) und Anlegen/Löschen.
  */
 export function InventoryPage() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
+  // Nur aktuelle Daten: der Server liefert die Liste, der Offline-Cache dient
+  // ausschließlich als Fallback (mit Zeitstempel) – nie als erster Eindruck.
+  const list = useItemList<InventoryItem[]>(
+    "/api/inventory",
+    (body) => (body.items ?? []) as InventoryItem[],
+    "inventory",
+  );
+  const items = useMemo(() => list.data ?? [], [list.data]);
+  const loading = list.loading;
+  const error = list.error;
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortOrder>("az");
 
@@ -57,48 +64,6 @@ export function InventoryPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // Stale-while-revalidate: gecachte Items sofort anzeigen, frische Daten
-  // parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    setError(null);
-    startListPerf("inventory");
-    const cached = fresh ? null : await offlineReadCached("/api/inventory");
-    if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
-      markFirstData("inventory", "cache", (cached.items as InventoryItem[]).length);
-      setItems(cached.items as InventoryItem[]);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch("/api/inventory", { cache: "no-store" });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung ersetzen.
-        if (!cached) {
-          setError({
-            code: body.code,
-            message: body.error ?? "Unbekannter Fehler",
-          });
-        }
-        return;
-      }
-      setItems(body.items ?? []);
-      endListPerf("inventory", { source: "network", count: (body.items ?? []).length });
-    } catch {
-      if (!cached) {
-        setError({ message: "Netzwerkfehler beim Laden des Inventars." });
-      }
-      endListPerf("inventory", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   // Suche über Name + Anmerkung, danach sortieren (alphabetisch A–Z / Z–A).
   const filtered = useMemo(() => {
@@ -136,7 +101,7 @@ export function InventoryPage() {
       }
       setNewName("");
       setNewNote("");
-      await load(true);
+      await list.refresh({ quiet: true });
       toast.success(`„${body.item?.name ?? newName.trim()}" zum Inventar hinzugefügt.`);
     } catch {
       toast.error("Item konnte nicht angelegt werden.");
@@ -158,8 +123,8 @@ export function InventoryPage() {
         toast.error(body.error ?? "Änderung fehlgeschlagen.");
         return;
       }
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
+      list.update((prev) =>
+        (prev ?? []).map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
       );
     } catch {
       toast.error("Änderung fehlgeschlagen.");
@@ -179,7 +144,9 @@ export function InventoryPage() {
         return;
       }
       toast.success(`„${deleteTarget.name}" wurde gelöscht.`);
-      setItems((prev) => prev.filter((i) => i.id !== deleteTarget.id));
+      list.update((prev) =>
+        (prev ?? []).filter((i) => i.id !== deleteTarget.id),
+      );
       setDeleteTarget(null);
     } catch {
       toast.error("Löschen fehlgeschlagen.");
@@ -207,6 +174,12 @@ export function InventoryPage() {
           </Badge>
         )}
       </div>
+
+      <ListStatus
+        refreshing={list.refreshing}
+        offlineSince={list.offlineSince}
+        className="mt-3"
+      />
 
       {/* Suche + Sortierung */}
       <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -303,6 +276,10 @@ export function InventoryPage() {
                       <TableRow key={item.id} className="group">
                         <TableCell className="pl-4">
                           <Input
+                            // Key enthält den Wert: Ändert der Server den Namen,
+                            // wird das Feld neu aufgebaut und zeigt den neuen Wert
+                            // (defaultValue greift sonst bei gleichem Key nicht).
+                            key={`name:${item.name}`}
                             defaultValue={item.name}
                             className="h-8 border-transparent bg-transparent px-2 font-medium hover:border-input focus:border-input focus:bg-background"
                             onBlur={(e) => {
@@ -318,6 +295,7 @@ export function InventoryPage() {
                         </TableCell>
                         <TableCell>
                           <Input
+                            key={`note:${item.note ?? ""}`}
                             defaultValue={item.note ?? ""}
                             placeholder="–"
                             className="h-8 border-transparent bg-transparent px-2 text-muted-foreground hover:border-input focus:border-input focus:bg-background"

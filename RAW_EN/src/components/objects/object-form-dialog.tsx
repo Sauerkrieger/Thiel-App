@@ -437,7 +437,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="obj-customer-number">Kundennummer</Label>
+                <Label htmlFor="obj-customer-number">Customer number</Label>
                 <Input
                   id="obj-customer-number"
                   value={customerNumber}
@@ -446,7 +446,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="obj-cleaning-interval">Reinigungsturnus</Label>
+                <Label htmlFor="obj-cleaning-interval">Cleaning interval</Label>
                 <Input
                   id="obj-cleaning-interval"
                   value={cleaningInterval}
@@ -474,7 +474,7 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
                 ) : (
                   <ScanLine className="h-4 w-4" />
                 )}
-                Liste aus Foto generieren
+                Generate list from photo
               </Button>
               <input
                 ref={ocrInputRef}
@@ -489,8 +489,8 @@ export function ObjectFormDialog({ open, object, onOpenChange, onSaved }: Props)
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Menge, Name, optionale Bemerkung und optionales Foto je
-              Zeile – e.g. 60x Micromops (rot, gelb - kein blau).
+              Quantity, name, optional note and optional photo per
+              line – e.g. 60x Micromops (red, yellow - no blue).
             </p>
             <div className="space-y-2">
               {items.map((item, index) => (

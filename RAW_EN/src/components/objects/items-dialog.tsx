@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus, KeyRound, ListChecks, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,9 @@ import {
 } from "@/components/ui/dialog";
 import { formatItemLabel } from "@/lib/items";
 import { itemPhotoUrl } from "@/lib/storage";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
-import { endListPerf, markFirstData, startListPerf } from "@/lib/perf";
+import { ListStatus } from "@/components/list-status";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { useItemList } from "@/lib/use-item-list";
 import type { ObjectItem } from "@/types/database";
 import type { ObjectWithItems } from "@/types/api";
 
@@ -49,8 +50,15 @@ function sortItemsForDisplay(items: ObjectItem[]): ObjectItem[] {
 }
 
 export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete = true, readOnly = false }: Props) {
-  const [items, setItems] = useState<ObjectItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Nur aktuelle Daten: der Server liefert die Item-Liste, der Offline-Cache
+  // ist reiner Fallback (mit Zeitstempel). Beim Laden dreht ein Spinner.
+  const list = useItemList<ObjectItem[]>(
+    open && object ? `/api/objects/${object.id}/items` : null,
+    (body) => sortItemsForDisplay((body.items ?? []) as ObjectItem[]),
+    "items-dialog",
+  );
+  const items = list.data ?? [];
+  const loading = list.loading;
   const [newQuantity, setNewQuantity] = useState("1");
   const [newName, setNewName] = useState("");
   const [newNote, setNewNote] = useState("");
@@ -58,68 +66,14 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
   const photoInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
-  const loadItems = useCallback(async () => {
-    if (!object) return;
-    startListPerf("items-dialog");
-    // Stale-while-revalidate: zuerst den gecachten Stand sofort anzeigen
-    // (kein Skeleton + Netz-Warteschleife bei schwachem Netz oder offline),
-    // frische Daten parallel vom Server nachladen. Leere Cache-Listen zählen
-    // nicht als Daten (sonst blinkt kurz „Keine Items“, bis die frischen
-    // Daten eintreffen).
-    let initialItems: ObjectItem[] | null = null;
-    const cached = await offlineReadCached(`/api/objects/${object.id}/items`);
-    const cachedItems = (cached?.items as ObjectItem[] | undefined) ?? [];
-    if (cachedItems.length > 0) {
-      initialItems = cachedItems;
-    } else if (
-      Array.isArray(object.object_items) &&
-      object.object_items.length > 0
-    ) {
-      // Fallback: eingebettete Items aus der Objektliste, falls der
-      // Cache-Store (z. B. direkt nach einem Sync) noch leer ist.
-      initialItems = object.object_items;
-    }
-    if (initialItems) {
-      markFirstData("items-dialog", "cache", initialItems.length);
-      setItems(sortItemsForDisplay(initialItems));
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const res = await offlineFetch(`/api/objects/${object.id}/items`, {
-        cache: "no-store",
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        // Bereits sichtbare Cache-Daten nicht durch eine Fehlermeldung
-        // ersetzen (gleiches Verhalten wie auf der Objektübersicht).
-        if (!initialItems) {
-          toast.error(body.error ?? "Could not load items.");
-        }
-        return;
-      }
-      const freshItems = (body.items ?? []) as ObjectItem[];
-      setItems(sortItemsForDisplay(freshItems));
-      endListPerf("items-dialog", { source: "network", count: freshItems.length });
-    } catch {
-      if (!initialItems) {
-        toast.error("Could not load items.");
-      }
-      endListPerf("items-dialog", { source: "offline", count: null });
-    } finally {
-      setLoading(false);
-    }
-  }, [object]);
-
+  // Beim Öffnen/Objektwechsel das Eingabeformular zurücksetzen.
   useEffect(() => {
     if (open && object) {
       setNewName("");
       setNewQuantity("1");
       setNewNote("");
-      void loadItems();
     }
-  }, [open, object, loadItems]);
+  }, [open, object]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -143,7 +97,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
       setNewName("");
       setNewQuantity("1");
       setNewNote("");
-      await loadItems();
+      await list.refresh({ quiet: true });
       onChanged();
     } catch {
       toast.error("Could not create item.");
@@ -169,8 +123,8 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
         toast.error(body.error ?? "Update failed.");
         return;
       }
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
+      list.update((prev) =>
+        (prev ?? []).map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
       );
       onChanged();
     } catch {
@@ -223,7 +177,7 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
         toast.error(body.error ?? "Delete failed.");
         return;
       }
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      list.update((prev) => (prev ?? []).filter((i) => i.id !== item.id));
       onChanged();
     } catch {
       toast.error("Delete failed.");
@@ -252,6 +206,10 @@ export function ItemsDialog({ open, object, onOpenChange, onChanged, canDelete =
         </DialogHeader>
 
         <div className="space-y-3">
+          <ListStatus
+            refreshing={list.refreshing}
+            offlineSince={list.offlineSince}
+          />
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (

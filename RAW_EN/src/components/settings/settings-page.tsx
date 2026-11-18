@@ -173,7 +173,7 @@ export function SettingsPage({
       return;
     }
     setPasskeysState((prev) => prev.filter((p) => p.id !== id));
-    toast.success("Passkey entfernt.");
+    toast.success("Passkey removed.");
   }
 
   return (

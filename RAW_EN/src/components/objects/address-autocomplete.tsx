@@ -296,7 +296,7 @@ export function AddressAutocomplete({
           {loading && suggestions.length === 0 && (
             <li className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Suche Adressen…
+              Searching addresses…
             </li>
           )}
 

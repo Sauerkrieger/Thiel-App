@@ -18,7 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CONTRACT_LABELS, overtimeBalanceHours } from "@/lib/contract";
-import { offlineFetch, offlineReadCached } from "@/lib/offline/fetch";
+import { offlineFetch } from "@/lib/offline/fetch";
+import { loadList } from "@/lib/offline/list";
 import { nowServerAligned } from "@/lib/offline/clock";
 import { hoursToLabel, minutesToLabel, workedMinutesOf } from "@/lib/time-format";
 import type { ContractType } from "@/types/database";
@@ -93,29 +94,22 @@ export function TimeTrackingPage() {
   const [reNote, setReNote] = useState("");
   const [submittingEntry, setSubmittingEntry] = useState(false);
 
-  // Stale-while-revalidate: gecachte Übersicht sofort anzeigen, frische
-  // Daten parallel vom Server nachladen (fresh = nach einer Mutation erzwungen).
-  const load = useCallback(async (fresh = false) => {
-    const cached = fresh
-      ? null
-      : await offlineReadCached("/api/time-tracking/summary");
-    if (cached?.profile) {
-      setSummary(cached as Summary);
-      setLoading(false);
-    } else {
-      setLoading(true);
+  // Nur aktuelle Daten: die Übersicht kommt vom Server, der Offline-Cache ist
+  // reiner Fallback (mit Zeitstempel). Beim ersten Laden dreht ein Spinner;
+  // spätere Aktualisierungen lassen die vorhandenen Daten stehen.
+  const load = useCallback(async () => {
+    const result = await loadList(
+      "/api/time-tracking/summary",
+      (body) => body as unknown as Summary,
+    );
+    setLoading(false);
+    if (result.data?.profile) {
+      setSummary(result.data);
+      return;
     }
-    try {
-      const res = await offlineFetch("/api/time-tracking/summary", { cache: "no-store" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? "Could not load time tracking.");
-      if (!body.profile) throw new Error("Employee profile is not in the cache yet.");
-      setSummary(body as Summary);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not load time tracking.");
-    } finally {
-      setLoading(false);
-    }
+    toast.error(
+      result.error?.message ?? "Employee profile is not available yet.",
+    );
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -180,7 +174,7 @@ export function TimeTrackingPage() {
       toast.success("Request submitted.");
       setNote("");
       setSubstituteId("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Request could not be sent.");
     } finally {
@@ -225,7 +219,7 @@ export function TimeTrackingPage() {
       toast.success("Work time submitted – waiting for approval.");
       setReDate(dateValue(new Date()));
       setReNote("");
-      await load(true);
+      await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not submit work time.");
     } finally {
@@ -275,9 +269,9 @@ export function TimeTrackingPage() {
             <Card>
               <CardHeader><CardTitle>Request absence</CardTitle><CardDescription>Send vacation, sick leave or time off in lieu to the administration.</CardDescription></CardHeader>
               <CardContent><form className="space-y-4" onSubmit={submitRequest}>
-                <div className="space-y-2"><Label>Art</Label><Select value={type} onValueChange={(value) => setType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TYPE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="absence-start">From</Label><Input id="absence-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="absence-end">Bis</Label><Input id="absence-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} required /></div></div>
-                <div className="space-y-2"><Label>Substitution by (optional)</Label><Select value={substituteId || "none"} onValueChange={(value) => setSubstituteId(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="No substitute" /></SelectTrigger><SelectContent><SelectItem value="none">No substitute</SelectItem>{substituteOptions.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {employee.role === "substitute" ? "Springer" : employee.role === "facility_manager" ? "Reinigungskraft" : employee.role === "admin" ? "Admin" : "Driver"}</SelectItem>)}</SelectContent></Select></div>
+                <div className="space-y-2"><Label>Type</Label><Select value={type} onValueChange={(value) => setType(value as TimeOffType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TYPE_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="absence-start">From</Label><Input id="absence-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="absence-end">To</Label><Input id="absence-end" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} required /></div></div>
+                <div className="space-y-2"><Label>Substitution by (optional)</Label><Select value={substituteId || "none"} onValueChange={(value) => setSubstituteId(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="No substitute" /></SelectTrigger><SelectContent><SelectItem value="none">No substitute</SelectItem>{substituteOptions.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.name} · {employee.role === "substitute" ? "Substitute" : employee.role === "facility_manager" ? "Cleaner" : employee.role === "admin" ? "Admin" : "Driver"}</SelectItem>)}</SelectContent></Select></div>
                 <div className="space-y-2"><Label htmlFor="absence-note">Note (optional)</Label><Input id="absence-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Additional information" maxLength={1000} /></div>
                 <Button type="submit" disabled={sending} className="w-full"><Send />{sending ? "Sending…" : "Submit request"}</Button>
               </form></CardContent>
@@ -287,7 +281,7 @@ export function TimeTrackingPage() {
               <CardHeader><CardTitle>Add working hours</CardTitle><CardDescription>Enter a forgotten clock-in – it then waits for approval by the administration.</CardDescription></CardHeader>
               <CardContent><form className="space-y-4" onSubmit={submitEntry}>
                 <div className="space-y-2"><Label htmlFor="entry-date">Date</Label><Input id="entry-date" type="date" value={reDate} onChange={(event) => setReDate(event.target.value)} required /></div>
-                <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="entry-start">From</Label><Input id="entry-start" type="time" value={reStart} onChange={(event) => setReStart(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="entry-end">Bis</Label><Input id="entry-end" type="time" value={reEnd} onChange={(event) => setReEnd(event.target.value)} required /></div></div>
+                <div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="entry-start">From</Label><Input id="entry-start" type="time" value={reStart} onChange={(event) => setReStart(event.target.value)} required /></div><div className="space-y-2"><Label htmlFor="entry-end">To</Label><Input id="entry-end" type="time" value={reEnd} onChange={(event) => setReEnd(event.target.value)} required /></div></div>
                 <div className="space-y-2"><Label htmlFor="entry-break">Break (minutes)</Label><Input id="entry-break" type="number" min={0} max={1440} value={reBreak} onChange={(event) => setReBreak(event.target.value)} /></div>
                 <div className="space-y-2"><Label htmlFor="entry-note">Note (optional)</Label><Input id="entry-note" value={reNote} onChange={(event) => setReNote(event.target.value)} placeholder="e.g. forgot to clock in" maxLength={500} /></div>
                 <Button type="submit" disabled={submittingEntry} className="w-full"><Send />{submittingEntry ? "Sending…" : "Add working hours"}</Button>
